@@ -6,12 +6,12 @@
     TAG: b34c
  -->
 <launch>
-    <arg name="serial_port" default="ttyS0"/>
-    <arg name="ntrip_ip" default="192.168.178.55"/>
+    <arg name="serial_port" default="ttyACM0"/>
+    <arg name="ntrip_ip" default="192.168.96.60"/>
     <arg name="ntrip_port" default="2101"/>
-    <arg name="ntrip_endpoint" default="BASE1"/>
-    <arg name="ntrip_user" default="gps"/>
-    <arg name="ntrip_password" default="gps"/>
+    <arg name="ntrip_endpoint" default="rtk"/>
+    <arg name="ntrip_user" default="rtk"/>
+    <arg name="ntrip_password" default="rtk"/>
 
     <!-- Run the first str2str instance which does the following:
         1. connect to serial port and publish the stream on a local server socket.

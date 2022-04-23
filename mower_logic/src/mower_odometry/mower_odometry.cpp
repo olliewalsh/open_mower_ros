@@ -58,10 +58,10 @@ geometry_msgs::Quaternion orientation_result;
 
 
 #define WHEEL_DISTANCE_M 0.325
-#define WHEEL_DIAMETER 0.19
+#define WHEEL_DIAMETER 0.15
 
 // (ticks / revolution) / (m / revolution)
-#define TICKS_PER_M (993.0 / (0.19*M_PI))
+#define TICKS_PER_M (90.0 / (0.15*M_PI))
 
 
 tf2_ros::Buffer tfBuffer;
