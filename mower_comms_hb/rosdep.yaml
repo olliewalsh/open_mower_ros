@@ -1,0 +1,11 @@
+python3-sparkfun-qwiic-icm20948:
+    debian:
+      pip:
+        packages: [sparkfun-qwiic-icm20948]
+    fedora:
+      pip:
+        packages: [sparkfun-qwiic-icm20948]
+    ubuntu:
+      pip:
+        packages: [sparkfun-qwiic-icm20948]
+
