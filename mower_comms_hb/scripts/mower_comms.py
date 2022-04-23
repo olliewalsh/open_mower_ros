@@ -86,11 +86,11 @@ def publishActuators():
     try:
         write_motor(comms_left, 0, -int(speed_l*1000))
     except Exception:
-        rospy.logerror("Error writing to left motor serial port", exc_info=True)
+        rospy.logerr("Error writing to left motor serial port", exc_info=True)
     try:
         write_motor(comms_right, 0, int(speed_r*1000))
     except Exception:
-        rospy.logerror("Error writing to right motor serial port", exc_info=True)
+        rospy.logerr("Error writing to right motor serial port", exc_info=True)
 
 def publishStatus():
     # TODO: should this acquire a lock in mower_comms.cpp?
@@ -159,7 +159,7 @@ def setMowEnabled(req):
 def setEmergencyStop(req):
     global emergency_high_level
     if req.emergency:
-        rospy.logerror("Setting emergency!!")
+        rospy.logerr("Setting emergency!!")
     emergency_high_level = req.emergency
     publishActuators()
     return EmergencyStopSrvResponse()
@@ -209,11 +209,10 @@ def handleLowLevelIMU():
             rospy.logwarn("Failed to read ICM-20948 data: {}".format(e))
         else:
             imu_msg = ImuRaw()
-            # Switch the axis to be consistent with MPU-9250 and convert units
             # Constants take from https://github.com/adafruit/Adafruit_CircuitPython_ICM20X
-            #imu_msg.ax, imu_msg.ay, imu_msg.az = (IMU.ayRaw / 16384 * 9.80665, IMU.axRaw / 16384 * 9.80665, IMU.azRaw / 16384 * 9.80665)
+            imu_msg.ax, imu_msg.ay, imu_msg.az = (IMU.axRaw / 16384 * 9.80665, IMU.ayRaw / 16384 * 9.80665, IMU.azRaw / 16384 * 9.80665)
             imu_msg.mx, imu_msg.my, imu_msg.mz = ((IMU.mxRaw*0.15)-13.2358, (IMU.myRaw*0.15)-77.6404, IMU.mzRaw*0.15)
-            #imu_msg.gx, imu_msg.gy, imu_msg.gz = (IMU.gyRaw / 131.0 * 0.017453293, -IMU.gxRaw / 131.0 * 0.017453293, IMU.gzRaw / 131.0 * 0.017453293)
+            imu_msg.gx, imu_msg.gy, imu_msg.gz = (IMU.gyRaw / 131.0 * 0.017453293, IMU.gxRaw / 131.0 * 0.017453293, IMU.gzRaw / 131.0 * 0.017453293)
             now = rospy.Time.now()
             imu_msg.dt = (now - last_imu_ts).to_nsec()//1000000
             last_imu_ts = now
