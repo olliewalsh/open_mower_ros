@@ -1,11 +1,20 @@
-python3-sparkfun-qwiic-icm20948:
+python3-imusensor:
     debian:
       pip:
-        packages: [sparkfun-qwiic-icm20948]
+        packages: ['https://github.com/olliewalsh/imusensor/archive/refs/heads/fix_mag_scale.zip']
     fedora:
       pip:
-        packages: [sparkfun-qwiic-icm20948]
+        packages: ['https://github.com/olliewalsh/imusensor/archive/refs/heads/fix_mag_scale.zip']
     ubuntu:
       pip:
-        packages: [sparkfun-qwiic-icm20948]
-
+        packages: ['https://github.com/olliewalsh/imusensor/archive/refs/heads/fix_mag_scale.zip']
+python3-easydict:
+    debian:
+      pip:
+        packages: [easydict]
+    fedora:
+      pip:
+        packages: [easydict]
+    ubuntu:
+      pip:
+        packages: [easydict]

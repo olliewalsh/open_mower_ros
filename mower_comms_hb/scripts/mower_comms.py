@@ -4,8 +4,6 @@ from geometry_msgs.msg import Twist
 from mower_msgs.msg import Status, ImuRaw, ESCStatus
 from mower_msgs.srv import MowerControlSrv, MowerControlSrvResponse, EmergencyStopSrv, EmergencyStopSrvResponse, GPSControlSrv
 
-import qwiic_icm20948
-
 import serial
 import struct
 import sys
@@ -17,7 +15,10 @@ from collections import namedtuple
 comms_left = serial.Serial(port='/dev/ttyAMA1', baudrate=115200, bytesize=serial.EIGHTBITS, stopbits=serial.STOPBITS_ONE, parity=serial.PARITY_NONE, timeout=0.1)
 comms_right = serial.Serial(port='/dev/ttyAMA2', baudrate=115200, bytesize=serial.EIGHTBITS, stopbits=serial.STOPBITS_ONE, parity=serial.PARITY_NONE, timeout=0.1)
 
-IMU = qwiic_icm20948.QwiicIcm20948()
+import smbus
+from imusensor.MPU9250 import MPU9250
+
+imu = MPU9250.MPU9250(smbus.SMBus(1), 0x68)
 
 speed_l = 0.0
 speed_r = 0.0
@@ -56,10 +57,15 @@ def read_motor(comms):
     return MotorData(-ticks, currentDC, batteryVoltage, charging)
 
 def write_motor(comms, mode, speed):
+    # Hoverboard motor will not move at low speed
+    if speed < -0:
+        speed = -70 + speed * 100
+    elif speed > 0:
+        speed = 70 + speed * 100
     data = 0
     data |= (1 << 0) # enable
     # NB: motors are reversed so negate speed
-    tx_data = struct.pack('>chBHB', b'/', -speed, 0, 0, data)
+    tx_data = struct.pack('>chBHB', b'/', -int(speed), 0, 0, data)
     tx_data += struct.pack('>Hc', xmodem(tx_data), b'\n')
     comms.write(tx_data)
     comms.flush()
@@ -84,13 +90,13 @@ def publishActuators():
         speed_r = 0
         speed_mow = 0
     try:
-        write_motor(comms_left, 0, -int(speed_l*1000))
+        write_motor(comms_left, 0, -speed_l)
     except Exception:
-        rospy.logerror("Error writing to left motor serial port", exc_info=True)
+        rospy.logerr("Error writing to left motor serial port", exc_info=True)
     try:
-        write_motor(comms_right, 0, int(speed_r*1000))
+        write_motor(comms_right, 0, speed_r)
     except Exception:
-        rospy.logerror("Error writing to right motor serial port", exc_info=True)
+        rospy.logerr("Error writing to right motor serial port", exc_info=True)
 
 def publishStatus():
     # TODO: should this acquire a lock in mower_comms.cpp?
@@ -117,22 +123,24 @@ def publishStatus():
         status_msg.v_charge = left_data.charging
         status_msg.charge_current = 1 if left_data.charging else 0
         l_status.status = ESCStatus.ESC_STATUS_OK
-        l_status.tacho = left_data.ticks
+        #l_status.tacho = left_data.ticks
         l_status.current = left_data.currentDC/1000
         l_status.temperature_motor = 30
         l_status.temperature_pcb = 30
     else:
-        l_status.status = ESCStatus.ESC_STATUS_DISCONNECTED
+        l_status.status = ESCStatus.ESC_STATUS_OK
+    #    l_status.status = ESCStatus.ESC_STATUS_DISCONNECTED
 
     r_status = ESCStatus()
     if right_data is not None:
         r_status.status = ESCStatus.ESC_STATUS_OK
-        r_status.tacho = right_data.ticks
+        #r_status.tacho = right_data.ticks
         r_status.current = right_data.currentDC/1000
         r_status.temperature_motor = 30
         r_status.temperature_pcb = 30
     else:
-        r_status.status = ESCStatus.ESC_STATUS_DISCONNECTED
+        r_status.status = ESCStatus.ESC_STATUS_OK
+    #    r_status.status = ESCStatus.ESC_STATUS_DISCONNECTED
     m_status = ESCStatus()
     m_status.status = ESCStatus.ESC_STATUS_OK
 
@@ -159,7 +167,7 @@ def setMowEnabled(req):
 def setEmergencyStop(req):
     global emergency_high_level
     if req.emergency:
-        rospy.logerror("Setting emergency!!")
+        rospy.logerr("Setting emergency!!")
     emergency_high_level = req.emergency
     publishActuators()
     return EmergencyStopSrvResponse()
@@ -171,8 +179,11 @@ def velReceived(msg):
 
     last_cmd_vel = rospy.Time.now()
     # TODO: figure out why the signs are reversed in mower_comms.cpp
-    speed_l = msg.linear.x - msg.angular.z;
-    speed_r = msg.linear.x + msg.angular.z;
+    # TODO: this isn't correct (in mower_comms.cpp). Adding rad/s to m/s isn't valid.
+    #       For now I've just dropped in some constants here to make it kindof work with my motors.
+    speed_l = (0.31 * msg.linear.x) - (0.5 * msg.angular.z);
+    speed_r = (0.31 * msg.linear.x) + (0.5 * msg.angular.z);
+
 
     if speed_l >= 1.0:
         speed_l = 1.0;
@@ -202,22 +213,16 @@ def handleLowLevelIMU():
     global IMU
     global imu_pub
     global last_imu_ts
-    if IMU.dataReady():
-        try:
-            IMU.getAgmt()
-        except IOError as e:
-            rospy.logwarn("Failed to read ICM-20948 data: {}".format(e))
-        else:
-            imu_msg = ImuRaw()
-            # Switch the axis to be consistent with MPU-9250 and convert units
-            # Constants take from https://github.com/adafruit/Adafruit_CircuitPython_ICM20X
-            #imu_msg.ax, imu_msg.ay, imu_msg.az = (IMU.ayRaw / 16384 * 9.80665, IMU.axRaw / 16384 * 9.80665, IMU.azRaw / 16384 * 9.80665)
-            imu_msg.mx, imu_msg.my, imu_msg.mz = ((IMU.mxRaw*0.15)-13.2358, (IMU.myRaw*0.15)-77.6404, IMU.mzRaw*0.15)
-            #imu_msg.gx, imu_msg.gy, imu_msg.gz = (IMU.gyRaw / 131.0 * 0.017453293, -IMU.gxRaw / 131.0 * 0.017453293, IMU.gzRaw / 131.0 * 0.017453293)
-            now = rospy.Time.now()
-            imu_msg.dt = (now - last_imu_ts).to_nsec()//1000000
-            last_imu_ts = now
-            imu_pub.publish(imu_msg)
+
+    imu.readSensor()
+    imu_msg = ImuRaw()
+    imu_msg.ax, imu_msg.ay, imu_msg.az = imu.AccelVals
+    imu_msg.gx, imu_msg.gy, imu_msg.gz = imu.GyroVals
+    imu_msg.mx, imu_msg.my, imu_msg.mz = imu.MagVals
+    now = rospy.Time.now()
+    imu_msg.dt = (now - last_imu_ts).to_nsec()//1000000
+    last_imu_ts = now
+    imu_pub.publish(imu_msg)
 
 def main():
     rospy.init_node('mower_comms')
@@ -238,9 +243,8 @@ def main():
     emergency_service = rospy.Service("mower_service/emergency", EmergencyStopSrv, setEmergencyStop)
     cmd_vel_sub = rospy.Subscriber("cmd_vel",Twist, velReceived, tcp_nodelay=True)
 
-    while IMU.connected == False:
-        rospy.logwarn("ICM-20948 not connected")
-    IMU.begin()
+    imu.begin()
+    imu.setLowPassFilterFrequency("AccelLowPassFilter20")
     last_imu_ts = rospy.Time.now()
 
     publish_timer = rospy.timer.Timer(rospy.Duration(0.02), publishActuatorsTimerTask)

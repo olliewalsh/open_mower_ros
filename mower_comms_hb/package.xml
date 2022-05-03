@@ -52,7 +52,11 @@
   <exec_depend>rospy</exec_depend>
   <exec_depend>mower_msgs</exec_depend>
   <exec_depend>python3-crcmod</exec_depend>
-  <exec_depend>python3-sparkfun-qwiic-icm20948</exec_depend>
+  <exec_depend>python3-smbus</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-easydict</exec_depend>
+  <exec_depend>python3-imusensor</exec_depend>
+
 
 
   <!-- The export tag contains other, unspecified, tags -->
