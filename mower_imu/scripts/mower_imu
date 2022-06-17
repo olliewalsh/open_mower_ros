@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+import rospy
+from mower_msgs.msg import ImuRaw
+from sensor_msgs.msg import MagneticField, Imu
+
+import smbus2
+from mower_imu.MPU9250 import MPU9250
+
+mower_imu_pub = None
+sensor_mag_pub = None
+sensor_imu_pub = None
+last_imu_ts = rospy.Time()
+sensor_mag_msg = MagneticField()
+sensor_imu_msg = Imu()
+
+def publishIMU(*args, **kwargs):
+    global imu 
+    global mower_imu_pub
+    global sensor_mag_pub
+    global sensor_imu_pub
+    global sensor_mag_msg
+    global sensor_imu_msg
+    global last_imu_ts
+
+    try:
+        imu.readSensor()
+    except:
+        return
+    imu_msg = ImuRaw()
+    imu_msg.ax, imu_msg.ay, imu_msg.az = imu.AccelVals
+    imu_msg.gx, imu_msg.gy, imu_msg.gz = imu.GyroVals
+    imu_msg.mx, imu_msg.my, imu_msg.mz = imu.MagVals
+    now = rospy.Time.now()
+    imu_msg.dt = (now - last_imu_ts).to_nsec()//1000000
+    last_imu_ts = now
+
+    sensor_mag_msg.header.stamp = now
+    sensor_mag_msg.header.seq+=1
+    sensor_mag_msg.header.frame_id = "base_link"
+    sensor_mag_msg.magnetic_field.x = imu_msg.mx/1000.0
+    sensor_mag_msg.magnetic_field.y = imu_msg.my/1000.0
+    sensor_mag_msg.magnetic_field.z = imu_msg.mz/1000.0
+
+    sensor_imu_msg.header.stamp = now
+    sensor_imu_msg.header.seq+=1
+    sensor_imu_msg.header.frame_id = "base_link"
+    sensor_imu_msg.linear_acceleration.x = imu_msg.ax
+    sensor_imu_msg.linear_acceleration.y = imu_msg.ay
+    sensor_imu_msg.linear_acceleration.z = imu_msg.az
+    sensor_imu_msg.angular_velocity.x = imu_msg.gx
+    sensor_imu_msg.angular_velocity.y = imu_msg.gy
+    sensor_imu_msg.angular_velocity.z = imu_msg.gz
+
+    mower_imu_pub.publish(imu_msg)
+    sensor_mag_pub.publish(sensor_mag_msg)
+    sensor_imu_pub.publish(sensor_imu_msg)
+
+def main():
+    global imu
+    global mower_imu_pub
+    global sensor_mag_pub
+    global sensor_imu_pub
+    global last_imu_ts
+
+    imu = MPU9250(smbus2.SMBus(4), 0x68)
+
+    while True:
+        try:
+            imu.begin()
+            imu.setLowPassFilterFrequency("AccelLowPassFilter20")
+            break
+        except:
+            pass
+
+    rospy.init_node('mower_comms')
+    mower_imu_pub = rospy.Publisher('mower/imu', ImuRaw, queue_size=1)
+    sensor_imu_pub = rospy.Publisher('imu/data_raw', Imu, queue_size=1)
+    sensor_mag_pub = rospy.Publisher('imu/mag', MagneticField, queue_size=1)
+
+    last_imu_ts = rospy.Time.now()
+    publish_timer = rospy.timer.Timer(rospy.Duration(0.02), publishIMU)
+
+    rate = rospy.Rate(2.0)
+    while not rospy.is_shutdown():
+        rate.sleep()
+
+if __name__ == '__main__':
+    try:
+        main()
+    except rospy.ROSInterruptException:
+         pass
