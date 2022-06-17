@@ -156,6 +156,23 @@ void publishOdometry() {
 
 void imuReceived(const sensor_msgs::Imu::ConstPtr &msg) {
     lastImu = *msg;
+
+    if(!hasImuMessage) {
+        // Set initial orientation using mag only
+        double yaw = atan2(lastImu.my - (config.magnetic_offset_y),
+                       lastImu.mx - (config.magnetic_offset_x));
+
+        yaw += config.imu_offset * (M_PI / 180.0);
+        yaw = fmod(yaw + (M_PI_2), 2.0 * M_PI);
+        while (yaw < 0) {
+            yaw += M_PI * 2.0;
+        }
+
+
+        tf2::Quaternion q_mag(0.0, 0.0, yaw);
+        orientation_result = tf2::toMsg(q_mag);
+    }
+
     hasImuMessage = true;
 }
 
