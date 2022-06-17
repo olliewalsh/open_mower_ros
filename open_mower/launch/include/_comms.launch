@@ -5,11 +5,12 @@
 <launch>
     <!-- TODO: Add parameter for simulation -->
 
-    <node pkg="mower_comms" type="mower_comms" name="mower_comms">
-        <param name="ll_serial_port" value="/dev/$(env OM_LL_SERIAL_PORT)"/>
-        <param name="left_esc_serial_port" value="/dev/$(env OM_LEFT_SERIAL_PORT)"/>
-        <param name="right_esc_serial_port" value="/dev/$(env OM_RIGHT_SERIAL_PORT)"/>
-        <param name="mow_esc_serial_port" value="/dev/$(env OM_MOW_SERIAL_PORT)"/>
+    <node name="rosserial" pkg="rosserial_python" type="serial_node.py" required="true">
+        <param name="port" value="/dev/ttyACM0" />
+        <param name="baud" value="115200" />
+    </node>
+
+    <node pkg="mower_imu" type="mower_imu" name="mower_imu">
     </node>
     
     <include file="$(find open_mower)/launch/include/_gps.launch">
