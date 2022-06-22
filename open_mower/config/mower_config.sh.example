@@ -9,14 +9,14 @@ export OM_MOWER="YardForce500"
 # export OM_ENABLE_RECORDING=False
 
 # Offset between the point in between your wheels and the GPS antenna in m
-export OM_GPS_ANTENNA_OFFSET=0.3
+export OM_GPS_ANTENNA_OFFSET=0.31
 # Angle which gets added to the compass heading, if your imu is in a rotated coordinate frame
-export OM_IMU_OFFSET=180.0
+export OM_IMU_OFFSET=-179.0
 
 # IMU Calibration and filter settings
-export OM_MAG_BIAS_X=-0.027
-export OM_MAG_BIAS_Y=0.039
-export OM_MAG_BIAS_Z=0.025
+export OM_MAG_BIAS_X=0.0
+export OM_MAG_BIAS_Y=0.0
+export OM_MAG_BIAS_Z=0.0
 export OM_IMU_FILTER_GAIN=0.05
 
 # Serial ports of your hardware devices
@@ -48,11 +48,11 @@ export OM_USE_RELATIVE_POSITION=True
 # NTRIP Settings
 # Set to False if using external radio.
 export OM_USE_NTRIP=True
-export OM_NTRIP_HOSTNAME=192.168.178.55
+export OM_NTRIP_HOSTNAME=192.168.96.60
 export OM_NTRIP_PORT=2101
-export OM_NTRIP_USER=gps
-export OM_NTRIP_PASSWORD=gps
-export OM_NTRIP_ENDPOINT=BASE1
+export OM_NTRIP_USER=rtk
+export OM_NTRIP_PASSWORD=rtk
+export OM_NTRIP_ENDPOINT=rtk
 
 ################################
 ##    Mower Logic Settings    ##
@@ -60,7 +60,7 @@ export OM_NTRIP_ENDPOINT=BASE1
 
 # Voltages for battery to be considered full or empty
 export OM_BATTERY_EMPTY_VOLTAGE=23.0
-export OM_BATTERY_FULL_VOLTAGE=28.0
+export OM_BATTERY_FULL_VOLTAGE=24.0
 
 # Mower motor temperatures to stop and start mowing
 export OM_MOWING_MOTOR_TEMP_HIGH=80.0
@@ -79,5 +79,5 @@ export OM_OUTLINE_OFFSET=0.05
 export OM_OUTLINE_COUNT=4
 export OM_TOOL_WIDTH=0.13
 
-export OM_DOCKING_DISTANCE=1.0
+export OM_DOCKING_DISTANCE=2.0
 export OM_UNDOCK_DISTANCE=2.0

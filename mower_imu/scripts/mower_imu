@@ -63,7 +63,7 @@ def main():
     global last_imu_ts
 
     imu = MPU9250(smbus2.SMBus(4), 0x68)
-
+    imu.loadCalibDataFromFile('/home/ubuntu/mag.json')
     while True:
         try:
             imu.begin()
