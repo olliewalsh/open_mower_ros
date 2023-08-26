@@ -39,6 +39,13 @@ private:
     bool mowerEnabled = false;
     std::vector<slic3r_coverage_planner::Path> currentMowingPaths;
 
+    ros::Time last_checkpoint;
+    int currentMowingPath;
+    int currentArea;
+    int currentMowingPathIndex;
+    int mowingPathIndexOffset;
+    std::string currentMowingPlanDigest;
+
 
 public:
     MowingBehavior();
@@ -76,6 +83,10 @@ public:
     void handle_action(std::string action) override;
 
     void update_actions();
+
+    void checkpoint();
+
+    bool restore_checkpoint();
 };
 
 
