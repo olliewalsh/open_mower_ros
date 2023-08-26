@@ -14,6 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
   mower_map
   mower_msgs
   nav_msgs
+  rosbag
   roscpp
   slic3r_coverage_planner
   tf2
@@ -60,11 +61,10 @@ find_package(catkin REQUIRED COMPONENTS
 ##   * add every package in MSG_DEP_SET to generate_messages(DEPENDENCIES ...)
 
 ## Generate messages in the 'msg' folder
-# add_message_files(
-#   FILES
-#   Message1.msg
-#   Message2.msg
-# )
+add_message_files(
+  FILES
+  CheckPoint.msg
+)
 
 ## Generate services in the 'srv' folder
 # add_service_files(
@@ -81,10 +81,10 @@ find_package(catkin REQUIRED COMPONENTS
 # )
 
 ## Generate added messages and services with any dependencies listed here
-# generate_messages(
+generate_messages(
 #   DEPENDENCIES
 #   mbf_msgs#   mower_msgs#   nav_msgs#   tf2_geometry_msgs
-# )
+)
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##

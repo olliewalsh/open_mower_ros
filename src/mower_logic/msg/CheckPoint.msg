@@ -1,0 +1,3 @@
+int32 currentMowingPath
+int32 currentArea
+int32 currentMowingPathIndex

@@ -25,6 +25,8 @@
 #include "ftc_local_planner/PlannerGetProgress.h"
 #include "xbot_msgs/ActionInfo.h"
 
+#include <atomic>
+
 class MowingBehavior : public Behavior {
 
 private:
@@ -38,6 +40,12 @@ private:
     // Progress
     bool mowerEnabled = false;
     std::vector<slic3r_coverage_planner::Path> currentMowingPaths;
+
+    ros::Time last_checkpoint;
+    std::atomic<int> currentMowingPath;
+    std::atomic<int> currentArea;
+    std::atomic<int> currentMowingPathIndex;
+    int mowingPathIndexOffset;
 
 
 public:
@@ -76,6 +84,10 @@ public:
     void handle_action(std::string action) override;
 
     void update_actions();
+
+    void checkpoint();
+
+    void restore_checkpoint();
 };
 
 
