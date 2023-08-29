@@ -22,6 +22,10 @@
 
 #include <rosbag/bag.h>
 #include <rosbag/view.h>
+#include <geometry_msgs/Pose.h>
+#include <cryptopp/cryptlib.h>
+#include <cryptopp/sha.h>
+#include <cryptopp/hex.h>
 
 extern ros::ServiceClient mapClient;
 extern ros::ServiceClient pathClient;
@@ -194,9 +198,24 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
 
     currentMowingPaths = pathSrv.response.paths;
 
-    // Progress to checkpoint
-    restore_checkpoint();
-    if(currentMowingPath > 0) {
+    // Calculate mowing plan digest from the poses
+    // TODO: move to slic3r_coverage_planner
+    CryptoPP::SHA256 hash;
+    byte digest[CryptoPP::SHA256::DIGESTSIZE];
+    for(const auto &path:currentMowingPaths) {
+        for(const auto &pose_stamped:path.path.poses) {
+            hash.Update(reinterpret_cast<const byte*>(&pose_stamped.pose), sizeof(geometry_msgs::Pose));
+        }
+    }
+    hash.Final((byte*)&digest[0]);
+    CryptoPP::HexEncoder encoder;
+    encoder.Attach( new CryptoPP::StringSink(currentMowingPlanDigest) );
+    encoder.Put( digest, sizeof(digest) );
+    encoder.MessageEnd();
+
+    // Proceed to checkpoint
+    if(restore_checkpoint()) {
+        ROS_INFO_STREAM("MowingBehavior: Advancing to checkpoint, path: " << currentMowingPath << " index: " << currentMowingPathIndex);
         currentMowingPaths.erase(currentMowingPaths.begin(), currentMowingPaths.begin() + currentMowingPath);
         if(currentMowingPathIndex > 0) {
             auto &poses = currentMowingPaths.front().path.poses;
@@ -571,16 +590,16 @@ void MowingBehavior::checkpoint() {
     cp.currentMowingPath = currentMowingPath;
     cp.currentArea = currentArea;
     cp.currentMowingPathIndex = currentMowingPathIndex + mowingPathIndexOffset;
+    cp.currentMowingPlanDigest = currentMowingPlanDigest;
     bag.open("checkpoint.bag", rosbag::bagmode::Write);
     bag.write("checkpoint", ros::Time::now(), cp);
     bag.close();
     last_checkpoint = ros::Time::now();
 }
 
-void MowingBehavior::restore_checkpoint() {
-    // TODO: invalidate if map or slicing params change
-    // TODO: handle mow angle increment
+bool MowingBehavior::restore_checkpoint() {
     rosbag::Bag bag;
+    bool found = false;
     try {
         bag.open("checkpoint.bag");
     } catch (rosbag::BagIOException &e) {
@@ -588,18 +607,38 @@ void MowingBehavior::restore_checkpoint() {
         currentMowingPath = 0;
         currentMowingPathIndex = 0;
         mowingPathIndexOffset = 0;
-        return;
     }
     {
         rosbag::View view(bag, rosbag::TopicQuery("checkpoint"));
         for (rosbag::MessageInstance const m: view) {
             auto cp = m.instantiate<mower_logic::CheckPoint>();
-            currentMowingPath = cp->currentMowingPath;
-            currentArea = cp->currentArea;
-            currentMowingPathIndex = cp->currentMowingPathIndex;
-            mowingPathIndexOffset = 0;
-            break;
+            if(cp->currentMowingPlanDigest == currentMowingPlanDigest) {
+                ROS_INFO_STREAM(
+                    "Restoring checkpoint for plan ("
+                    << cp->currentMowingPlanDigest
+                    << ")"
+                    << " area:" << cp->currentArea
+                    << " path: " << cp->currentMowingPath
+                    << " index: " << cp->currentMowingPathIndex
+                );
+                currentMowingPath = cp->currentMowingPath;
+                currentArea = cp->currentArea;
+                currentMowingPathIndex = cp->currentMowingPathIndex;
+                mowingPathIndexOffset = 0;
+                found = true;
+                break;
+            }
+            else {
+                ROS_INFO_STREAM(
+                    "Ignoring checkpoint for plan ("
+                    << cp->currentMowingPlanDigest <<
+                    ") current mowing plan is ("
+                    << currentMowingPlanDigest
+                    << ")"
+                );
+            }
         }
         bag.close();
     }
+    return found;
 }

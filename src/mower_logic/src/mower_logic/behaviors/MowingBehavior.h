@@ -46,6 +46,7 @@ private:
     std::atomic<int> currentArea;
     std::atomic<int> currentMowingPathIndex;
     int mowingPathIndexOffset;
+    std::string currentMowingPlanDigest;
 
 
 public:
@@ -87,7 +88,7 @@ public:
 
     void checkpoint();
 
-    void restore_checkpoint();
+    bool restore_checkpoint();
 };
 
 

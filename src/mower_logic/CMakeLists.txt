@@ -20,12 +20,14 @@ find_package(catkin REQUIRED COMPONENTS
   tf2
   tf2_geometry_msgs
   tf2_ros
-        sensor_msgs
-        robot_localization
-        xbot_msgs
-        xbot_positioning
+  sensor_msgs
+  robot_localization
+  xbot_msgs
+  xbot_positioning
 )
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(CRYPTOPP REQUIRED libcrypto++)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -131,6 +133,7 @@ catkin_package(
 include_directories(
 # include
   ${catkin_INCLUDE_DIRS}
+  ${CRYPTOPP_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -178,7 +181,7 @@ add_executable(mower_logic
         src/mower_logic/behaviors/AreaRecordingBehavior.cpp
         )
 add_dependencies(mower_logic ${catkin_EXPORTED_TARGETS} ${${PROJECT_NAME}_EXPORTED_TARGETS})
-target_link_libraries(mower_logic ${catkin_LIBRARIES})
+target_link_libraries(mower_logic ${catkin_LIBRARIES} ${CRYPTOPP_LIBRARIES})
 
 add_executable(mower_odometry src/mower_odometry/mower_odometry.cpp)
 add_dependencies(mower_odometry ${catkin_EXPORTED_TARGETS} ${${PROJECT_NAME}_EXPORTED_TARGETS})
