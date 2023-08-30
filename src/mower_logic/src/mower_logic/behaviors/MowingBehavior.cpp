@@ -617,7 +617,7 @@ bool MowingBehavior::restore_checkpoint() {
                     "Restoring checkpoint for plan ("
                     << cp->currentMowingPlanDigest
                     << ")"
-                    << " area:" << cp->currentArea
+                    << " area: " << cp->currentArea
                     << " path: " << cp->currentMowingPath
                     << " index: " << cp->currentMowingPathIndex
                 );
