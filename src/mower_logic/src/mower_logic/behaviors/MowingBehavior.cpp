@@ -209,6 +209,7 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
     }
     hash.Final((byte*)&digest[0]);
     CryptoPP::HexEncoder encoder;
+    currentMowingPlanDigest="";
     encoder.Attach( new CryptoPP::StringSink(currentMowingPlanDigest) );
     encoder.Put( digest, sizeof(digest) );
     encoder.MessageEnd();
