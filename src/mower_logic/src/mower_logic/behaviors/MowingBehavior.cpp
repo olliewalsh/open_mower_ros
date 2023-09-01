@@ -208,13 +208,13 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
     }
     hash.Final((byte*)&digest[0]);
     CryptoPP::HexEncoder encoder;
-    currentMowingPlanDigest="";
-    encoder.Attach( new CryptoPP::StringSink(currentMowingPlanDigest) );
+    std::string mowingPlanDigest="";
+    encoder.Attach( new CryptoPP::StringSink(mowingPlanDigest) );
     encoder.Put( digest, sizeof(digest) );
     encoder.MessageEnd();
 
-    // Proceed to checkpoint
-    if(restore_checkpoint()) {
+    // Proceed to checkpoint?
+    if(mowingPlanDigest == currentMowingPlanDigest) {
         ROS_INFO_STREAM("MowingBehavior: Advancing to checkpoint, path: " << currentMowingPath << " index: " << currentMowingPathIndex);
         currentMowingPaths.erase(currentMowingPaths.begin(), currentMowingPaths.begin() + currentMowingPath);
         if(currentMowingPathIndex > 0) {
@@ -222,8 +222,18 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
             poses.erase(poses.begin(), poses.begin() + currentMowingPathIndex);
             mowingPathIndexOffset = currentMowingPathIndex;
         }
+    } else {
+        ROS_INFO_STREAM(
+            "MowingBehavior: Ignoring checkpoint for plan ("
+            << currentMowingPlanDigest <<
+            ") current mowing plan is ("
+            << mowingPlanDigest
+            << ")"
+        );
+        currentMowingPlanDigest = mowingPlanDigest;
+        currentMowingPathIndex = 0;
+        mowingPathIndexOffset = 0;
     }
-    currentMowingPathIndex = 0;
 
     return true;
 }
@@ -559,6 +569,8 @@ MowingBehavior::MowingBehavior() {
     actions.push_back(continue_action);
     actions.push_back(abort_mowing_action);
     actions.push_back(skip_area_action);
+
+    restore_checkpoint();
 }
 
 void MowingBehavior::handle_action(std::string action) {
@@ -612,31 +624,21 @@ bool MowingBehavior::restore_checkpoint() {
         rosbag::View view(bag, rosbag::TopicQuery("checkpoint"));
         for (rosbag::MessageInstance const m: view) {
             auto cp = m.instantiate<mower_logic::CheckPoint>();
-            if(cp->currentMowingPlanDigest == currentMowingPlanDigest) {
-                ROS_INFO_STREAM(
-                    "Restoring checkpoint for plan ("
-                    << cp->currentMowingPlanDigest
-                    << ")"
-                    << " area: " << cp->currentArea
-                    << " path: " << cp->currentMowingPath
-                    << " index: " << cp->currentMowingPathIndex
-                );
-                currentMowingPath = cp->currentMowingPath;
-                currentArea = cp->currentArea;
-                currentMowingPathIndex = cp->currentMowingPathIndex;
-                mowingPathIndexOffset = 0;
-                found = true;
-                break;
-            }
-            else {
-                ROS_INFO_STREAM(
-                    "Ignoring checkpoint for plan ("
-                    << cp->currentMowingPlanDigest <<
-                    ") current mowing plan is ("
-                    << currentMowingPlanDigest
-                    << ")"
-                );
-            }
+            ROS_INFO_STREAM(
+                "Restoring checkpoint for plan ("
+                << cp->currentMowingPlanDigest
+                << ")"
+                << " area: " << cp->currentArea
+                << " path: " << cp->currentMowingPath
+                << " index: " << cp->currentMowingPathIndex
+            );
+            currentMowingPath = cp->currentMowingPath;
+            currentArea = cp->currentArea;
+            currentMowingPathIndex = cp->currentMowingPathIndex;
+            currentMowingPlanDigest = cp->currentMowingPlanDigest;
+            mowingPathIndexOffset = 0;
+            found = true;
+            break;
         }
         bag.close();
     }
