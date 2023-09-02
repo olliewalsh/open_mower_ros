@@ -33,6 +33,7 @@ private:
     std::vector<xbot_msgs::ActionInfo> actions;
 
     bool skip_area;
+    bool skip_path;
     bool create_mowing_plan(int area_index);
 
     bool execute_mowing_plan();
@@ -75,6 +76,10 @@ public:
     void command_s1() override;
 
     void command_s2() override;
+
+    void command_s2_long() override;
+
+    void command_s2_long() override;
 
     bool redirect_joystick() override;
 

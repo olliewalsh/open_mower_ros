@@ -58,6 +58,8 @@ public:
 
     void command_s2() override;
 
+    void command_s2_long() override;
+
     bool redirect_joystick() override;
 
     uint8_t get_sub_state() override;

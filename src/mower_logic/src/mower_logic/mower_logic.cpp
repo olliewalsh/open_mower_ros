@@ -554,6 +554,12 @@ bool highLevelCommand(mower_msgs::HighLevelControlSrvRequest &req, mower_msgs::H
                 currentBehavior->command_s2();
             }
             break;
+        case mower_msgs::HighLevelControlSrvRequest::COMMAND_S2_LONG:
+	        ROS_INFO_STREAM("COMMAND_S2_LONG");
+            if(currentBehavior) {
+                currentBehavior->command_s2_long();
+            }
+            break;
         case mower_msgs::HighLevelControlSrvRequest::COMMAND_DELETE_MAPS: {
             ROS_WARN_STREAM("COMMAND_DELETE_MAPS");
             if (currentBehavior != &AreaRecordingBehavior::INSTANCE && currentBehavior != &IdleBehavior::INSTANCE &&

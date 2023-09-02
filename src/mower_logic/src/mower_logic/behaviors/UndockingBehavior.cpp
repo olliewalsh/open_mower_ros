@@ -172,6 +172,10 @@ void UndockingBehavior::command_s2() {
 
 }
 
+void UndockingBehavior::command_s2_long() {
+
+}
+
 bool UndockingBehavior::redirect_joystick() {
     return false;
 }
