@@ -83,8 +83,7 @@ Behavior *MowingBehavior::execute() {
 }
 
 void MowingBehavior::enter() {
-    skip_area = false;
-    skip_path = false;
+    skip_area = skip_path = false;
     paused = aborted = false;
 
     for(auto& a : actions) {
@@ -584,6 +583,10 @@ void MowingBehavior::command_s1() {
 
 void MowingBehavior::command_s2() {
     skip_area = true;
+}
+
+void MowingBehavior::command_s2_long() {
+    skip_path = true;
 }
 
 bool MowingBehavior::redirect_joystick() {

@@ -357,7 +357,7 @@ void handleLowLevelUIEvent(struct ll_ui_event *ui_event) {
         case 5:
             // S2
             if(ui_event->press_duration == 2) {
-                srv.request.command = mower_msgs::HighLevelControlSrvRequest::COMMAND_DELETE_MAPS;
+                srv.request.command = mower_msgs::HighLevelControlSrvRequest::COMMAND_S2_LONG;
             } else {
                 srv.request.command = mower_msgs::HighLevelControlSrvRequest::COMMAND_S2;
             }

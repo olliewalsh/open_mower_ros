@@ -281,6 +281,10 @@ void DockingBehavior::command_s2() {
 
 }
 
+void DockingBehavior::command_s2_long() {
+
+}
+
 bool DockingBehavior::redirect_joystick() {
     return false;
 }

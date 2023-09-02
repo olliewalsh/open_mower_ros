@@ -497,6 +497,10 @@ void AreaRecordingBehavior::command_s2() {
 
 }
 
+void AreaRecordingBehavior::command_s2_long() {
+
+}
+
 bool AreaRecordingBehavior::redirect_joystick() {
     return true;
 }

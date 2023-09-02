@@ -155,6 +155,10 @@ void IdleBehavior::command_s2() {
     
 }
 
+void IdleBehavior::command_s2_long() {
+
+}
+
 bool IdleBehavior::redirect_joystick() {
     return false;
 }
