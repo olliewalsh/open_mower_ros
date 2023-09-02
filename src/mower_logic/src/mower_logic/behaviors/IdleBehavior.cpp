@@ -146,6 +146,10 @@ void IdleBehavior::command_s1() {
     start_area_recorder = true;
 }
 
+void IdleBehavior::command_s1_long() {
+
+}
+
 void IdleBehavior::command_s2() {
     
 }

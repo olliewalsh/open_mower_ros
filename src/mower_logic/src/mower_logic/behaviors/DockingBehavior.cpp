@@ -273,6 +273,10 @@ void DockingBehavior::command_s1() {
 
 }
 
+void DockingBehavior::command_s1_long() {
+
+}
+
 void DockingBehavior::command_s2() {
 
 }

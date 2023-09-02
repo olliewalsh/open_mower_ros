@@ -160,6 +160,7 @@ public:
     virtual void command_home() = 0;
     virtual void command_start() = 0;
     virtual void command_s1() = 0;
+    virtual void command_s1_long() = 0;
     virtual void command_s2() = 0;
     virtual void command_s2_long() = 0;
 

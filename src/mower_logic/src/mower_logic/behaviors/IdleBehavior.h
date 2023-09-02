@@ -56,6 +56,8 @@ public:
 
     void command_s1() override;
 
+    void command_s1_long() override;
+
     void command_s2() override;
 
     void command_s2_long() override;

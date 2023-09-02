@@ -84,7 +84,7 @@ Behavior *MowingBehavior::execute() {
 }
 
 void MowingBehavior::enter() {
-    skip_area = skip_path = false;
+    skip_ahead = skip_area = skip_path = false;
     paused = aborted = false;
 
     for(auto& a : actions) {
@@ -368,7 +368,18 @@ bool MowingBehavior::execute_mowing_plan() {
                         currentMowingPathIndex = 0;
                         mowingPathIndexOffset = 0;
                         checkpoint();
-                        return true;
+                        return false;
+                    }
+                    if(skip_ahead) {
+                        auto &poses = path.path.poses;
+                        skip_ahead = false;
+                        if(poses.size() < 1000){
+                            skip_path = true;
+                            return false;
+                        }
+                        poses.erase(poses.begin(), poses.begin() + 1000);
+                        mowingPathIndexOffset+=1000;
+                        return false;
                     }
                     if (aborted) {
                         ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) ABORT was requested - stopping path execution.");
@@ -426,7 +437,6 @@ bool MowingBehavior::execute_mowing_plan() {
                         currentMowingPath++;
                         currentMowingPathIndex = 0;
                         mowingPathIndexOffset = 0;
-                        checkpoint();
                     }
                 }
                 continue;
@@ -473,6 +483,26 @@ bool MowingBehavior::execute_mowing_plan() {
                         currentMowingPaths.clear();
                         skip_area = false;
                         return true;
+                    }
+                    if(skip_path) {
+                        currentMowingPaths.erase(currentMowingPaths.begin());
+                        skip_path= false;
+                        currentMowingPath++;
+                        currentMowingPathIndex = 0;
+                        mowingPathIndexOffset = 0;
+                        checkpoint();
+                        return false;
+                    }
+                    if(skip_ahead) {
+                        auto &poses = path.path.poses;
+                        skip_ahead = false;
+                        if(poses.size() < 1000){
+                            skip_path = true;
+                            return false;
+                        }
+                        poses.erase(poses.begin(), poses.begin() + 1000);
+                        mowingPathIndexOffset+=1000;
+                        return false;
                     }
                     if (aborted) {
                         ROS_INFO_STREAM("MowingBehavior: (MOW) ABORT was requested - stopping path execution.");
@@ -543,7 +573,6 @@ bool MowingBehavior::execute_mowing_plan() {
                     this->setPause();
                     update_actions();
                 }
-                checkpoint();
             }
         }
     }
@@ -572,6 +601,10 @@ void MowingBehavior::command_start() {
 void MowingBehavior::command_s1() {
     ROS_INFO_STREAM("MowingBehavior: MANUAL PAUSED");
     this->requestPause();
+}
+
+void MowingBehavior::command_s1_long() {
+    skip_ahead = true;
 }
 
 void MowingBehavior::command_s2() {

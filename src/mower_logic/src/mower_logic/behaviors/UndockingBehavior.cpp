@@ -168,6 +168,10 @@ void UndockingBehavior::command_s1() {
 
 }
 
+void UndockingBehavior::command_s1_long() {
+
+}
+
 void UndockingBehavior::command_s2() {
 
 }

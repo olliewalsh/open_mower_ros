@@ -315,7 +315,11 @@ void handleLowLevelUIEvent(struct ll_ui_event *ui_event) {
             break;
         case 4:
             // S1
-            srv.request.command = mower_msgs::HighLevelControlSrvRequest::COMMAND_S1;
+            if(ui_event->press_duration == 2) {
+                srv.request.command = mower_msgs::HighLevelControlSrvRequest::COMMAND_S1_LONG;
+            } else {
+                srv.request.command = mower_msgs::HighLevelControlSrvRequest::COMMAND_S1;
+            }
             break;
         case 5:
             // S2

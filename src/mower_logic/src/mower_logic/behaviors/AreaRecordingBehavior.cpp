@@ -493,6 +493,10 @@ void AreaRecordingBehavior::command_s1() {
 
 }
 
+void AreaRecordingBehavior::command_s1_long() {
+
+}
+
 void AreaRecordingBehavior::command_s2() {
 
 }

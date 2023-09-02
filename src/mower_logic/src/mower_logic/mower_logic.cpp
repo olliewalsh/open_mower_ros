@@ -548,6 +548,12 @@ bool highLevelCommand(mower_msgs::HighLevelControlSrvRequest &req, mower_msgs::H
                 currentBehavior->command_s1();
             }
             break;
+        case mower_msgs::HighLevelControlSrvRequest::COMMAND_S1_LONG:
+	        ROS_INFO_STREAM("COMMAND_S1_LONG");
+            if(currentBehavior) {
+                currentBehavior->command_s1_long();
+            }
+            break;
         case mower_msgs::HighLevelControlSrvRequest::COMMAND_S2:
 	        ROS_INFO_STREAM("COMMAND_S2"); 
             if(currentBehavior) {
