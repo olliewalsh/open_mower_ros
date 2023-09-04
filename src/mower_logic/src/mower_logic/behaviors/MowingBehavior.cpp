@@ -431,8 +431,10 @@ bool MowingBehavior::execute_mowing_plan() {
                     }
                     else
                     {
+                        int absoluteIndex = currentMowingPathIndex + mowingPathIndexOffset;
                         // Unable to reach the start of the mow path (we tried multiple attempts for the same point, and we skipped points which also didnt work, time to give up) 
-                        ROS_ERROR_STREAM("MowingBehavior: (FIRST POINT) Max retries reached, we are unable to reach any of the first points - aborting this mow area ...");
+                        ROS_ERROR_STREAM("MowingBehavior: (FIRST POINT) Max retries reached, we are unable to reach any of the first points - aborting at index: "
+                            << absoluteIndex << " path: " << currentMowingPath << " area: " << currentArea );
                         currentMowingPaths.erase(currentMowingPaths.begin());
                         currentMowingPath++;
                         currentMowingPathIndex = 0;
