@@ -367,7 +367,6 @@ bool MowingBehavior::execute_mowing_plan() {
                         currentMowingPath++;
                         currentMowingPathIndex = 0;
                         mowingPathIndexOffset = 0;
-                        checkpoint();
                         return false;
                     }
                     if(skip_ahead) {
@@ -450,6 +449,7 @@ bool MowingBehavior::execute_mowing_plan() {
             // we have reached the start pose of the mow area, reset error handling values
             first_point_attempt_counter = 0;
             first_point_trim_counter = 0;
+            checkpoint();
         }
         
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -492,7 +492,6 @@ bool MowingBehavior::execute_mowing_plan() {
                         currentMowingPath++;
                         currentMowingPathIndex = 0;
                         mowingPathIndexOffset = 0;
-                        checkpoint();
                         return false;
                     }
                     if(skip_ahead) {
