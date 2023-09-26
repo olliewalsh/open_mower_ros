@@ -44,6 +44,7 @@ class DockingBehavior : public Behavior {
   bool approach_docking_point();
 
   bool dock_straight();
+  bool recovery();
 
  public:
   std::string state_name() override;
