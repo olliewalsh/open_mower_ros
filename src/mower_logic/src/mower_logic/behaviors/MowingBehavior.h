@@ -44,10 +44,9 @@ private:
     std::vector<slic3r_coverage_planner::Path> currentMowingPaths;
 
     ros::Time last_checkpoint;
-    std::atomic<int> currentMowingPath;
-    std::atomic<int> currentArea;
-    std::atomic<int> currentMowingPathIndex;
-    int mowingPathIndexOffset;
+    int currentMowingPath;
+    int currentArea;
+    int currentMowingPathIndex;
     std::string currentMowingPlanDigest;
 
 
