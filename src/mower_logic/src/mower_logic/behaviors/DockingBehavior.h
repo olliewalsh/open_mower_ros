@@ -43,6 +43,8 @@ private:
 
     bool dock_straight();
 
+    bool recovery();
+
 public:
     std::string state_name() override;
 

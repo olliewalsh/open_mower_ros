@@ -16,6 +16,7 @@
 //
 #include "DockingBehavior.h"
 #include "PerimeterDocking.h"
+#include "xbot_msgs/AbsolutePose.h"
 
 extern ros::ServiceClient dockingPointClient;
 extern actionlib::SimpleActionClient<mbf_msgs::MoveBaseAction> *mbfClient;
@@ -171,6 +172,31 @@ bool DockingBehavior::dock_straight() {
     return dockingSuccess;
 }
 
+bool DockingBehavior::recovery() {
+    ROS_INFO_STREAM("Docking recovery, navigating to a random pose and retrying");
+
+    auto odom_ptr = ros::topic::waitForMessage<xbot_msgs::AbsolutePose>("/xbot_positioning/xb_pose", ros::Duration(1, 0));
+    auto current_pos = odom_ptr->pose.pose.position;
+
+    geometry_msgs::PoseStamped recovery_pose;
+    recovery_pose.header.frame_id = "map";
+    recovery_pose.header.stamp = ros::Time::now();
+
+    recovery_pose.pose.position.x = current_pos.x + 4.0*rand()/RAND_MAX - 2.0;
+    recovery_pose.pose.position.y = current_pos.y + 4.0*rand()/RAND_MAX - 2.0;
+
+    double yaw = atan2(recovery_pose.pose.position.y - current_pos.y, recovery_pose.pose.position.x - current_pos.x);
+    tf2::Quaternion recovery_orientation(0.0, 0.0, yaw);
+    recovery_pose.pose.orientation = tf2::toMsg(recovery_orientation);
+
+    mbf_msgs::MoveBaseGoal moveBaseGoal;
+    moveBaseGoal.target_pose = recovery_pose;
+    moveBaseGoal.controller = "FTCPlanner";
+    auto result = mbfClient->sendGoalAndWait(moveBaseGoal);
+    return (result.state_ != result.SUCCEEDED);
+}
+
+
 std::string DockingBehavior::state_name() {
     return "DOCKING";
 }
@@ -196,6 +222,8 @@ Behavior *DockingBehavior::execute() {
 
         retryCount++;
         if(retryCount <= config.docking_retry_count) {
+            // Move around before retrying
+            recovery();
             ROS_ERROR("Retrying docking approach");
             return &DockingBehavior::INSTANCE;
         }
