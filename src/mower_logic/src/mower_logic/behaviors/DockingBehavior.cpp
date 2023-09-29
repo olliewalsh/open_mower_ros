@@ -40,11 +40,14 @@ bool DockingBehavior::approach_docking_point() {
   double roll, pitch, yaw;
   m.getRPY(roll, pitch, yaw);
 
+  double docking_approach_distance = config.docking_approach_distance + \
+        2*config.docking_approach_distance_variance*rand()/RAND_MAX - config.docking_approach_distance_variance;
+
   // Get the approach start point
   {
     geometry_msgs::PoseStamped docking_approach_point = docking_pose_stamped;
-    docking_approach_point.pose.position.x -= cos(yaw) * config.docking_approach_distance;
-    docking_approach_point.pose.position.y -= sin(yaw) * config.docking_approach_distance;
+    docking_approach_point.pose.position.x -= cos(yaw) * docking_approach_distance;
+    docking_approach_point.pose.position.y -= sin(yaw) * docking_approach_distance;
     mbf_msgs::MoveBaseGoal moveBaseGoal;
     moveBaseGoal.target_pose = docking_approach_point;
     moveBaseGoal.controller = "FTCPlanner";
