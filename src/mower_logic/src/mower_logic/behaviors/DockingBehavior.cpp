@@ -37,12 +37,14 @@ bool DockingBehavior::approach_docking_point() {
     double roll, pitch, yaw;
     m.getRPY(roll, pitch, yaw);
 
+    double docking_approach_distance = config.docking_approach_distance + \
+        2*config.docking_approach_distance_variance*rand()/RAND_MAX - config.docking_approach_distance_variance;
 
     // Get the approach start point
     {
         geometry_msgs::PoseStamped docking_approach_point = docking_pose_stamped;
-        docking_approach_point.pose.position.x -= cos(yaw) * config.docking_approach_distance;
-        docking_approach_point.pose.position.y -= sin(yaw) * config.docking_approach_distance;
+        docking_approach_point.pose.position.x -= cos(yaw) * docking_approach_distance;
+        docking_approach_point.pose.position.y -= sin(yaw) * docking_approach_distance;
         mbf_msgs::MoveBaseGoal moveBaseGoal;
         moveBaseGoal.target_pose = docking_approach_point;
         moveBaseGoal.controller = "FTCPlanner";
@@ -57,7 +59,7 @@ bool DockingBehavior::approach_docking_point() {
 
         nav_msgs::Path path;
 
-        int dock_point_count = config.docking_approach_distance * 10.0;
+        int dock_point_count = docking_approach_distance * 10.0;
         for (int i = 0; i <= dock_point_count; i++) {
             geometry_msgs::PoseStamped docking_pose_stamped_front = docking_pose_stamped;
             docking_pose_stamped_front.pose.position.x -= cos(yaw) * ((dock_point_count - i) / 10.0);
@@ -70,7 +72,7 @@ bool DockingBehavior::approach_docking_point() {
         exePathGoal.dist_tolerance = 0.1;
         exePathGoal.tolerance_from_action = true;
         exePathGoal.controller = "FTCPlanner";
-        ROS_INFO_STREAM("Executing Docking Approach");
+        ROS_INFO_STREAM("Executing Docking Approach with distance: " << docking_approach_distance);
 
         auto approachResult = mbfClientExePath->sendGoalAndWait(exePathGoal);
         if (approachResult.state_ != approachResult.SUCCEEDED) {

@@ -49,7 +49,9 @@ Behavior *UndockingBehavior::execute() {
     nav_msgs::Path path;
 
 
-    int undock_point_count = config.undock_distance * 10.0;
+    double undock_distance = config.undock_distance + 2*config.undock_distance_variance*rand()/RAND_MAX - config.undock_distance_variance;
+
+    int undock_point_count = undock_distance * 10.0;
     for (int i = 0; i < undock_point_count; i++) {
         geometry_msgs::PoseStamped docking_pose_stamped_front;
         docking_pose_stamped_front.pose = pose.pose.pose;
@@ -64,6 +66,8 @@ Behavior *UndockingBehavior::execute() {
     exePathGoal.dist_tolerance = 0.1;
     exePathGoal.tolerance_from_action = true;
     exePathGoal.controller = "DockingFTCPlanner";
+
+    ROS_INFO_STREAM("Executing Undock with distance: " << undock_distance);
 
     auto result = mbfClientExePath->sendGoalAndWait(exePathGoal);
 
