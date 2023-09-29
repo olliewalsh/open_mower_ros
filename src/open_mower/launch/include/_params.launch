@@ -101,10 +101,12 @@
         <param name="mower_logic/automatic_mode" value="$(optenv OM_AUTOMATIC_MODE 0)"/>
         <param name="mower_logic/docking_distance" value="$(env OM_DOCKING_DISTANCE)"/>
         <param name="mower_logic/docking_approach_distance" value="$(optenv OM_DOCKING_APPROACH_DISTANCE 1.5)"/>
+        <param name="mower_logic/docking_approach_distance_variance" value="$(optenv OM_DOCKING_APPROACH_DISTANCE_VARIANCE 0)"/>
         <param name="mower_logic/docking_extra_time" value="$(optenv OM_DOCKING_EXTRA_TIME 0)"/>
         <param name="mower_logic/docking_retry_count" value="$(optenv OM_DOCKING_RETRY_COUNT 4)"/>
         <param name="mower_logic/docking_redock" value="$(optenv OM_DOCKING_REDOCK False)"/>
         <param name="mower_logic/undock_distance" value="$(env OM_UNDOCK_DISTANCE)"/>
+        <param name="mower_logic/undock_distance_variance" value="$(optenv OM_UNDOCK_DISTANCE_VARIANCE 0)"/>
         <param name="mower_logic/perimeter_signal" value="$(optenv OM_PERIMETER_SIGNAL)"/>
         <param name="mower_logic/tool_width" value="$(env OM_TOOL_WIDTH)"/>
         <param name="mower_logic/enable_mower" value="$(env OM_ENABLE_MOWER)"/>

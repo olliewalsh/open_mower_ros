@@ -134,6 +134,9 @@ export OM_USE_F9R_SENSOR_FUSION=False
 # If the additional angled move isn't used then this needs to be large enough for the robot to have GPS reception.
 export OM_UNDOCK_DISTANCE=2.0
 #
+# Vary the undocking distance by +- this value
+# export OM_UNDOCK_DISTANCE_VARIANCE=0.0
+#
 # The additional second stage distance to drive at an angle for undocking. This needs to be large enough for the robot to have GPS reception.
 # Note - this section may still be driven without gps so don't expect high positional accuracy.
 # export OM_UNDOCK_ANGLED_DISTANCE=0.0
@@ -156,6 +159,10 @@ export OM_UNDOCKING_WAIT_TIME=0.0
 # Docking starts at this distance from the dock point.
 # Has to be at least the length from the dock to your nav- or mow-area, otherwise docking will fail!
 # export OM_DOCKING_APPROACH_DISTANCE=1.5
+#
+# Vary the docking approach distance by +- this value
+# export OM_DOCKING_APPROACH_DISTANCE_VARIANCE=0.0
+#
 #
 # The distance to drive forward AFTER reaching the second docking point
 export OM_DOCKING_DISTANCE=1.0
