@@ -45,9 +45,10 @@ private:
 
     ros::Time last_checkpoint;
     int currentMowingPath;
-    int currentArea;
+    int currentMowingArea;
     int currentMowingPathIndex;
     std::string currentMowingPlanDigest;
+    double currentMowingAngleIncrementSum;
 
 
 public:

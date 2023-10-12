@@ -50,7 +50,7 @@ Behavior *MowingBehavior::execute() {
     shared_state->active_semiautomatic_task = true;
 
     while (ros::ok() && !aborted) {
-        if (currentMowingPaths.empty() && !create_mowing_plan(currentArea)) {
+        if (currentMowingPaths.empty() && !create_mowing_plan(currentMowingArea)) {
             ROS_INFO_STREAM("MowingBehavior: Could not create mowing plan, docking");
             // Start again from first area next time.
             reset();
@@ -64,14 +64,11 @@ Behavior *MowingBehavior::execute() {
         if (finished) {
             // skip to next area if current
             ROS_INFO_STREAM("MowingBehavior: Executing mowing plan - finished");
-            currentArea++;
+            currentMowingArea++;
             currentMowingPaths.clear();
             currentMowingPath = 0;
             currentMowingPathIndex = 0;
             checkpoint();
-            auto config = getConfig();
-            config.current_area++;
-            setConfig(config);
         }
     }
 
@@ -102,24 +99,17 @@ void MowingBehavior::exit() {
 
 void MowingBehavior::reset() {
     currentMowingPaths.clear();
-    currentArea = 0;
+    currentMowingArea = 0;
     currentMowingPath = 0;
     currentMowingPathIndex = 0;
+    // increase cumulative mowing angle offset increment
+    currentMowingAngleIncrementSum = std::fmod(currentMowingAngleIncrementSum + getConfig().mow_angle_increment, 360);
     checkpoint();
-    auto config = getConfig();
-    config.current_area = 0;
 
     if (config.automatic_mode == eAutoMode::SEMIAUTO) {
         ROS_INFO_STREAM("MowingBehavior: Finished semiautomatic task");
         shared_state->active_semiautomatic_task = false;
     }
-
-    // increment mowing angle offset and return into the <-180, 180> range
-    config.mow_angle_offset = std::fmod(config.mow_angle_offset + config.mow_angle_increment + 180, 360);
-    if (config.mow_angle_offset < 0) config.mow_angle_offset += 360;
-    config.mow_angle_offset -= 180;
-
-    setConfig(config);
 }
 
 bool MowingBehavior::needs_gps() {
@@ -172,13 +162,16 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
         }
     }
 
-    // handling mowing angle offset
-    ROS_INFO_STREAM("MowingBehavior: mowing angle offset: " << (config.mow_angle_offset * (M_PI / 180.0)));
+    // add mowing angle offset increment and return into the <-180, 180> range
+    double mow_angle_offset = std::fmod(getConfig().mow_angle_offset + currentMowingAngleIncrementSum + 180, 360);
+    if (mow_angle_offset < 0) mow_angle_offset += 360;
+    mow_angle_offset -= 180;
+    ROS_INFO_STREAM("MowingBehavior: mowing angle offset (deg): " << mow_angle_offset);
     if (config.mow_angle_offset_is_absolute) {
-        angle = config.mow_angle_offset * (M_PI / 180.0);
+        angle = mow_angle_offset * (M_PI / 180.0);
         ROS_INFO_STREAM("MowingBehavior: Custom mowing angle: " << angle);
     } else {
-        angle = angle + config.mow_angle_offset * (M_PI / 180.0);
+        angle = angle + mow_angle_offset * (M_PI / 180.0);
         ROS_INFO_STREAM("MowingBehavior: Auto-detected mowing angle + mowing angle offset: " << angle);
     }
 
@@ -225,6 +218,7 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
             << mowingPlanDigest
             << ")"
         );
+        // Plan has changed so must restart the area
         currentMowingPlanDigest = mowingPlanDigest;
         currentMowingPath = 0;
         currentMowingPathIndex = 0;
@@ -419,7 +413,7 @@ bool MowingBehavior::execute_mowing_plan() {
                     {
                         // Unable to reach the start of the mow path (we tried multiple attempts for the same point, and we skipped points which also didnt work, time to give up) 
                         ROS_ERROR_STREAM("MowingBehavior: (FIRST POINT) Max retries reached, we are unable to reach any of the first points - aborting at index: "
-                            << currentMowingPathIndex << " path: " << currentMowingPath << " area: " << currentArea );
+                            << currentMowingPathIndex << " path: " << currentMowingPath << " area: " << currentMowingArea );
                         currentMowingPath++;
                         currentMowingPathIndex = 0;
                     }
@@ -662,9 +656,10 @@ void MowingBehavior::checkpoint() {
     rosbag::Bag bag;
     mower_logic::CheckPoint cp;
     cp.currentMowingPath = currentMowingPath;
-    cp.currentArea = currentArea;
+    cp.currentMowingArea = currentMowingArea;
     cp.currentMowingPathIndex = currentMowingPathIndex;
     cp.currentMowingPlanDigest = currentMowingPlanDigest;
+    cp.currentMowingAngleIncrementSum = currentMowingAngleIncrementSum;
     bag.open("checkpoint.bag", rosbag::bagmode::Write);
     bag.write("checkpoint", ros::Time::now(), cp);
     bag.close();
@@ -677,9 +672,12 @@ bool MowingBehavior::restore_checkpoint() {
     try {
         bag.open("checkpoint.bag");
     } catch (rosbag::BagIOException &e) {
-        currentArea = getConfig().current_area;
+        // Checkpoint does not exist or is corrupt, start at the very beginning
+        currentMowingArea = 0;
         currentMowingPath = 0;
         currentMowingPathIndex = 0;
+        currentMowingAngleIncrementSum = 0;
+        return false;
     }
     {
         rosbag::View view(bag, rosbag::TopicQuery("checkpoint"));
@@ -689,14 +687,16 @@ bool MowingBehavior::restore_checkpoint() {
                 "Restoring checkpoint for plan ("
                 << cp->currentMowingPlanDigest
                 << ")"
-                << " area: " << cp->currentArea
+                << " area: " << cp->currentMowingArea
                 << " path: " << cp->currentMowingPath
                 << " index: " << cp->currentMowingPathIndex
+                << " angle increment sum: " << cp->currentMowingAngleIncrementSum
             );
             currentMowingPath = cp->currentMowingPath;
-            currentArea = cp->currentArea;
+            currentMowingArea = cp->currentMowingArea;
             currentMowingPathIndex = cp->currentMowingPathIndex;
             currentMowingPlanDigest = cp->currentMowingPlanDigest;
+            currentMowingAngleIncrementSum = cp->currentMowingAngleIncrementSum;
             found = true;
             break;
         }
