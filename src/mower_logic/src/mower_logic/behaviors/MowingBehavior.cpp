@@ -683,22 +683,24 @@ bool MowingBehavior::restore_checkpoint() {
         rosbag::View view(bag, rosbag::TopicQuery("checkpoint"));
         for (rosbag::MessageInstance const m: view) {
             auto cp = m.instantiate<mower_logic::CheckPoint>();
-            ROS_INFO_STREAM(
-                "Restoring checkpoint for plan ("
-                << cp->currentMowingPlanDigest
-                << ")"
-                << " area: " << cp->currentMowingArea
-                << " path: " << cp->currentMowingPath
-                << " index: " << cp->currentMowingPathIndex
-                << " angle increment sum: " << cp->currentMowingAngleIncrementSum
-            );
-            currentMowingPath = cp->currentMowingPath;
-            currentMowingArea = cp->currentMowingArea;
-            currentMowingPathIndex = cp->currentMowingPathIndex;
-            currentMowingPlanDigest = cp->currentMowingPlanDigest;
-            currentMowingAngleIncrementSum = cp->currentMowingAngleIncrementSum;
-            found = true;
-            break;
+            if(cp) {
+                ROS_INFO_STREAM(
+                    "Restoring checkpoint for plan ("
+                    << cp->currentMowingPlanDigest
+                    << ")"
+                    << " area: " << cp->currentMowingArea
+                    << " path: " << cp->currentMowingPath
+                    << " index: " << cp->currentMowingPathIndex
+                    << " angle increment sum: " << cp->currentMowingAngleIncrementSum
+                );
+                currentMowingPath = cp->currentMowingPath;
+                currentMowingArea = cp->currentMowingArea;
+                currentMowingPathIndex = cp->currentMowingPathIndex;
+                currentMowingPlanDigest = cp->currentMowingPlanDigest;
+                currentMowingAngleIncrementSum = cp->currentMowingAngleIncrementSum;
+                found = true;
+                break;
+            }
         }
         bag.close();
     }
