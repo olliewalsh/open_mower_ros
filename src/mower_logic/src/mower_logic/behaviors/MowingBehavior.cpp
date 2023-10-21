@@ -68,7 +68,6 @@ Behavior *MowingBehavior::execute() {
             currentMowingPaths.clear();
             currentMowingPath = 0;
             currentMowingPathIndex = 0;
-            checkpoint();
         }
     }
 
@@ -304,7 +303,6 @@ bool MowingBehavior::execute_mowing_plan() {
             ROS_INFO_STREAM("MowingBehavior: Skipping empty path.");
             currentMowingPath++;
             currentMowingPathIndex = 0;
-            checkpoint();
             continue;
         }
 
@@ -427,7 +425,6 @@ bool MowingBehavior::execute_mowing_plan() {
             // we have reached the start pose of the mow area, reset error handling values
             first_point_attempt_counter = 0;
             first_point_trim_counter = 0;
-            checkpoint();
         }
         
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
