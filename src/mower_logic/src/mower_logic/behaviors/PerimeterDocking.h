@@ -46,7 +46,7 @@ public:
   bool redirect_joystick() override;
   uint8_t get_sub_state() override;
   uint8_t get_state() override;
-  void handle_action(std::string action) override;
+  bool handle_action(std::string action) override;
 protected:
   int setupConnections();
 };

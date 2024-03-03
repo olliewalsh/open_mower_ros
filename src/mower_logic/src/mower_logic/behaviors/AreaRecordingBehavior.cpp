@@ -530,7 +530,7 @@ std::string AreaRecordingBehavior::sub_state_name() {
     }
 }
 
-void AreaRecordingBehavior::handle_action(std::string action) {
+bool AreaRecordingBehavior::handle_action(std::string action) {
     if(action == "mower_logic:area_recording/start_recording") {
         ROS_INFO_STREAM("Got start recording");
         poly_recording_enabled = true;
@@ -577,7 +577,10 @@ void AreaRecordingBehavior::handle_action(std::string action) {
     } else if(action == "mower_logic:area_recording/record_dock") {
         ROS_INFO_STREAM("Got record dock");
         set_docking_position = true;
+    } else {
+        return false;
     }
+    return true;
 }
 
 AreaRecordingBehavior::AreaRecordingBehavior() {
