@@ -637,6 +637,23 @@ void actionReceived(const std_msgs::String::ConstPtr &action) {
     return;
   }
 
+  if(action->data == "mower_logic:automatic_mowing/stop") {
+    auto new_config = getConfig();
+    if(!new_config.manual_pause_mowing) {
+        new_config.manual_pause_mowing = true;
+        setConfig(new_config);
+    }
+    return;
+  }
+  if(action->data == "mower_logic:automatic_mowing/start" ) {
+    auto new_config = getConfig();
+    if(new_config.manual_pause_mowing) {
+        new_config.manual_pause_mowing = false;
+        setConfig(new_config);
+    }
+    return;
+  }
+
   if (currentBehavior) {
     currentBehavior->handle_action(action->data);
   }
@@ -655,6 +672,18 @@ void buildRootActions() {
   reset_emergency_action.enabled = true;
   reset_emergency_action.action_name = "Reset Emergency";
   rootActions.push_back(reset_emergency_action);
+
+  xbot_msgs::ActionInfo stop_auto_action;
+  stop_auto_action.action_id = "stop";
+  stop_auto_action.enabled = true;
+  stop_auto_action.action_name = "Stop Automatic Mowing";
+  rootActions.push_back(stop_auto_action);
+
+  xbot_msgs::ActionInfo start_auto_action;
+  start_auto_action.action_id = "start";
+  start_auto_action.enabled = true;
+  start_auto_action.action_name = "Start Automatic Mowing";
+  rootActions.push_back(start_auto_action);
 }
 
 int main(int argc, char **argv) {
@@ -847,6 +876,7 @@ int main(int argc, char **argv) {
 
   ROS_INFO("registering actions");
   registerActions("mower_logic", rootActions);
+  registerActions("mower_logic:automatic_mowing", rootActions);
 
   ROS_INFO("om_mower_logic: Got all servers, we can mow");
 
