@@ -189,12 +189,15 @@ IdleBehavior::IdleBehavior() {
     actions.push_back(start_area_recording_action);
 }
 
-void IdleBehavior::handle_action(std::string action) {
+bool IdleBehavior::handle_action(std::string action) {
     if(action == "mower_logic:idle/start_mowing") {
         ROS_INFO_STREAM("Got start_mowing command");
         manual_start_mowing = true;
     } else if(action == "mower_logic:idle/start_area_recording") {
         ROS_INFO_STREAM("Got start_area_recording command");
         start_area_recorder = true;
+    } else {
+        return false;
     }
+    return true;
 }
