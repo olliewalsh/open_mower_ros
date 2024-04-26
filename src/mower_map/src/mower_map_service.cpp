@@ -38,11 +38,13 @@
 // Include Service Messages
 #include "mower_map/AddMowingAreaSrv.h"
 #include "mower_map/GetMowingAreaSrv.h"
+#include "mower_map/HasMowingAreaSrv.h"
 #include "mower_map/DeleteMowingAreaSrv.h"
 #include "mower_map/ConvertToNavigationAreaSrv.h"
 #include "mower_map/AppendMapSrv.h"
 #include "mower_map/SetDockingPointSrv.h"
 #include "mower_map/GetDockingPointSrv.h"
+#include "mower_map/HasDockingPointSrv.h"
 #include "mower_map/SetNavPointSrv.h"
 #include "mower_map/ClearNavPointSrv.h"
 #include "mower_map/ClearMapSrv.h"
@@ -515,6 +517,11 @@ bool getMowingArea(mower_map::GetMowingAreaSrvRequest &req, mower_map::GetMowing
     return true;
 }
 
+bool hasMowingArea(mower_map::HasMowingAreaSrvRequest &req, mower_map::HasMowingAreaSrvResponse &res) {
+    ROS_INFO_STREAM("Got hasMowingArea call");
+    res.has_mowing_area = mowing_areas.size() > 0;
+    return true;
+}
 
 bool
 deleteMowingArea(mower_map::DeleteMowingAreaSrvRequest &req, mower_map::DeleteMowingAreaSrvResponse &res) {
@@ -583,8 +590,17 @@ bool getDockingPoint(mower_map::GetDockingPointSrvRequest &req, mower_map::GetDo
 
     res.docking_pose = docking_point;
 
-    return has_docking_point;
+    return true;
 }
+
+bool hasDockingPoint(mower_map::HasDockingPointSrvRequest &req, mower_map::HasDockingPointSrvResponse &res) {
+    ROS_INFO_STREAM("Has Docking Point");
+
+    res.has_docking_point = has_docking_point;
+
+    return true;
+}
+
 bool setNavPoint(mower_map::SetNavPointSrvRequest &req, mower_map::SetNavPointSrvResponse &res) {
     ROS_INFO_STREAM("Setting Nav Point");
 
@@ -637,6 +653,7 @@ int main(int argc, char **argv) {
 
     ros::ServiceServer add_area_srv = n.advertiseService("mower_map_service/add_mowing_area", addMowingArea);
     ros::ServiceServer get_area_srv = n.advertiseService("mower_map_service/get_mowing_area", getMowingArea);
+    ros::ServiceServer has_area_srv = n.advertiseService("mower_map_service/has_mowing_area", hasMowingArea);
     ros::ServiceServer delete_area_srv = n.advertiseService("mower_map_service/delete_mowing_area", deleteMowingArea);
     ros::ServiceServer append_maps_srv = n.advertiseService("mower_map_service/append_maps", appendMapFromFile);
     ros::ServiceServer convert_maps_srv = n.advertiseService("mower_map_service/convert_to_navigation_area",
@@ -645,6 +662,8 @@ int main(int argc, char **argv) {
                                                                   setDockingPoint);
     ros::ServiceServer get_docking_point_srv = n.advertiseService("mower_map_service/get_docking_point",
                                                                   getDockingPoint);
+    ros::ServiceServer has_docking_point_srv = n.advertiseService("mower_map_service/has_docking_point",
+                                                                  hasDockingPoint);
     ros::ServiceServer set_nav_point_srv = n.advertiseService("mower_map_service/set_nav_point",
                                                                   setNavPoint);
     ros::ServiceServer clear_nav_point_srv = n.advertiseService("mower_map_service/clear_nav_point",

@@ -20,7 +20,8 @@
 #include "Behavior.h"
 #include "UndockingBehavior.h"
 #include <dynamic_reconfigure/server.h>
-#include "mower_map/GetMowingAreaSrv.h"
+#include "mower_map/HasMowingAreaSrv.h"
+#include "mower_map/HasDockingPointSrv.h"
 #include "AreaRecordingBehavior.h"
 #include <mower_map/GetDockingPointSrv.h>
 #include "xbot_msgs/ActionInfo.h"

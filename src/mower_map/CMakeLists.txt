@@ -75,6 +75,8 @@ add_service_files(
         ClearNavPointSrv.srv
         SetNavPointSrv.srv
         ClearMapSrv.srv
+        HasDockingPointSrv.srv
+        HasMowingAreaSrv.srv
 )
 
 ## Generate actions in the 'action' folder
