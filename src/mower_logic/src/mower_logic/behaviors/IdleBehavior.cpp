@@ -43,19 +43,32 @@ std::string IdleBehavior::state_name() {
 }
 
 Behavior *IdleBehavior::execute() {
+  mower_map::HasMowingAreaSrv has_mowing_area_srv;
   // Check, if we have a configured map. If not, print info and go to area recorder
-  mower_map::GetMowingAreaSrv mapSrv;
-  mapSrv.request.index = 0;
-  if (!mapClient.call(mapSrv)) {
-    ROS_WARN("We don't have a map configured. Starting Area Recorder!");
-    return &AreaRecordingBehavior::INSTANCE;
+  if (!ros::service::call("mower_map_service/has_mowing_area", has_mowing_area_srv)) {
+      ROS_WARN("mower_map_service/has_mowing_area service call failed, retrying");
+      return &IdleBehavior::INSTANCE;
+  }
+  if (!has_mowing_area_srv.response.has_mowing_area){
+      ROS_WARN("We don't have a map configured. Starting Area Recorder!");
+      return &AreaRecordingBehavior::INSTANCE;
   }
 
   // Check, if we have a docking position. If not, print info and go to area recorder
+  mower_map::HasDockingPointSrv has_docking_point_srv;
+  if (!ros::service::call("mower_map_service/has_docking_point", has_docking_point_srv)) {
+      ROS_WARN("mower_map_service/has_docking_point service call failed, retrying");
+      return &IdleBehavior::INSTANCE;
+  }
+  if (!has_docking_point_srv.response.has_docking_point){
+      ROS_WARN("We don't have a docking point configured. Starting Area Recorder!");
+      return &AreaRecordingBehavior::INSTANCE;
+  }
+
   mower_map::GetDockingPointSrv get_docking_point_srv;
-  if (!dockingPointClient.call(get_docking_point_srv)) {
-    ROS_WARN("We don't have a docking point configured. Starting Area Recorder!");
-    return &AreaRecordingBehavior::INSTANCE;
+  while(!dockingPointClient.call(get_docking_point_srv)) {
+      ROS_WARN("mower_map_service/get_docking_point service call failed, retrying");
+      return &IdleBehavior::INSTANCE;
   }
 
   setGPS(false);
@@ -66,48 +79,42 @@ Behavior *IdleBehavior::execute() {
 
   ros::Rate r(25);
   while (ros::ok()) {
-    stopMoving();
-    stopBlade();
-    const auto last_config = getConfig();
-    const auto last_status = getStatus();
+      stopMoving();
+      stopBlade();
+      const auto last_config = getConfig();
+      const auto last_status = getStatus();
 
-    const bool automatic_mode = last_config.automatic_mode == eAutoMode::AUTO;
-    const bool active_semiautomatic_task = last_config.automatic_mode == eAutoMode::SEMIAUTO &&
-                                           shared_state->active_semiautomatic_task &&
-                                           !shared_state->semiautomatic_task_paused;
-    const bool rain_delay = last_config.rain_mode == 2 && ros::Time::now() < rain_resume;
-    if (rain_delay) {
-      ROS_INFO_STREAM_THROTTLE(300, "Rain delay: " << int((rain_resume - ros::Time::now()).toSec() / 60) << " minutes");
-    }
-    const bool mower_ready = last_status.v_battery > last_config.battery_full_voltage &&
-                             last_status.mow_esc_status.temperature_motor < last_config.motor_cold_temperature &&
-                             !last_config.manual_pause_mowing && !rain_delay;
+      const bool automatic_mode = last_config.automatic_mode == eAutoMode::AUTO;
+      const bool active_semiautomatic_task = last_config.automatic_mode == eAutoMode::SEMIAUTO && shared_state->active_semiautomatic_task && !shared_state->semiautomatic_task_paused;
+      const bool mower_ready = last_status.v_battery > last_config.battery_full_voltage && last_status.mow_esc_status.temperature_motor < last_config.motor_cold_temperature &&
+              !last_config.manual_pause_mowing;
 
-    if (manual_start_mowing || ((automatic_mode || active_semiautomatic_task) && mower_ready)) {
-      // set the robot's position to the dock if we're actually docked
-      if (last_status.v_charge > 5.0) {
-        if (PerimeterUndockingBehavior::configured(config)) return &PerimeterUndockingBehavior::INSTANCE;
-        ROS_INFO_STREAM("Currently inside the docking station, we set the robot's pose to the docks pose.");
-        setRobotPose(docking_pose_stamped.pose);
-        return &UndockingBehavior::INSTANCE;
+      if (manual_start_mowing || ((automatic_mode || active_semiautomatic_task) && mower_ready)) {
+          // set the robot's position to the dock if we're actually docked
+          if(last_status.v_charge > 5.0) {
+            if (PerimeterUndockingBehavior::configured(config))
+              return &PerimeterUndockingBehavior::INSTANCE;
+            ROS_INFO_STREAM("Currently inside the docking station, we set the robot's pose to the docks pose.");
+            setRobotPose(docking_pose_stamped.pose);
+            return &UndockingBehavior::INSTANCE;
+          }
+          // Not docked, so just mow
+          setGPS(true);
+          return &MowingBehavior::INSTANCE;
       }
-      // Not docked, so just mow
-      setGPS(true);
-      return &MowingBehavior::INSTANCE;
-    }
 
-    if (start_area_recorder) {
-      return &AreaRecordingBehavior::INSTANCE;
-    }
+      if(start_area_recorder) {
+          return &AreaRecordingBehavior::INSTANCE;
+      }
 
-    // This gets called if we need to refresh, e.g. on clearing maps
-    if (aborted) {
-      return &IdleBehavior::INSTANCE;
-    }
+      // This gets called if we need to refresh, e.g. on clearing maps
+      if(aborted) {
+          return &IdleBehavior::INSTANCE;
+      }
 
-    if (last_config.docking_redock && stay_docked && last_status.v_charge < 5.0) {
-      ROS_WARN("We docked but seem to have lost contact with the charger.  Undocking and trying again!");
-      return &UndockingBehavior::RETRY_INSTANCE;
+      if (last_config.docking_redock && stay_docked && last_status.v_charge < 5.0) {
+        ROS_WARN("We docked but seem to have lost contact with the charger.  Undocking and trying again!");
+        return &UndockingBehavior::RETRY_INSTANCE;
     }
 
     r.sleep();
