@@ -205,6 +205,16 @@ std::string DockingBehavior::state_name() {
 
 Behavior *DockingBehavior::execute() {
 
+    // Get the docking pose in map
+    mower_map::GetDockingPointSrv get_docking_point_srv;
+    if(!dockingPointClient.call(get_docking_point_srv)){
+        ROS_WARN("mower_map_service/get_docking_point service call failed, retrying");
+        return &DockingBehavior::INSTANCE;
+    }
+    docking_pose_stamped.pose = get_docking_point_srv.response.docking_pose;
+    docking_pose_stamped.header.frame_id = "map";
+    docking_pose_stamped.header.stamp = ros::Time::now();
+
     // Check if already docked (e.g. carried to base during emergency) and skip
     if(getStatus().v_charge > 5.0) {
         ROS_INFO_STREAM("Already inside docking station, going directly to idle.");
@@ -268,13 +278,6 @@ void DockingBehavior::enter() {
     paused = aborted = false;
     // start with target approach and then dock later
     inApproachMode = true;
-
-    // Get the docking pose in map
-    mower_map::GetDockingPointSrv get_docking_point_srv;
-    dockingPointClient.call(get_docking_point_srv);
-    docking_pose_stamped.pose = get_docking_point_srv.response.docking_pose;
-    docking_pose_stamped.header.frame_id = "map";
-    docking_pose_stamped.header.stamp = ros::Time::now();
 }
 
 void DockingBehavior::exit() {

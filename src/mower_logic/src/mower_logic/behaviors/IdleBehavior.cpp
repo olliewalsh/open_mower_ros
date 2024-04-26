@@ -42,19 +42,32 @@ std::string IdleBehavior::state_name() {
 Behavior *IdleBehavior::execute() {
 
 
+    mower_map::HasMowingAreaSrv has_mowing_area_srv;
     // Check, if we have a configured map. If not, print info and go to area recorder
-    mower_map::GetMowingAreaSrv mapSrv;
-    mapSrv.request.index = 0;
-    if (!mapClient.call(mapSrv)) {
+    if (!ros::service::call("mower_map_service/has_mowing_area", has_mowing_area_srv)) {
+        ROS_WARN("mower_map_service/has_mowing_area service call failed, retrying");
+        return &IdleBehavior::INSTANCE;
+    }
+    if (!has_mowing_area_srv.response.has_mowing_area){
         ROS_WARN("We don't have a map configured. Starting Area Recorder!");
         return &AreaRecordingBehavior::INSTANCE;
     }
 
     // Check, if we have a docking position. If not, print info and go to area recorder
-    mower_map::GetDockingPointSrv get_docking_point_srv;
-    if(!dockingPointClient.call(get_docking_point_srv)) {
+    mower_map::HasDockingPointSrv has_docking_point_srv;
+    if (!ros::service::call("mower_map_service/has_docking_point", has_docking_point_srv)) {
+        ROS_WARN("mower_map_service/has_docking_point service call failed, retrying");
+        return &IdleBehavior::INSTANCE;
+    }
+    if (!has_docking_point_srv.response.has_docking_point){
         ROS_WARN("We don't have a docking point configured. Starting Area Recorder!");
         return &AreaRecordingBehavior::INSTANCE;
+    }
+
+    mower_map::GetDockingPointSrv get_docking_point_srv;
+    while(!dockingPointClient.call(get_docking_point_srv)) {
+        ROS_WARN("mower_map_service/get_docking_point service call failed, retrying");
+        return &IdleBehavior::INSTANCE;
     }
 
     setGPS(false);
