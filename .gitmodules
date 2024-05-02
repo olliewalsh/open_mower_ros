@@ -8,7 +8,7 @@
 [submodule "src/lib/slic3r_coverage_planner"]
 	path = src/lib/slic3r_coverage_planner
 	url = https://github.com/olliewalsh/slic3r_coverage_planner.git
-	branch = simple_vis
+	branch = max_fill_path_length
 [submodule "src/lib/ntrip_client"]
 	path = src/lib/ntrip_client
 	url = https://github.com/LORD-MicroStrain/ntrip_client.git
