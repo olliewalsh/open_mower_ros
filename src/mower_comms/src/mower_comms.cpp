@@ -151,20 +151,20 @@ void publishActuators() {
 
 void convertStatus(xesc_msgs::XescStateStamped &vesc_status, mower_msgs::ESCStatus &ros_esc_status) {
   if (vesc_status.state.connection_state != xesc_msgs::XescState::XESC_CONNECTION_STATE_CONNECTED &&
-      vesc_status.state.connection_state != xesc_msgs::XescState::XESC_CONNECTION_STATE_CONNECTED_INCOMPATIBLE_FW) {
-    // ESC is disconnected
-    ros_esc_status.status = mower_msgs::ESCStatus::ESC_STATUS_DISCONNECTED;
-  } else if (vesc_status.state.fault_code) {
-    ROS_ERROR_STREAM_THROTTLE(1, "Motor controller fault code: " << vesc_status.state.fault_code);
-    // ESC has a fault
-    ros_esc_status.status = mower_msgs::ESCStatus::ESC_STATUS_ERROR;
+          vesc_status.state.connection_state != xesc_msgs::XescState::XESC_CONNECTION_STATE_CONNECTED_INCOMPATIBLE_FW) {
+      // ESC is disconnected
+      ros_esc_status.status = mower_msgs::ESCStatus::ESC_STATUS_DISCONNECTED;
+  } else if(vesc_status.state.fault_code) {
+      ROS_ERROR_STREAM_THROTTLE(1, "Motor controller fault code: " << vesc_status.state.fault_code);
+      // ESC has a fault
+      ros_esc_status.status = mower_msgs::ESCStatus::ESC_STATUS_ERROR;
   } else {
-    // ESC is OK but standing still
-    ros_esc_status.status = mower_msgs::ESCStatus::ESC_STATUS_OK;
+      // ESC is OK but standing still
+      ros_esc_status.status = mower_msgs::ESCStatus::ESC_STATUS_OK;
   }
   ros_esc_status.tacho = vesc_status.state.tacho;
-  ros_esc_status.rpm = vesc_status.state.rpm;
   ros_esc_status.current = vesc_status.state.current_input;
+  ros_esc_status.voltage = vesc_status.state.voltage_input;
   ros_esc_status.temperature_motor = vesc_status.state.temperature_motor;
   ros_esc_status.temperature_pcb = vesc_status.state.temperature_pcb;
 }
