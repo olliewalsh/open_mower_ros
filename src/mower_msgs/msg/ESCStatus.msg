@@ -6,6 +6,7 @@ uint8 ESC_STATUS_RUNNING=201
 
 uint8   status
 float32 current
+float32 voltage
 uint32  tacho
 int16   rpm
 float32 temperature_motor
