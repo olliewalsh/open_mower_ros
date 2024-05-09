@@ -38,6 +38,16 @@
 #include <xbot_msgs/WheelTick.h>
 #include "mower_msgs/HighLevelStatus.h"
 
+#include <dynamic_reconfigure/server.h>
+#include "mower_comms/MowerCommsConfig.h"
+
+dynamic_reconfigure::Server<mower_comms::MowerCommsConfig> *reconfigServer;
+mower_comms::MowerCommsConfig last_config;
+
+void setConfig(mower_comms::MowerCommsConfig c, uint32_t level) {
+    last_config = c;
+}
+
 ros::Publisher status_pub;
 ros::Publisher wheel_tick_pub;
 
@@ -66,6 +76,8 @@ float target_speed_l = 0, target_speed_r = 0;
 
 // Actual speeds (m/s) for the wheel ESCs
 float actual_speed_l = 0, actual_speed_r = 0;
+
+float speed_err_l = 0, speed_err_r = 0;
 
 // Keep last wheel tick msg to caclculate speed
 xbot_msgs::WheelTick last_wheel_tick_msg;
@@ -101,7 +113,29 @@ bool is_emergency() {
 }
 
 void publishActuators() {
-// emergency or timeout -> send 0 speeds
+    if(last_config.enable_speed_pid) {
+        speed_err_l = target_speed_l - actual_speed_l;
+        speed_l += speed_err_l * last_config.kp_speed;
+        speed_err_r = target_speed_r - actual_speed_r;
+        speed_r += speed_err_r * last_config.kp_speed;
+    }
+    else {
+        speed_l = target_speed_l;
+        speed_r = target_speed_r;
+    }
+
+    if (speed_l >= 1.0) {
+        speed_l = 1.0;
+    } else if (speed_l <= -1.0) {
+        speed_l = -1.0;
+    }
+    if (speed_r >= 1.0) {
+        speed_r = 1.0;
+    } else if (speed_r <= -1.0) {
+        speed_r = -1.0;
+    }
+
+    // emergency or timeout -> send 0 speeds
     if (is_emergency()) {
         speed_l = 0;
         speed_r = 0;
@@ -308,19 +342,8 @@ void highLevelStatusReceived(const mower_msgs::HighLevelStatus::ConstPtr &msg) {
 void velReceived(const geometry_msgs::Twist::ConstPtr &msg) {
     // TODO: update this to rad/s values and implement xESC speed control
     last_cmd_vel = ros::Time::now();
-    target_speed_r = speed_r = msg->linear.x + 0.5*wheel_distance_m*msg->angular.z;
-    target_speed_l = speed_l = msg->linear.x - 0.5*wheel_distance_m*msg->angular.z;
-
-    if (speed_l >= 1.0) {
-        speed_l = 1.0;
-    } else if (speed_l <= -1.0) {
-        speed_l = -1.0;
-    }
-    if (speed_r >= 1.0) {
-        speed_r = 1.0;
-    } else if (speed_r <= -1.0) {
-        speed_r = -1.0;
-    }
+    target_speed_r = msg->linear.x + 0.5*wheel_distance_m*msg->angular.z;
+    target_speed_l = msg->linear.x - 0.5*wheel_distance_m*msg->angular.z;
 }
 
 void handleLowLevelUIEvent(struct ll_ui_event *ui_event) {
@@ -424,7 +447,9 @@ int main(int argc, char **argv) {
     ros::NodeHandle mowerParamNh("~/mower_xesc");
     ros::NodeHandle rightParamNh("~/right_xesc");
 
-
+    reconfigServer = new dynamic_reconfigure::Server<mower_comms::MowerCommsConfig>(paramNh);
+    dynamic_reconfigure::Server<mower_comms::MowerCommsConfig>::CallbackType cb = boost::bind(&setConfig, _1, _2);
+    reconfigServer->setCallback(cb);
 
     highLevelClient = n.serviceClient<mower_msgs::HighLevelControlSrv>(
             "mower_service/high_level_control");
