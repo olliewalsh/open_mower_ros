@@ -593,9 +593,7 @@ void checkSafety(const ros::TimerEvent &timer_event) {
     rain_detected = true;
   }
 
-  if (dockingNeeded && currentBehavior != &DockingBehavior::INSTANCE &&
-      currentBehavior != &UndockingBehavior::RETRY_INSTANCE && currentBehavior != &IdleBehavior::INSTANCE &&
-      currentBehavior != &IdleBehavior::DOCKED_INSTANCE) {
+  if (dockingNeeded && currentBehavior == &MowingBehavior::INSTANCE || currentBehavior == &AreaRecordingBehavior::INSTANCE) {
     ROS_INFO_STREAM(dockingReason.rdbuf());
     abortExecution();
   }
