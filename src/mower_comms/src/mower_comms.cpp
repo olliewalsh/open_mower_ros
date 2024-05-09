@@ -65,6 +65,15 @@ bool allow_send = false;
 // Current speeds (duty cycle) for the three ESCs
 float speed_l = 0, speed_r = 0, speed_mow = 0, target_speed_mow = 0;
 
+// Target speeds (m/s) for the wheel ESCs
+float target_speed_l = 0, target_speed_r = 0;
+
+// Actual speeds (m/s) for the wheel ESCs
+float actual_speed_l = 0, actual_speed_r = 0;
+
+// Keep last wheel tick msg to caclculate speed
+xbot_msgs::WheelTick last_wheel_tick_msg;
+
 // Ticks / m and wheel distance for this robot
 double wheel_ticks_per_m = 0.0;
 double wheel_distance_m = 0.0;
@@ -234,6 +243,15 @@ void publishStatus() {
   wheel_tick_msg.wheel_direction_rr = !right_status.state.direction && abs(right_status.state.duty_cycle) > 0;
 
   wheel_tick_pub.publish(wheel_tick_msg);
+
+  actual_speed_l = (wheel_tick_msg.wheel_direction_rl ? -1 : 1) * \
+      ((wheel_tick_msg.wheel_ticks_rl - last_wheel_tick_msg.wheel_ticks_rl) / wheel_ticks_per_m) / \
+      (wheel_tick_msg.stamp - last_wheel_tick_msg.stamp).toSec();
+  actual_speed_r = (wheel_tick_msg.wheel_direction_rr ? -1 : 1) * \
+      ((wheel_tick_msg.wheel_ticks_rr - last_wheel_tick_msg.wheel_ticks_rr) / wheel_ticks_per_m) / \
+      (wheel_tick_msg.stamp - last_wheel_tick_msg.stamp).toSec();
+
+  last_wheel_tick_msg = wheel_tick_msg;
 }
 
 std::string getHallConfigsString(const HallConfig *hall_configs, const size_t size) {
@@ -386,10 +404,10 @@ void highLevelStatusReceived(const mower_msgs::HighLevelStatus::ConstPtr &msg) {
 }
 
 void velReceived(const geometry_msgs::Twist::ConstPtr &msg) {
-  // TODO: update this to rad/s values and implement xESC speed control
+    // TODO: update this to rad/s values and implement xESC speed control
   last_cmd_vel = ros::Time::now();
-  speed_r = msg->linear.x + 0.5 * wheel_distance_m * msg->angular.z;
-  speed_l = msg->linear.x - 0.5 * wheel_distance_m * msg->angular.z;
+  target_speed_r = speed_r = msg->linear.x + 0.5*wheel_distance_m*msg->angular.z;
+  target_speed_l = speed_l = msg->linear.x - 0.5*wheel_distance_m*msg->angular.z;
 
   if (speed_l >= 1.0) {
     speed_l = 1.0;
