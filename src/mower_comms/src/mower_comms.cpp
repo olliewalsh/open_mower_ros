@@ -39,6 +39,11 @@
 #include "mower_msgs/HighLevelStatus.h"
 
 #include <bitset>
+#include <dynamic_reconfigure/server.h>
+#include "mower_comms/MowerCommsConfig.h"
+
+dynamic_reconfigure::Server<mower_comms::MowerCommsConfig> *reconfigServer;
+mower_comms::MowerCommsConfig last_config;
 
 ros::Publisher status_pub;
 ros::Publisher wheel_tick_pub;
@@ -60,7 +65,7 @@ bool ll_clear_emergency = false;
 // True, if we can send to the low level board
 bool allow_send = false;
 
-// Current speeds (duty cycle) for the three ESCs
+// Current speeds (duty cycle or ticks/s) for the three ESCs
 float speed_l = 0, speed_r = 0, speed_mow = 0;
 
 // Target speeds (m/s) for the wheel ESCs
@@ -75,6 +80,10 @@ xbot_msgs::WheelTick last_wheel_tick_msg;
 // Ticks / m and wheel distance for this robot
 double wheel_ticks_per_m = 0.0;
 double wheel_distance_m = 0.0;
+
+// Wheel motor poles and ticks per rev
+double wheel_motor_poles = 0.0;
+double wheel_ticks_per_rev = 0.0;
 
 bool dfp_is_5v = false;       // DFP is set to 5V Vcc
 std::string language = "en";  // ISO-639-1 (2 char) language code
@@ -101,13 +110,39 @@ sensor_msgs::Imu sensor_imu_msg;
 
 ros::ServiceClient highLevelClient;
 
+void setConfig(mower_comms::MowerCommsConfig c, uint32_t level) {
+    last_config = c;
+}
 
 bool is_emergency() {
     return emergency_high_level || emergency_low_level;
 }
 
 void publishActuators() {
-// emergency or timeout -> send 0 speeds
+    if(last_config.enable_speed_pid) {
+        // Convert to erpm
+        speed_l = wheel_motor_poles * target_speed_l * wheel_ticks_per_m / wheel_ticks_per_rev;
+        speed_r = wheel_motor_poles * target_speed_r * wheel_ticks_per_m / wheel_ticks_per_rev;
+    }
+    else {
+        // Map m/s directly to duty_cycle
+        // Not very accurate though, results in roughly half of the target speed on C500
+        speed_l = target_speed_l;
+        speed_r = target_speed_r;
+
+        if (speed_l >= 1.0) {
+            speed_l = 1.0;
+        } else if (speed_l <= -1.0) {
+            speed_l = -1.0;
+        }
+        if (speed_r >= 1.0) {
+            speed_r = 1.0;
+        } else if (speed_r <= -1.0) {
+            speed_r = -1.0;
+        }
+    }
+
+    // emergency or timeout -> send 0 speeds
     if (is_emergency()) {
         speed_l = 0;
         speed_r = 0;
@@ -128,8 +163,13 @@ void publishActuators() {
         mow_xesc_interface->setDutyCycle(speed_mow);
     }
     // We need to invert the speed, because the ESC has the same config as the left one, so the motor is running in the "wrong" direction
-    left_xesc_interface->setDutyCycle(speed_l);
-    right_xesc_interface->setDutyCycle(-speed_r);
+    if(last_config.enable_speed_pid) {
+        left_xesc_interface->setSpeed(speed_l);
+        right_xesc_interface->setSpeed(-speed_r);
+    } else {
+        left_xesc_interface->setDutyCycle(speed_l);
+        right_xesc_interface->setDutyCycle(-speed_r);
+    }
 
     struct ll_heartbeat heartbeat = {
             .type = PACKET_ID_LL_HEARTBEAT,
@@ -345,19 +385,8 @@ void highLevelStatusReceived(const mower_msgs::HighLevelStatus::ConstPtr &msg) {
 void velReceived(const geometry_msgs::Twist::ConstPtr &msg) {
     // TODO: update this to rad/s values and implement xESC speed control
     last_cmd_vel = ros::Time::now();
-    target_speed_r = speed_r = msg->linear.x + 0.5*wheel_distance_m*msg->angular.z;
-    target_speed_l = speed_l = msg->linear.x - 0.5*wheel_distance_m*msg->angular.z;
-
-    if (speed_l >= 1.0) {
-        speed_l = 1.0;
-    } else if (speed_l <= -1.0) {
-        speed_l = -1.0;
-    }
-    if (speed_r >= 1.0) {
-        speed_r = 1.0;
-    } else if (speed_r <= -1.0) {
-        speed_r = -1.0;
-    }
+    target_speed_r = msg->linear.x + 0.5*wheel_distance_m*msg->angular.z;
+    target_speed_l = msg->linear.x - 0.5*wheel_distance_m*msg->angular.z;
 }
 
 void handleLowLevelUIEvent(struct ll_ui_event *ui_event) {
@@ -475,7 +504,9 @@ int main(int argc, char **argv) {
     ros::NodeHandle mowerParamNh("~/mower_xesc");
     ros::NodeHandle rightParamNh("~/right_xesc");
 
-
+    reconfigServer = new dynamic_reconfigure::Server<mower_comms::MowerCommsConfig>(paramNh);
+    dynamic_reconfigure::Server<mower_comms::MowerCommsConfig>::CallbackType cb = boost::bind(&setConfig, _1, _2);
+    reconfigServer->setCallback(cb);
 
     highLevelClient = n.serviceClient<mower_msgs::HighLevelControlSrv>(
             "mower_service/high_level_control");
@@ -487,11 +518,15 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    paramNh.getParam("wheel_ticks_per_m",wheel_ticks_per_m);
-    paramNh.getParam("wheel_distance_m",wheel_distance_m);
+    paramNh.getParam("wheel_ticks_per_m", wheel_ticks_per_m);
+    paramNh.getParam("wheel_distance_m", wheel_distance_m);
+    paramNh.getParam("wheel_motor_poles", wheel_motor_poles);
+    paramNh.getParam("wheel_ticks_per_rev", wheel_ticks_per_rev);
 
     ROS_INFO_STREAM("Wheel ticks [1/m]: " << wheel_ticks_per_m);
     ROS_INFO_STREAM("Wheel distance [m]: " << wheel_distance_m);
+    ROS_INFO_STREAM("Wheel motor poles: " << wheel_motor_poles);
+    ROS_INFO_STREAM("Wheel ticks per rev: " << wheel_ticks_per_rev);
 
     speed_l = speed_r = speed_mow = 0;
 
@@ -509,7 +544,6 @@ int main(int argc, char **argv) {
 
     left_xesc_interface = new xesc_driver::XescDriver(n, leftParamNh);
     right_xesc_interface = new xesc_driver::XescDriver(n, rightParamNh);
-
 
     status_pub = n.advertise<mower_msgs::Status>("mower/status", 1);
     wheel_tick_pub = n.advertise<xbot_msgs::WheelTick>("mower/wheel_ticks", 1);

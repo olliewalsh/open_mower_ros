@@ -1,6 +1,7 @@
 [submodule "src/lib/xesc_ros"]
 	path = src/lib/xesc_ros
-	url = https://github.com/ClemensElflein/xesc_ros.git
+	url = https://github.com/olliewalsh/xesc_ros.git
+	branch = vesc_speed
 [submodule "src/lib/ftc_local_planner"]
 	path = src/lib/ftc_local_planner
 	url = https://github.com/olliewalsh/ftc_local_planner.git
