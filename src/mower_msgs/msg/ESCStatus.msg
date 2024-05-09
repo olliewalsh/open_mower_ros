@@ -11,3 +11,5 @@ uint32  tacho
 int16   rpm
 float32 temperature_motor
 float32 temperature_pcb
+float32 target_speed
+float32 speed
