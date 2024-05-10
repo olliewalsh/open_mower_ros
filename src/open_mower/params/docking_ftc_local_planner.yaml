@@ -19,9 +19,9 @@ DockingFTCPlanner:
   kp_ang: 1.0
   kp_ang_rotate: 1.0
   kp_lat: 6.15
-  kp_lon: 4.0
-  max_cmd_vel_ang: 3.1
-  max_cmd_vel_speed: 0.6
+  kp_lon: 2.7
+  max_cmd_vel_ang: 1.55
+  max_cmd_vel_speed: 0.25
   max_follow_distance: 1.0
   target_goal_angle_error: 20.0
   max_goal_angle_error: 20.0
