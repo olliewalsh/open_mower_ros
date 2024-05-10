@@ -276,14 +276,17 @@ void publishStatus() {
 
     wheel_tick_pub.publish(wheel_tick_msg);
 
-    actual_speed_l = (wheel_tick_msg.wheel_direction_rl ? -1 : 1) * \
-        ((wheel_tick_msg.wheel_ticks_rl - last_wheel_tick_msg.wheel_ticks_rl) / wheel_ticks_per_m) / \
-        (wheel_tick_msg.stamp - last_wheel_tick_msg.stamp).toSec();
-    actual_speed_r = (wheel_tick_msg.wheel_direction_rr ? -1 : 1) * \
-        ((wheel_tick_msg.wheel_ticks_rr - last_wheel_tick_msg.wheel_ticks_rr) / wheel_ticks_per_m) / \
-        (wheel_tick_msg.stamp - last_wheel_tick_msg.stamp).toSec();
+    auto dt_wheel_speed = (wheel_tick_msg.stamp - last_wheel_tick_msg.stamp).toSec();
+    if (dt_wheel_speed >= last_config.min_dt_wheel_speed) {
+        actual_speed_l = (wheel_tick_msg.wheel_direction_rl ? -1 : 1) * \
+            ((wheel_tick_msg.wheel_ticks_rl - last_wheel_tick_msg.wheel_ticks_rl) / wheel_ticks_per_m) / \
+            dt_wheel_speed;
+        actual_speed_r = (wheel_tick_msg.wheel_direction_rr ? -1 : 1) * \
+            ((wheel_tick_msg.wheel_ticks_rr - last_wheel_tick_msg.wheel_ticks_rr) / wheel_ticks_per_m) / \
+            dt_wheel_speed;
 
-    last_wheel_tick_msg = wheel_tick_msg;
+        last_wheel_tick_msg = wheel_tick_msg;
+    }
 }
 
 void publishActuatorsTimerTask(const ros::TimerEvent &timer_event) {
