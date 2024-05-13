@@ -78,6 +78,7 @@ float target_speed_l = 0, target_speed_r = 0;
 float actual_speed_l = 0, actual_speed_r = 0;
 
 float speed_err_l = 0, speed_err_r = 0;
+float last_speed_err_l = 0, last_speed_err_r = 0;
 
 // Keep last wheel tick msg to caclculate speed
 xbot_msgs::WheelTick last_wheel_tick_msg;
@@ -114,10 +115,12 @@ bool is_emergency() {
 
 void publishActuators() {
     if(last_config.enable_speed_pid) {
+        last_speed_err_l = speed_err_l;
         speed_err_l = target_speed_l - actual_speed_l;
-        speed_l += speed_err_l * last_config.kp_speed;
+        speed_l += speed_err_l * last_config.kp_speed + last_config.kd_speed * (speed_err_l - last_speed_err_l) / 0.02;
+        last_speed_err_r = speed_err_r;
         speed_err_r = target_speed_r - actual_speed_r;
-        speed_r += speed_err_r * last_config.kp_speed;
+        speed_r += speed_err_r * last_config.kp_speed + last_config.kd_speed * (speed_err_r - last_speed_err_r) / 0.02;;
     }
     else {
         speed_l = target_speed_l;
