@@ -48,13 +48,14 @@
 #include "xbot_msgs/AbsolutePose.h"
 #include "xbot_positioning/GPSControlSrv.h"
 #include "xbot_positioning/SetPoseSrv.h"
+#include "xbot_positioning/CalibrateGyroSrv.h"
 #include "xbot_msgs/RegisterActionsSrv.h"
 #include <mutex>
 #include <atomic>
 #include <sstream>
 #include <ios>
 
-ros::ServiceClient pathClient, mapClient, dockingPointClient, gpsClient, mowClient, emergencyClient, pathProgressClient, setNavPointClient, clearNavPointClient, clearMapClient, positioningClient, actionRegistrationClient;
+ros::ServiceClient pathClient, mapClient, dockingPointClient, gpsClient, calibrateGyroClient, mowClient, emergencyClient, pathProgressClient, setNavPointClient, clearNavPointClient, clearMapClient, positioningClient, actionRegistrationClient;
 
 ros::NodeHandle *n;
 ros::NodeHandle *paramNh;
@@ -85,6 +86,8 @@ Behavior *currentBehavior = &IdleBehavior::INSTANCE;
 
 std::vector<xbot_msgs::ActionInfo> rootActions;
 std::vector<xbot_msgs::ActionInfo> autoMowingActions;
+std::atomic<bool> gpsEnabled;
+
 ros::Time last_v_battery_check;
 double max_v_battery_seen = 0.0;
 ros::Time last_rain_check;
@@ -232,9 +235,30 @@ bool setGPS(bool enabled) {
         setEmergencyMode(true);
     }
 
+    gpsEnabled = enabled;
+
     return success;
 }
 
+bool calibrateGyro() {
+    xbot_positioning::CalibrateGyroSrv gyro_srv;
+
+    ros::Rate retry_delay(1);
+    bool success = false;
+    for (int i = 0; i < 10; i++) {
+        if (calibrateGyroClient.call(gyro_srv)) {
+            success = true;
+            break;
+        }
+        ROS_ERROR_STREAM("Error calling gyro calibration service. Retrying.");
+        retry_delay.sleep();
+    }
+
+    if (!success) {
+        ROS_ERROR_STREAM("Error calling gyro calibration service. THIS SHOULD NEVER HAPPEN");
+    }
+    return success;
+}
 
 /// @brief If the BLADE Motor is not in the requested status (enabled),we call the
 ///        the mower_service/mow_enabled service to enable/disable. TODO: get feedback about spinup and delay if needed
@@ -447,7 +471,7 @@ void checkSafety(const ros::TimerEvent &timer_event) {
         setLastGoodGPS(ros::Time::now());
         high_level_status.gps_quality_percent =
                 1.0 - fmin(1.0, last_pose.position_accuracy / last_config.max_position_accuracy);
-        ROS_INFO_STREAM_THROTTLE(10, "GPS quality: " << high_level_status.gps_quality_percent);
+        if (gpsEnabled) ROS_INFO_STREAM_THROTTLE(10, "GPS quality: " << high_level_status.gps_quality_percent);
     } else {
         // GPS = bad, set quality to 0
         high_level_status.gps_quality_percent = 0;
@@ -455,7 +479,7 @@ void checkSafety(const ros::TimerEvent &timer_event) {
             // set this if we don't even have an orientation
             high_level_status.gps_quality_percent = -1;
         }
-        ROS_WARN_STREAM_THROTTLE(1, "Low quality GPS");
+        if (gpsEnabled) ROS_WARN_STREAM_THROTTLE(1, "Low quality GPS");
     }
 
     bool gpsTimeout = ros::Time::now() - last_good_gps > ros::Duration(last_config.gps_timeout);
@@ -463,7 +487,7 @@ void checkSafety(const ros::TimerEvent &timer_event) {
     if (gpsTimeout) {
         // GPS = bad, set quality to 0
         high_level_status.gps_quality_percent = 0;
-        ROS_WARN_STREAM_THROTTLE(1, "GPS timeout");
+        if (gpsEnabled) ROS_WARN_STREAM_THROTTLE(1, "GPS timeout");
     }
 
     if (currentBehavior != nullptr && currentBehavior->needs_gps()) {
@@ -667,6 +691,7 @@ int main(int argc, char **argv) {
     n = new ros::NodeHandle();
     paramNh = new ros::NodeHandle("~");
     mowerEnabled = false;
+    gpsEnabled = false;
 
     boost::recursive_mutex mutex;
 
@@ -690,6 +715,8 @@ int main(int argc, char **argv) {
 
     gpsClient = n->serviceClient<xbot_positioning::GPSControlSrv>(
             "xbot_positioning/set_gps_state");
+    calibrateGyroClient = n->serviceClient<xbot_positioning::CalibrateGyroSrv>(
+            "xbot_positioning/calibrate_gyro");
     positioningClient = n->serviceClient<xbot_positioning::SetPoseSrv>(
             "xbot_positioning/set_robot_pose");
     actionRegistrationClient = n->serviceClient<xbot_msgs::RegisterActionsSrv>(
@@ -790,6 +817,15 @@ int main(int argc, char **argv) {
     ROS_INFO("Waiting for gps service");
     if (!gpsClient.waitForExistence(ros::Duration(60.0, 0.0))) {
         ROS_ERROR("GPS service not found.");
+        delete (reconfigServer);
+        delete (mbfClient);
+        delete (mbfClientExePath);
+
+        return 1;
+    }
+    ROS_INFO("Waiting for gyro calibration service");
+    if (!calibrateGyroClient.waitForExistence(ros::Duration(60.0, 0.0))) {
+        ROS_ERROR("Gyro calibration service not found.");
         delete (reconfigServer);
         delete (mbfClient);
         delete (mbfClientExePath);
