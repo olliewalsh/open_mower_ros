@@ -429,6 +429,13 @@
             "AUTO": 2
           }
         },
+        "OM_AUTOMATIC_MODE_PAUSE": {
+          "type": "boolean",
+          "default": false,
+          "title": "Automatic Mode Paused Initially.",
+          "description": "Whether automatic start should be paused at startup",
+          "x-environment-variable": "OM_AUTOMATIC_MODE_PAUSE"
+        },
         "OM_OUTLINE_OFFSET": {
           "type": "number",
           "default": 0.05,

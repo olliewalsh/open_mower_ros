@@ -84,24 +84,23 @@ Behavior *IdleBehavior::execute() {
       const auto last_config = getConfig();
       const auto last_status = getStatus();
 
-      const bool automatic_mode = last_config.automatic_mode == eAutoMode::AUTO;
-      const bool active_semiautomatic_task = last_config.automatic_mode == eAutoMode::SEMIAUTO && shared_state->active_semiautomatic_task && !shared_state->semiautomatic_task_paused;
-      const bool mower_ready = last_status.v_battery > last_config.battery_full_voltage && last_status.mow_esc_status.temperature_motor < last_config.motor_cold_temperature &&
-              !last_config.manual_pause_mowing;
+        const bool automatic_mode = last_config.automatic_mode == eAutoMode::AUTO;
+        const bool active_semiautomatic_task = last_config.automatic_mode == eAutoMode::SEMIAUTO && shared_state->active_semiautomatic_task && !shared_state->semiautomatic_task_paused;
+        const bool mower_ready = last_status.v_battery > last_config.battery_full_voltage && last_status.mow_esc_status.temperature_motor < last_config.motor_cold_temperature;
 
-      if (manual_start_mowing || ((automatic_mode || active_semiautomatic_task) && mower_ready)) {
-          // set the robot's position to the dock if we're actually docked
-          if(last_status.v_charge > 5.0) {
-            if (PerimeterUndockingBehavior::configured(config))
-              return &PerimeterUndockingBehavior::INSTANCE;
-            ROS_INFO_STREAM("Currently inside the docking station, we set the robot's pose to the docks pose.");
-            setRobotPose(docking_pose_stamped.pose);
-            return &UndockingBehavior::INSTANCE;
-          }
-          // Not docked, so just mow
-          setGPS(true);
-          return &MowingBehavior::INSTANCE;
-      }
+        if (manual_start_mowing || ((automatic_mode || active_semiautomatic_task) && mower_ready && !last_config.automatic_mode_pause)) {
+            // set the robot's position to the dock if we're actually docked
+            if(last_status.v_charge > 5.0) {
+              if (PerimeterUndockingBehavior::configured(config))
+                return &PerimeterUndockingBehavior::INSTANCE;
+              ROS_INFO_STREAM("Currently inside the docking station, we set the robot's pose to the docks pose.");
+              setRobotPose(docking_pose_stamped.pose);
+              return &UndockingBehavior::INSTANCE;
+            }
+            // Not docked, so just mow
+            setGPS(true);
+            return &MowingBehavior::INSTANCE;
+        }
 
       if(start_area_recorder) {
           return &AreaRecordingBehavior::INSTANCE;

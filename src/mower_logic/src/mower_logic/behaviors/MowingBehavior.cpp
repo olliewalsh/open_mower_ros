@@ -61,8 +61,12 @@ Behavior *MowingBehavior::execute() {
       ROS_INFO_STREAM("MowingBehavior: Could not create mowing plan, docking");
       // Start again from first area next time.
       reset();
-      // We cannot create a plan, so we're probably done. Go to docking station
-      return &DockingBehavior::INSTANCE;
+      // We cannot create a plan, so we're probably done. Go to docking station or restart if automatic mode
+      if(getConfig().automatic_mode == eAutoMode::AUTO) {
+        return &MowingBehavior::INSTANCE;
+      } else {
+        return &DockingBehavior::INSTANCE;
+      }
     }
 
     // We have a plan, execute it
