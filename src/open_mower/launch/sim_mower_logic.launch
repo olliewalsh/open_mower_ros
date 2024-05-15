@@ -17,6 +17,7 @@
         <param name="ignore_gps_errors" value="true"/>
         <param name="gps_wait_time" value="0"/>
         <param name="automatic_mode" value="$(optenv OM_AUTOMATIC_MODE 0)"/>
+        <param name="automatic_mode_pause" value="$(optenv OM_AUTOMATIC_MODE_PAUSE False)"/>
         <param name="docking_distance" value="$(env OM_DOCKING_DISTANCE)"/>
         <param name="undock_distance" value="$(env OM_UNDOCK_DISTANCE)"/>
         <param name="tool_width" value="$(env OM_TOOL_WIDTH)"/>
