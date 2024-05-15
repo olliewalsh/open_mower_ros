@@ -59,8 +59,12 @@ Behavior* MowingBehavior::execute() {
       ROS_INFO_STREAM("MowingBehavior: Could not create mowing plan, docking");
       // Start again from first area next time.
       reset();
-      // We cannot create a plan, so we're probably done. Go to docking station
-      return &DockingBehavior::INSTANCE;
+      // We cannot create a plan, so we're probably done. Go to docking station or restart if automatic mode
+      if (getConfig().automatic_mode == eAutoMode::AUTO) {
+        return &MowingBehavior::INSTANCE;
+      } else {
+        return &DockingBehavior::INSTANCE;
+      }
     }
 
     // We have a plan, execute it
@@ -558,7 +562,7 @@ void MowingBehavior::command_home() {
     // We are in semiautomatic task, mark it as manually paused.
     ROS_INFO_STREAM("Manually pausing semiautomatic task");
     auto config = getConfig();
-    config.manual_pause_mowing = true;
+    config.automatic_mode_pause = true;
     setConfig(config);
   }
   if (paused) {
@@ -572,11 +576,11 @@ void MowingBehavior::command_home() {
 void MowingBehavior::command_start() {
   ROS_INFO_STREAM("MowingBehavior: MANUAL CONTINUE");
   auto config = getConfig();
-  if (shared_state->active_semiautomatic_task && config.manual_pause_mowing) {
+  if (shared_state->active_semiautomatic_task && config.automatic_mode_pause) {
     // We are in semiautomatic task and paused, user wants to resume, so store that immediately.
     // This way, once we are docked the mower will continue as soon as all other conditions are g2g
     ROS_INFO_STREAM("Resuming semiautomatic task");
-    config.manual_pause_mowing = false;
+    config.automatic_mode_pause = false;
     setConfig(config);
   }
   this->requestContinue();

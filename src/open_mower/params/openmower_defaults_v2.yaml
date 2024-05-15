@@ -27,6 +27,7 @@ ntrip_client:
 
 mower_logic:
   automatic_mode: 0
+  automatic_mode_pause: false
   docking_approach_distance: 1.5
   docking_approach_distance_variance: 0.0
   docking_extra_time: 0

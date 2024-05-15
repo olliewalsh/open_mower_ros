@@ -99,6 +99,7 @@
         <arg name="battery_empty_voltage" value="$(env OM_BATTERY_EMPTY_VOLTAGE)"/>
         <arg name="battery_critical_voltage" value="$(optenv OM_BATTERY_CRITICAL_VOLTAGE)"/>
         <param name="mower_logic/automatic_mode" value="$(optenv OM_AUTOMATIC_MODE 0)"/>
+        <param name="mower_logic/automatic_mode_pause" value="$(optenv OM_AUTOMATIC_MODE_PAUSE False)"/>
         <param name="mower_logic/docking_distance" value="$(env OM_DOCKING_DISTANCE)"/>
         <param name="mower_logic/docking_approach_distance" value="$(optenv OM_DOCKING_APPROACH_DISTANCE 1.5)"/>
         <param name="mower_logic/docking_approach_distance_variance" value="$(optenv OM_DOCKING_APPROACH_DISTANCE_VARIANCE 0)"/>

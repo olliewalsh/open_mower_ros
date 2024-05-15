@@ -84,10 +84,10 @@ Behavior* IdleBehavior::execute() {
       ROS_INFO_STREAM_THROTTLE(300, "Rain delay: " << int((rain_resume - ros::Time::now()).toSec() / 60) << " minutes");
     }
     const bool mower_ready = last_power.v_battery > last_power_config.battery_full_voltage &&
-                             last_status.mower_motor_temperature < last_config.motor_cold_temperature &&
-                             !last_config.manual_pause_mowing && !rain_delay;
+                             last_status.mower_motor_temperature < last_config.motor_cold_temperature && !rain_delay;
 
-    if (manual_start_mowing || ((automatic_mode || active_semiautomatic_task) && mower_ready)) {
+    if (manual_start_mowing ||
+        ((automatic_mode || active_semiautomatic_task) && mower_ready && !last_config.automatic_mode_pause)) {
       // set the robot's position to the dock if we're actually docked
       if (last_power.v_charge > 5.0) {
         if (PerimeterUndockingBehavior::configured(config)) return &PerimeterUndockingBehavior::INSTANCE;
@@ -158,10 +158,12 @@ void IdleBehavior::command_home() {
 
 void IdleBehavior::command_start() {
   // We got start, so we can reset the last manual pause
-  auto config = getConfig();
-  config.manual_pause_mowing = false;
-  setConfig(config);
-
+  if (shared_state->active_semiautomatic_task) {
+    auto config = getConfig();
+    ROS_INFO_STREAM("Resuming semiautomatic task");
+    config.automatic_mode_pause = false;
+    setConfig(config);
+  }
   manual_start_mowing = true;
 }
 
