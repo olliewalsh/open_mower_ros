@@ -125,6 +125,9 @@ export OM_ENABLE_MOWER=true
 #  0 - MANUAL - mowing requires manual start (default if unset)
 export OM_AUTOMATIC_MODE=0
 
+# Whether automatic start should be paused at startup
+export OM_AUTOMATIC_MODE_PAUSE=false
+
 export OM_OUTLINE_OFFSET=0.05
 
 ################################

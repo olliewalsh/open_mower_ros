@@ -482,7 +482,7 @@ void checkSafety(const ros::TimerEvent &timer_event) {
     // Take the max battery voltage over 20s to ignore very short current spikes
     max_v_battery_seen = std::max<double>(max_v_battery_seen, last_status.v_battery);
 
-    if (last_config.manual_pause_mowing) {
+    if (last_config.automatic_mode != eAutoMode::MANUAL && last_config.automatic_mode_pause) {
         dockingReason << "Manual pause";
         dockingNeeded = true;
     }
@@ -493,10 +493,10 @@ void checkSafety(const ros::TimerEvent &timer_event) {
     rain_detected = rain_detected && last_status.rain_detected;
     if (ros::Time::now() - last_rain_check > ros::Duration(20.0)) {
         if(!dockingNeeded && rain_detected && last_config.dock_when_raining) {
-            dockingReason << "Rain detected, setting manual pause";
+            dockingReason << "Rain detected";
             dockingNeeded = true;
             auto new_config = getConfig();
-            new_config.manual_pause_mowing = true;
+            new_config.automatic_mode_pause = true;
             setConfig(new_config);
         }
         last_rain_check = ros::Time::now();
@@ -599,15 +599,15 @@ bool highLevelCommand(mower_msgs::HighLevelControlSrvRequest &req, mower_msgs::H
 void handle_action(std::string action) {
     if(action == "mower_logic:automatic_mowing/stop") {
         auto new_config = getConfig();
-        if(!new_config.manual_pause_mowing) {
-            new_config.manual_pause_mowing = true;
+        if(!new_config.automatic_mode_pause) {
+            new_config.automatic_mode_pause = true;
             setConfig(new_config);
         }
     }
     else if(action == "mower_logic:automatic_mowing/start" ) {
         auto new_config = getConfig();
-        if(new_config.manual_pause_mowing) {
-            new_config.manual_pause_mowing = false;
+        if(new_config.automatic_mode_pause) {
+            new_config.automatic_mode_pause = false;
             setConfig(new_config);
         }
     }
