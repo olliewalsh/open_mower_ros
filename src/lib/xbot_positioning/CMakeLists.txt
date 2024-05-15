@@ -30,6 +30,7 @@ add_service_files(
         FILES
         GPSControlSrv.srv
         SetPoseSrv.srv
+        CalibrateGyroSrv.srv
 )
 
 generate_messages(

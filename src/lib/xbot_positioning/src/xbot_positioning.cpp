@@ -20,6 +20,7 @@
 #include "xbot_positioning/GPSControlSrv.h"
 #include "xbot_positioning/KalmanState.h"
 #include "xbot_positioning/SetPoseSrv.h"
+#include "xbot_positioning/CalibrateGyroSrv.h"
 #include "xbot_positioning_core.h"
 
 ros::Publisher odometry_pub;
@@ -92,11 +93,12 @@ void onImu(const sensor_msgs::Imu::ConstPtr &msg) {
             has_gyro = true;
             if (gyro_offset_samples > 0) {
                 gyro_offset /= gyro_offset_samples;
+                ROS_INFO_STREAM("Calibrated gyro offset: " << gyro_offset);
             } else {
                 gyro_offset = 0;
+                ROS_WARN_STREAM("Skipped gyro calibration, insufficient samples");
             }
             gyro_offset_samples = 0;
-            ROS_INFO_STREAM("Calibrated gyro offset: " << gyro_offset);
         } else {
             ROS_WARN("Skipped gyro calibration");
             has_gyro = true;
@@ -225,7 +227,7 @@ bool setPose(xbot_positioning::SetPoseSrvRequest &req, xbot_positioning::SetPose
 
 void onPose(const xbot_msgs::AbsolutePose::ConstPtr &msg) {
     if (!gps_enabled) {
-        ROS_INFO_STREAM_THROTTLE(gps_message_throttle, "dropping GPS update, since gps_enabled = false.");
+        ROS_DEBUG_STREAM_THROTTLE(1, "Dropping GPS update, since gps_enabled = false.");
         return;
     }
     // TODO fuse with high covariance?
@@ -308,6 +310,11 @@ void onPose(const xbot_msgs::AbsolutePose::ConstPtr &msg) {
     }
 }
 
+bool calibrateGyro(xbot_positioning::CalibrateGyroSrvRequest &req, xbot_positioning::CalibrateGyroSrvResponse &res) {
+    has_gyro = false;
+    return true;
+}
+
 int main(int argc, char **argv) {
     ros::init(argc, argv, "xbot_positioning");
 
@@ -329,6 +336,7 @@ int main(int argc, char **argv) {
 
     ros::ServiceServer gps_service = n.advertiseService("xbot_positioning/set_gps_state", setGpsState);
     ros::ServiceServer pose_service = n.advertiseService("xbot_positioning/set_robot_pose", setPose);
+    ros::ServiceServer calibrate_gyro_service = n.advertiseService("xbot_positioning/calibrate_gyro", calibrateGyro);
 
     paramNh.param("skip_gyro_calibration", skip_gyro_calibration, false);
     paramNh.param("gyro_offset", gyro_offset, 0.0);
