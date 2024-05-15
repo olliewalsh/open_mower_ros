@@ -25,6 +25,7 @@ extern void setRobotPose(geometry_msgs::Pose &pose);
 extern void stopMoving();
 extern bool isGpsGood();
 extern bool setGPS(bool enabled);
+extern bool calibrateGyro();
 
 UndockingBehavior UndockingBehavior::INSTANCE(&MowingBehavior::INSTANCE);
 UndockingBehavior UndockingBehavior::RETRY_INSTANCE(&DockingBehavior::INSTANCE);
@@ -147,6 +148,7 @@ bool UndockingBehavior::waitForGPS() {
         return false;
     }
 
+    calibrateGyro();
     // wait additional time for odometry filters to converge
     ros::Rate r(ros::Duration(config.gps_wait_time, 0));
     r.sleep();
