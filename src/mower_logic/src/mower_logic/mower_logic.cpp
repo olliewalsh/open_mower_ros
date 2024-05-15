@@ -489,7 +489,7 @@ void checkSafety(const ros::TimerEvent &timer_event) {
 
     std::stringstream dockingReason("Docking: ", std::ios_base::ate | std::ios_base::in | std::ios_base::out);
 
-    if (last_config.manual_pause_mowing) {
+    if (last_config.automatic_mode != eAutoMode::MANUAL && last_config.automatic_mode_pause) {
         dockingReason << "Manual pause";
         dockingNeeded = true;
     }
@@ -521,10 +521,10 @@ void checkSafety(const ros::TimerEvent &timer_event) {
     rain_detected = rain_detected && last_status.rain_detected;
     if (ros::Time::now() - last_rain_check > ros::Duration(20.0)) {
         if(!dockingNeeded && rain_detected && last_config.dock_when_raining) {
-            dockingReason << "Rain detected, setting manual pause";
+            dockingReason << "Rain detected";
             dockingNeeded = true;
             auto new_config = getConfig();
-            new_config.manual_pause_mowing = true;
+            new_config.automatic_mode_pause = true;
             setConfig(new_config);
         }
         last_rain_check = ros::Time::now();
@@ -617,16 +617,16 @@ void actionReceived(const std_msgs::String::ConstPtr &action) {
     }
     if(action->data == "mower_logic:automatic_mowing/stop") {
         auto new_config = getConfig();
-        if(!new_config.manual_pause_mowing) {
-            new_config.manual_pause_mowing = true;
+        if(!new_config.automatic_mode_pause) {
+            new_config.automatic_mode_pause = true;
             setConfig(new_config);
         }
         return;
     }
     if(action->data == "mower_logic:automatic_mowing/start" ) {
         auto new_config = getConfig();
-        if(new_config.manual_pause_mowing) {
-            new_config.manual_pause_mowing = false;
+        if(new_config.automatic_mode_pause) {
+            new_config.automatic_mode_pause = false;
             setConfig(new_config);
         }
         return;
