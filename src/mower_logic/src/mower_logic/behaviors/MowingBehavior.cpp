@@ -368,7 +368,7 @@ bool MowingBehavior::execute_mowing_plan() {
                         ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) SKIP AREA was requested.");
                         // remove all paths in current area and return true
                         mowerEnabled = false;
-                        mbfClientExePath->cancelAllGoals();
+                        mbfClient->cancelAllGoals();
                         currentMowingPaths.clear();
                         skip_area = false;
                         return true;
@@ -381,13 +381,13 @@ bool MowingBehavior::execute_mowing_plan() {
                     }
                     if (aborted) {
                         ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) ABORT was requested - stopping path execution.");
-                        mbfClientExePath->cancelAllGoals();
+                        mbfClient->cancelAllGoals();
                         mowerEnabled = false;
                         return false;
                     }
                     if (requested_pause_flag) {
                         ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) PAUSE was requested - stopping path execution.");
-                        mbfClientExePath->cancelAllGoals();
+                        mbfClient->cancelAllGoals();
                         mowerEnabled = false;
                         return false;
                     }
