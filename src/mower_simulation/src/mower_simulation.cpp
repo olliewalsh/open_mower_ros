@@ -32,6 +32,7 @@
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include "xbot_positioning/SetPoseSrv.h"
+#include "xbot_positioning/CalibrateGyroSrv.h"
 
 ros::Publisher status_pub;
 ros::Publisher cmd_vel_pub;
@@ -189,6 +190,9 @@ bool setPose(xbot_positioning::SetPoseSrvRequest &req, xbot_positioning::SetPose
     return true;
 }
 
+bool calibrateGyro(xbot_positioning::CalibrateGyroSrvRequest &req, xbot_positioning::CalibrateGyroSrvResponse &res) {
+    return true;
+}
 
 int main(int argc, char **argv) {
     ros::init(argc, argv, "mower_simulation");
@@ -245,6 +249,7 @@ int main(int argc, char **argv) {
     ros::ServiceServer gps_service = n.advertiseService("xbot_positioning/set_gps_state", setGpsState);
     ros::ServiceServer emergency_service = n.advertiseService("mower_service/emergency", setEmergencyStop);
     ros::ServiceServer pose_service = n.advertiseService("xbot_positioning/set_robot_pose", setPose);
+    ros::ServiceServer calibrate_gyro_service = n.advertiseService("xbot_positioning/calibrate_gyro", calibrateGyro);
 
     ros::Timer publish_timer = n.createTimer(ros::Duration(0.02), publishStatus);
     ros::Timer update_dock_timer = n.createTimer(ros::Duration(1.0), fetchDock);
