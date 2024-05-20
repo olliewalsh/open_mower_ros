@@ -35,12 +35,17 @@
 #include "services/imu_service/imu_service.hpp"
 #include "services/mower_service/mower_service.hpp"
 #include "services/power_service/power_service.hpp"
+#include "xbot_positioning/CalibrateGyroSrv.h"
 
 ros::Publisher status_pub;
 ros::Publisher cmd_vel_pub;
 ros::Publisher pose_pub;
 ros::Publisher initial_pose_publisher;
 ros::ServiceClient docking_point_client;
+
+bool calibrateGyro(xbot_positioning::CalibrateGyroSrvRequest& req, xbot_positioning::CalibrateGyroSrvResponse& res) {
+  return true;
+}
 
 dynamic_reconfigure::Server<mower_simulation::MowerSimulationConfig>* reconfig_server;
 
@@ -49,6 +54,8 @@ int main(int argc, char** argv) {
 
   ros::NodeHandle n;
   ros::NodeHandle paramNh("~");
+
+  ros::ServiceServer calibrate_gyro_service = n.advertiseService("xbot_positioning/calibrate_gyro", calibrateGyro);
 
   reconfig_server = new dynamic_reconfigure::Server<mower_simulation::MowerSimulationConfig>(paramNh);
   // reconfig_server->setCallback(reconfigureCB);
