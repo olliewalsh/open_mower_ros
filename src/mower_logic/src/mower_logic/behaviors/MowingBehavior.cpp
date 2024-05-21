@@ -318,17 +318,47 @@ bool MowingBehavior::execute_mowing_plan() {
         //   prevented us from reaching the inital pose
         // * after n attempts, we fail the mow area and skip to the next one
         /////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+        // Need to calculate approach points for outlines
+        std::vector<geometry_msgs::PoseStamped> approach_poses;
+        auto first_point = path.path.poses[currentMowingPathIndex];
+        if (path.is_outline) {
+            {
+                int i = 0;
+                for(auto &s: path.outline_start_index) {
+                    ROS_INFO_STREAM("Outline " << i << " start_index: " << s);
+                    i++;
+                }
+            }
+
+            int target_outline = path.outline_start_index.size() - 1;
+            while (path.outline_start_index[target_outline] > currentMowingPathIndex) target_outline--;
+
+            // If not already on the outer loop
+            if(target_outline != 0) {
+                // Add the outline transition poses
+                for(int i = 1; i <= target_outline; i++){
+                    approach_poses.push_back(path.path.poses[path.outline_start_index[i] - 1]);
+                }
+                // On the the target outline loop now, follow it to the target pose
+                for(int i = path.outline_start_index[target_outline]; i < currentMowingPathIndex; i++){
+                    approach_poses.push_back(path.path.poses[i]);
+                }
+                first_point = approach_poses.front();
+            }
+        }
+
         {
             ROS_INFO_STREAM("MowingBehavior: (FIRST POINT)  Moving to path segment starting point");
             if(path.is_outline && getConfig().add_fake_obstacle) {
                 mower_map::SetNavPointSrv set_nav_point_srv;
-                set_nav_point_srv.request.nav_pose = path.path.poses[currentMowingPathIndex].pose;
+                set_nav_point_srv.request.nav_pose = first_point.pose;
                 setNavPointClient.call(set_nav_point_srv);
                 sleep(1);
             }
 
             mbf_msgs::MoveBaseGoal moveBaseGoal;
-            moveBaseGoal.target_pose = path.path.poses[currentMowingPathIndex];
+            moveBaseGoal.target_pose = first_point;
             moveBaseGoal.controller = "FTCPlanner";
             mbfClient->sendGoal(moveBaseGoal);
             sleep(1);
@@ -420,6 +450,71 @@ bool MowingBehavior::execute_mowing_plan() {
             // we have reached the start pose of the mow area, reset error handling values
             first_point_attempt_counter = 0;
             first_point_trim_counter = 0;
+        }
+
+        if (approach_poses.size() > 0) {
+            ROS_INFO_STREAM("MowingBehavior: (OUTLINE APPROACH) First point reached - Executing outline path approach with " << approach_poses.size() << " poses");
+            mbf_msgs::ExePathGoal exePathGoal;
+            nav_msgs::Path exePath;
+            exePath.header = path.path.header;
+            exePath.poses = approach_poses;
+            exePathGoal.path = exePath;
+            exePathGoal.angle_tolerance = 5.0 * (M_PI / 180.0);
+            exePathGoal.dist_tolerance = 0.2;
+            exePathGoal.tolerance_from_action = true;
+            exePathGoal.controller = "FTCPlanner";
+            mbfClientExePath->sendGoal(exePathGoal);
+            sleep(1);
+            actionlib::SimpleClientGoalState current_status(actionlib::SimpleClientGoalState::PENDING);
+            ros::Rate r(10);
+
+            // wait for path execution to finish
+            while (ros::ok()) {
+                current_status = mbfClientExePath->getState();
+                if (current_status.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
+                    current_status.state_ == actionlib::SimpleClientGoalState::PENDING) {
+                    // path is being executed, everything seems fine.
+                    // check if we should pause or abort mowing
+                    if(skip_area) {
+                        ROS_INFO_STREAM("MowingBehavior: (OUTLINE APPROACH) SKIP AREA was requested.");
+                        // remove all paths in current area and return true
+                        mowerEnabled = false;
+                        currentMowingPaths.clear();
+                        skip_area = false;
+                        return true;
+                    }
+                    if(skip_path) {
+                        skip_path= false;
+                        currentMowingPath++;
+                        currentMowingPathIndex = 0;
+                        return false;
+                    }
+                    if (aborted) {
+                        ROS_INFO_STREAM("MowingBehavior: (OUTLINE APPROACH) ABORT was requested - stopping path execution.");
+                        mbfClientExePath->cancelAllGoals();
+                        mowerEnabled = false;
+                        return false;
+                    }
+                    if (requested_pause_flag) {
+                        ROS_INFO_STREAM("MowingBehavior: (OUTLINE APPROACH) PAUSE was requested - stopping path execution.");
+                        mbfClientExePath->cancelAllGoals();
+                        mowerEnabled = false;
+                        return false;
+                    }
+                    if(current_status.state_ == actionlib::SimpleClientGoalState::ACTIVE) {
+                        // show progress
+                        int currentIndex = getCurrentMowPathIndex();
+                        if (currentIndex != -1) {
+                            ROS_INFO_STREAM_THROTTLE(5, "MowingBehavior: (OUTLINE APROACH) Progress: " << currentIndex << "/" << approach_poses.size());
+                        }
+                    }
+                } else {
+                    ROS_INFO_STREAM("MowingBehavior: (OUTLINE APPROACH)  Got status " << current_status.state_ << " from MBF/FTCPlanner -> Stopping path execution.");
+                    // we're done, break out of the loop
+                    break;
+                }
+                r.sleep();
+            }
         }
         
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
