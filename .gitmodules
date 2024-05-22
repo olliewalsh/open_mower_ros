@@ -1,14 +1,15 @@
 [submodule "src/lib/xesc_ros"]
 	path = src/lib/xesc_ros
-	url = https://github.com/ClemensElflein/xesc_ros.git
+	url = https://github.com/olliewalsh/xesc_ros.git
+        branch = test
 [submodule "src/lib/ftc_local_planner"]
 	path = src/lib/ftc_local_planner
 	url = https://github.com/olliewalsh/ftc_local_planner.git
 	branch = test
 [submodule "src/lib/slic3r_coverage_planner"]
 	path = src/lib/slic3r_coverage_planner
-	url = https://github.com/olliewalsh/slic3r_coverage_planner.git
-	branch = max_fill_path_length
+	url = https://github.com/ClemensElflein/slic3r_coverage_planner.git
+	branch = main
 [submodule "src/lib/ntrip_client"]
 	path = src/lib/ntrip_client
 	url = https://github.com/LORD-MicroStrain/ntrip_client.git
