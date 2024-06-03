@@ -343,13 +343,17 @@ bool MowingBehavior::execute_mowing_plan() {
       mbf_msgs::MoveBaseGoal moveBaseGoal;
       moveBaseGoal.target_pose = path.path.poses[currentMowingPathIndex];
       moveBaseGoal.controller = "FTCPlanner";
-      mbfClient->sendGoal(moveBaseGoal);
-      sleep(1);
+      std::atomic<bool> mbfActive{false};
+      mbfClient->sendGoal(moveBaseGoal, NULL, [&]() { mbfActive = true; });
       actionlib::SimpleClientGoalState current_status(actionlib::SimpleClientGoalState::PENDING);
       ros::Rate r(10);
 
       // wait for path execution to finish
       while (ros::ok()) {
+        r.sleep();
+        if (!mbfActive) {
+          continue;
+        }
         current_status = mbfClient->getState();
         if (current_status.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
             current_status.state_ == actionlib::SimpleClientGoalState::PENDING) {
@@ -388,7 +392,6 @@ bool MowingBehavior::execute_mowing_plan() {
           // we're done, break out of the loop
           break;
         }
-        r.sleep();
       }
 
       first_point_attempt_counter++;
@@ -459,13 +462,17 @@ bool MowingBehavior::execute_mowing_plan() {
 
       ROS_INFO_STREAM("MowingBehavior: (MOW) First point reached - Executing mow path with "
                       << path.path.poses.size() << " poses, from index " << exePathStartIndex);
-      mbfClientExePath->sendGoal(exePathGoal);
-      sleep(1);
+      std::atomic<bool> mbfActive{false};
+      mbfClientExePath->sendGoal(exePathGoal, NULL, [&]() { mbfActive = true; });
       actionlib::SimpleClientGoalState current_status(actionlib::SimpleClientGoalState::PENDING);
       ros::Rate r(10);
 
       // wait for path execution to finish
       while (ros::ok()) {
+        r.sleep();
+        if (!mbfActive) {
+          continue;
+        }
         current_status = mbfClientExePath->getState();
         if (current_status.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
             current_status.state_ == actionlib::SimpleClientGoalState::PENDING) {
@@ -513,7 +520,6 @@ bool MowingBehavior::execute_mowing_plan() {
           // we're done, break out of the loop
           break;
         }
-        r.sleep();
       }
 
       // Only skip/trim if goal execution began
