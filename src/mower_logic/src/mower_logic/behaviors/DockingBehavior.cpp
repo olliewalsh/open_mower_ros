@@ -111,7 +111,14 @@ bool DockingBehavior::dock_straight() {
   exePathGoal.tolerance_from_action = true;
   exePathGoal.controller = "DockingFTCPlanner";
 
-  mbfClientExePath->sendGoal(exePathGoal);
+    std::atomic<bool> mbfActive{false};
+    mbfClientExePath->sendGoal(
+      exePathGoal,
+      NULL,
+      [&] () {
+          mbfActive = true;
+      }
+    );
 
   bool dockingSuccess = false;
   bool waitingForResult = true;
@@ -121,6 +128,9 @@ bool DockingBehavior::dock_straight() {
   // we can assume the last_state is current since we have a security timer
   while (waitingForResult) {
     r.sleep();
+    if(!mbfActive) {
+        continue;
+    }
 
     const auto last_status = getStatus();
     auto mbfState = mbfClientExePath->getState();
