@@ -239,6 +239,9 @@ export OM_AUTOMATIC_MODE_PAUSE=false
 
 export OM_OUTLINE_OFFSET=0.05
 
+# Whether to add a fake obstacle to improve first-point approach angle
+export OM_ADD_FAKE_OBSTACLE=False
+
 # Rain mode
 #  0 - Ignore
 #  1 - Dock

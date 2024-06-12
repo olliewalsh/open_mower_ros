@@ -443,6 +443,13 @@
           "description": "Offset to be applied to the recorded outline. Positive values move the outline inwards (i.e. safety margin).",
           "x-environment-variable": "OM_OUTLINE_OFFSET"
         },
+        "OM_ADD_FAKE_OBSTACLE": {
+          "type": "boolean",
+          "default": false,
+          "title": "Add fake obstacle for first point.",
+          "description": "Whether to add a fake obstacle to improve first-point approach angle.",
+          "x-environment-variable": "OM_AUTOMATIC_MODE_PAUSE"
+        },
         "OM_ENABLE_RECORDING_ALL": {
           "type": "boolean",
           "default": false,
