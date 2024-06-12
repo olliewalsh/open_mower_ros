@@ -36,6 +36,7 @@
         <param name="mow_angle_increment" value="$(optenv OM_MOWING_ANGLE_INCREMENT 0)"/>
         <param name="motor_hot_temperature" value="$(env OM_MOWING_MOTOR_TEMP_HIGH)"/>
         <param name="motor_cold_temperature" value="$(env OM_MOWING_MOTOR_TEMP_LOW)"/>
+        <param name="add_fake_obstacle" value="$(optenv OM_ADD_FAKE_OBSTACLE false)"/>
     </node>
     
     <node pkg="twist_mux" type="twist_mux" name="twist_mux" output="screen">
