@@ -98,6 +98,7 @@
         <!-- mower_logic -->
         <arg name="battery_empty_voltage" value="$(env OM_BATTERY_EMPTY_VOLTAGE)"/>
         <arg name="battery_critical_voltage" value="$(optenv OM_BATTERY_CRITICAL_VOLTAGE)"/>
+        <param name="mower_logic/add_fake_obstacle" value="$(optenv OM_ADD_FAKE_OBSTACLE false)"/>
         <param name="mower_logic/automatic_mode" value="$(optenv OM_AUTOMATIC_MODE 0)"/>
         <param name="mower_logic/automatic_mode_pause" value="$(optenv OM_AUTOMATIC_MODE_PAUSE False)"/>
         <param name="mower_logic/docking_distance" value="$(env OM_DOCKING_DISTANCE)"/>

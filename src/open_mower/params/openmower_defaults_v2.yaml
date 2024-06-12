@@ -26,6 +26,7 @@ ntrip_client:
   reconnect_attempt_wait_seconds: 99999
 
 mower_logic:
+  add_fake_obstacle: false
   automatic_mode: 0
   automatic_mode_pause: false
   docking_approach_distance: 1.5
