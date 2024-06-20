@@ -128,7 +128,7 @@ bool MowingBehavior::needs_gps() {
 }
 
 bool MowingBehavior::mower_enabled() {
-    return mowerEnabled;
+    return mowerEnabled_;
 }
 
 void MowingBehavior::update_actions() {
@@ -282,7 +282,7 @@ bool MowingBehavior::execute_mowing_plan() {
         if (requested_pause_flag)
         {  // pause was requested
             paused = true;
-            mowerEnabled = false;
+            mowerEnabled_ = false;
             u_int8_t last_requested_pause_flags = 0;
             while (requested_pause_flag) // while emergency and/or manual pause not asked to continue, we wait
             {
@@ -377,7 +377,7 @@ bool MowingBehavior::execute_mowing_plan() {
                     if(skip_area) {
                         ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) SKIP AREA was requested.");
                         // remove all paths in current area and return true
-                        mowerEnabled = false;
+                        mowerEnabled_ = false;
                         mbfClient->cancelAllGoals();
                         currentMowingPaths.clear();
                         skip_area = false;
@@ -392,13 +392,13 @@ bool MowingBehavior::execute_mowing_plan() {
                     if (aborted) {
                         ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) ABORT was requested - stopping path execution.");
                         mbfClient->cancelAllGoals();
-                        mowerEnabled = false;
+                        mowerEnabled_ = false;
                         return false;
                     }
                     if (requested_pause_flag) {
                         ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) PAUSE was requested - stopping path execution.");
                         mbfClient->cancelAllGoals();
-                        mowerEnabled = false;
+                        mowerEnabled_ = false;
                         return false;
                     }
                 } else {
@@ -459,7 +459,7 @@ bool MowingBehavior::execute_mowing_plan() {
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
         {
             // enable mower (only when we reach the start not on the way to mowing already)
-            mowerEnabled = true;
+            mowerEnabled_ = true;
 
             mbf_msgs::ExePathGoal exePathGoal;
             nav_msgs::Path exePath;
@@ -498,7 +498,7 @@ bool MowingBehavior::execute_mowing_plan() {
                     if(skip_area) {
                         ROS_INFO_STREAM("MowingBehavior: (MOW) SKIP AREA was requested.");
                         // remove all paths in current area and return true
-                        mowerEnabled = false;
+                        mowerEnabled_ = false;
                         currentMowingPaths.clear();
                         skip_area = false;
                         return true;
@@ -512,13 +512,13 @@ bool MowingBehavior::execute_mowing_plan() {
                     if (aborted) {
                         ROS_INFO_STREAM("MowingBehavior: (MOW) ABORT was requested - stopping path execution.");
                         mbfClientExePath->cancelAllGoals();
-                        mowerEnabled = false;
+                        mowerEnabled_ = false;
                         break; // Trim path
                     }
                     if (requested_pause_flag) {
                         ROS_INFO_STREAM("MowingBehavior: (MOW) PAUSE was requested - stopping path execution.");
                         mbfClientExePath->cancelAllGoals();
-                        mowerEnabled = false;
+                        mowerEnabled_ = false;
                         break; // Trim path
                     }
                     if(current_status.state_ == actionlib::SimpleClientGoalState::ACTIVE) {
@@ -573,7 +573,7 @@ bool MowingBehavior::execute_mowing_plan() {
         }
     }
 
-    mowerEnabled = false;
+    mowerEnabled_ = false;
 
     // true, if we have executed all paths
     return currentMowingPath >= currentMowingPaths.size();
@@ -633,6 +633,7 @@ uint8_t MowingBehavior::get_state() {
 
 MowingBehavior::MowingBehavior() {
     last_checkpoint = ros::Time(0.0);
+    mowerEnabled_ = false;
     xbot_msgs::ActionInfo pause_action;
     pause_action.action_id = "pause";
     pause_action.enabled = false;
