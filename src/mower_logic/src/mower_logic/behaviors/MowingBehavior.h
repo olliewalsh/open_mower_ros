@@ -36,7 +36,7 @@ class MowingBehavior : public Behavior {
   bool execute_mowing_plan();
 
   // Progress
-  bool mowerEnabled = false;
+  std::atomic<bool> mowerEnabled_;
   std::vector<slic3r_coverage_planner::Path> currentMowingPaths;
 
   ros::Time last_checkpoint;
