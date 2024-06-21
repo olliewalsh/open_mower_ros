@@ -5,7 +5,7 @@
 [submodule "src/lib/ftc_local_planner"]
 	path = src/lib/ftc_local_planner
 	url = https://github.com/olliewalsh/ftc_local_planner.git
-	branch = prerotate_fail
+	branch = test
 [submodule "src/lib/slic3r_coverage_planner"]
 	path = src/lib/slic3r_coverage_planner
 	url = https://github.com/ClemensElflein/slic3r_coverage_planner.git
