@@ -430,7 +430,6 @@ void checkSafety(const ros::TimerEvent &timer_event) {
     // Note that the mowing behavior will pause as well by itself.
     if (ros::Time::now() - pose_time > ros::Duration(1.0))
     {
-        stopBlade();
         stopMoving();
         ROS_WARN_STREAM_THROTTLE(5, "om_mower_logic: EMERGENCY pose values stopped. dt was: " << (ros::Time::now() - pose_time));
         return;
@@ -482,7 +481,6 @@ void checkSafety(const ros::TimerEvent &timer_event) {
     if (currentBehavior != nullptr && currentBehavior->needs_gps()) {
         // Stop the mower
         if(gpsTimeout) {
-            stopBlade();
             stopMoving();
         }
         currentBehavior->setGoodGPS(!gpsTimeout);
