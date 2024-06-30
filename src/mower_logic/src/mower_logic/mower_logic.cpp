@@ -268,7 +268,7 @@ bool setMowerEnabled(bool enabled)
     }
 
     // status change ?
-    if (mowerEnabled != enabled)
+    if (1)
     {
         ros::WallTime started = ros::WallTime::now();
         mower_msgs::MowerControlSrv mow_srv;
