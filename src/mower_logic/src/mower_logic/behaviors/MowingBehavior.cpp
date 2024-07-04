@@ -339,6 +339,8 @@ bool MowingBehavior::execute_mowing_plan() {
         /////////////////////////////////////////////////////////////////////////////////////////////////////////
         {
             ROS_INFO_STREAM("MowingBehavior: (FIRST POINT)  Moving to path segment starting point");
+            mower_map::ClearNavPointSrv clear_nav_point_srv;
+            clearNavPointClient.call(clear_nav_point_srv);
             if(path.is_outline && getConfig().add_fake_obstacle) {
                 mower_map::SetNavPointSrv set_nav_point_srv;
                 set_nav_point_srv.request.nav_pose = path.path.poses[currentMowingPathIndex].pose;
@@ -378,17 +380,20 @@ bool MowingBehavior::execute_mowing_plan() {
                         mbfClient->cancelAllGoals();
                         currentMowingPaths.clear();
                         skip_area = false;
+                        clearNavPointClient.call(clear_nav_point_srv);
                         return true;
                     }
                     if(skip_path) {
                         skip_path= false;
                         currentMowingPath++;
                         currentMowingPathIndex = 0;
+                        clearNavPointClient.call(clear_nav_point_srv);
                         return false;
                     }
                     if(skip_ahead) {
                         auto &poses = path.path.poses;
                         skip_ahead = false;
+                        clearNavPointClient.call(clear_nav_point_srv);
                         if(poses.size() <= 1000){
                             skip_path = true;
                             return false;
@@ -400,12 +405,14 @@ bool MowingBehavior::execute_mowing_plan() {
                         ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) ABORT was requested - stopping path execution.");
                         mbfClient->cancelAllGoals();
                         mowerEnabled = false;
+                        clearNavPointClient.call(clear_nav_point_srv);
                         return false;
                     }
                     if (requested_pause_flag) {
                         ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) PAUSE was requested - stopping path execution.");
                         mbfClient->cancelAllGoals();
                         mowerEnabled = false;
+                        clearNavPointClient.call(clear_nav_point_srv);
                         return false;
                     }
                 } else {
@@ -453,7 +460,6 @@ bool MowingBehavior::execute_mowing_plan() {
                 continue;
             }
 
-            mower_map::ClearNavPointSrv clear_nav_point_srv;
             clearNavPointClient.call(clear_nav_point_srv);
 
             // we have reached the start pose of the mow area, reset error handling values
