@@ -75,6 +75,7 @@ geometry_msgs::Pose fake_obstacle_pose;
 
 // The grid map. This is built from the polygons loaded from the file.
 grid_map::GridMap map;
+bool map_dirty = true;
 
 /**
  * Convert a geometry_msgs::Polygon to a grid_map::Polygon.
@@ -227,111 +228,118 @@ void visualizeAreas() {
  * Finally, a blur is applied to the map so that it is expensive, but not completely forbidden to drive near boundaries.
  */
 void buildMap() {
-  // First, calculate the size of the map by finding the min and max values for x and y.
-  float minX = FLT_MAX;
-  float maxX = FLT_MIN;
-  float minY = FLT_MAX;
-  float maxY = FLT_MIN;
+  if(map_dirty) {
+    // First, calculate the size of the map by finding the min and max values for x and y.
+    float minX = FLT_MAX;
+    float maxX = FLT_MIN;
+    float minY = FLT_MAX;
+    float maxY = FLT_MIN;
 
-  // loop through all areas and calculate a size where everything fits
-  for (const auto &area : mowing_areas) {
-    for (auto pt : area.area.points) {
-      minX = std::min(minX, pt.x);
-      maxX = std::max(maxX, pt.x);
-      minY = std::min(minY, pt.y);
-      maxY = std::max(maxY, pt.y);
-    }
-    for (const auto &obstacle : area.obstacles) {
-      for (const auto &pt : obstacle.points) {
+    // loop through all areas and calculate a size where everything fits
+    for (const auto &area : mowing_areas) {
+      for (auto pt : area.area.points) {
         minX = std::min(minX, pt.x);
         maxX = std::max(maxX, pt.x);
         minY = std::min(minY, pt.y);
         maxY = std::max(maxY, pt.y);
       }
+      for (const auto &obstacle : area.obstacles) {
+        for (const auto &pt : obstacle.points) {
+          minX = std::min(minX, pt.x);
+          maxX = std::max(maxX, pt.x);
+          minY = std::min(minY, pt.y);
+          maxY = std::max(maxY, pt.y);
+        }
+      }
     }
-  }
-  for (const auto &area : navigation_areas) {
-    for (auto pt : area.area.points) {
-      minX = std::min(minX, pt.x);
-      maxX = std::max(maxX, pt.x);
-      minY = std::min(minY, pt.y);
-      maxY = std::max(maxY, pt.y);
-    }
-    for (const auto &obstacle : area.obstacles) {
-      for (const auto &pt : obstacle.points) {
+    for (const auto &area : navigation_areas) {
+      for (auto pt : area.area.points) {
         minX = std::min(minX, pt.x);
         maxX = std::max(maxX, pt.x);
         minY = std::min(minY, pt.y);
         maxY = std::max(maxY, pt.y);
       }
-    }
-  }
-
-  // Enlarge the map by 1m in all directions.
-  // This guarantees that even after blurring, the map has an occupied border.
-  maxX += 1.0;
-  minX -= 1.0;
-  maxY += 1.0;
-  minY -= 1.0;
-
-  // Check, if the map was empty. If so, we'd create a huge map. Therefore we build an empty 10x10m map instead.
-  if (mowing_areas.empty() && navigation_areas.empty()) {
-    maxX = 5.0;
-    minX = -5.0;
-    maxY = 5.0;
-    minY = -5.0;
-  }
-
-  map = grid_map::GridMap({"navigation_area"});
-  map.setFrameId("map");
-  grid_map::Position origin;
-  origin.x() = (maxX + minX) / 2.0;
-  origin.y() = (maxY + minY) / 2.0;
-
-  ROS_INFO_STREAM("Map Position: x=" << origin.x() << ", y=" << origin.y());
-  ROS_INFO_STREAM("Map Size: x=" << (maxX - minX) << ", y=" << (maxY - minY));
-
-  map.setGeometry(grid_map::Length(maxX - minX, maxY - minY), 0.05, origin);
-  map.setTimestamp(ros::Time::now().toNSec());
-
-  map.clearAll();
-  map["navigation_area"].setConstant(1.0);
-
-  grid_map::Matrix &data = map["navigation_area"];
-  for (auto mowingArea : navigation_areas) {
-    grid_map::Polygon poly;
-    fromMessage(mowingArea.area, poly);
-
-    for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
-      const grid_map::Index index(*iterator);
-      data(index[0], index[1]) = 0.0;
-    }
-    for (auto obstacle : mowingArea.obstacles) {
-      fromMessage(obstacle, poly);
-      for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
-        const grid_map::Index index(*iterator);
-        data(index[0], index[1]) = 1.0;
+      for (const auto &obstacle : area.obstacles) {
+        for (const auto &pt : obstacle.points) {
+          minX = std::min(minX, pt.x);
+          maxX = std::max(maxX, pt.x);
+          minY = std::min(minY, pt.y);
+          maxY = std::max(maxY, pt.y);
+        }
       }
     }
-  }
-  for (auto mowingArea : mowing_areas) {
-    grid_map::Polygon poly;
-    fromMessage(mowingArea.area, poly);
 
-    for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
-      const grid_map::Index index(*iterator);
-      data(index[0], index[1]) = 0.0;
+    // Enlarge the map by 1m in all directions.
+    // This guarantees that even after blurring, the map has an occupied border.
+    maxX += 1.0;
+    minX -= 1.0;
+    maxY += 1.0;
+    minY -= 1.0;
+
+    // Check, if the map was empty. If so, we'd create a huge map. Therefore we build an empty 10x10m map instead.
+    if (mowing_areas.empty() && navigation_areas.empty()) {
+      maxX = 5.0;
+      minX = -5.0;
+      maxY = 5.0;
+      minY = -5.0;
     }
-    for (auto obstacle : mowingArea.obstacles) {
-      fromMessage(obstacle, poly);
+
+    map = grid_map::GridMap({"navigation_area"});
+    map.setFrameId("map");
+    grid_map::Position origin;
+    origin.x() = (maxX + minX) / 2.0;
+    origin.y() = (maxY + minY) / 2.0;
+
+    ROS_INFO_STREAM("Map Position: x=" << origin.x() << ", y=" << origin.y());
+    ROS_INFO_STREAM("Map Size: x=" << (maxX - minX) << ", y=" << (maxY - minY));
+
+    map.setGeometry(grid_map::Length(maxX - minX, maxY - minY), 0.05, origin);
+    map.setTimestamp(ros::Time::now().toNSec());
+
+    map.clearAll();
+    map["navigation_area"].setConstant(1.0);
+
+    grid_map::Matrix &data = map["navigation_area"];
+    for (auto mowingArea : navigation_areas) {
+      grid_map::Polygon poly;
+      fromMessage(mowingArea.area, poly);
+
       for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
         const grid_map::Index index(*iterator);
-        data(index[0], index[1]) = 1.0;
+        data(index[0], index[1]) = 0.0;
+      }
+      for (auto obstacle : mowingArea.obstacles) {
+        fromMessage(obstacle, poly);
+        for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
+          const grid_map::Index index(*iterator);
+          data(index[0], index[1]) = 1.0;
+        }
       }
     }
+    for (auto mowingArea : mowing_areas) {
+      grid_map::Polygon poly;
+      fromMessage(mowingArea.area, poly);
+
+      for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
+        const grid_map::Index index(*iterator);
+        data(index[0], index[1]) = 0.0;
+      }
+      for (auto obstacle : mowingArea.obstacles) {
+        fromMessage(obstacle, poly);
+        for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
+          const grid_map::Index index(*iterator);
+          data(index[0], index[1]) = 1.0;
+        }
+      }
+    }
+    map_dirty = false;
   }
+
+  grid_map::GridMap out_map = map;
 
   if (show_fake_obstacle) {
+    grid_map::Matrix &fake_data = out_map["navigation_area"];
+
     grid_map::Polygon poly;
     tf2::Quaternion q;
     tf2::fromMsg(fake_obstacle_pose.orientation, q);
@@ -346,7 +354,7 @@ void buildMap() {
     Eigen::Vector2d obstacle_pos(fake_obstacle_pose.position.x, fake_obstacle_pose.position.y);
 
     {
-      grid_map::Position pos = obstacle_pos + 0.1 * left + 0.25 * front;
+      grid_map::Position pos = obstacle_pos + 0.1 * left + 0.55 * front;
       poly.addVertex(pos);
     }
     {
@@ -358,12 +366,12 @@ void buildMap() {
       poly.addVertex(pos);
     }
     {
-      grid_map::Position pos = obstacle_pos + 0.6 * left + 0.7 * front;
+      grid_map::Position pos = obstacle_pos + 0.6 * left + 1.0 * front;
       poly.addVertex(pos);
     }
 
     {
-      grid_map::Position pos = obstacle_pos - 0.6 * left + 0.7 * front;
+      grid_map::Position pos = obstacle_pos - 0.6 * left + 1.0 * front;
       poly.addVertex(pos);
     }
     {
@@ -375,24 +383,24 @@ void buildMap() {
       poly.addVertex(pos);
     }
     {
-      grid_map::Position pos = obstacle_pos - 0.1 * left + 0.25 * front;
+      grid_map::Position pos = obstacle_pos - 0.1 * left + 0.55 * front;
       poly.addVertex(pos);
     }
-    for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
+    for (grid_map::PolygonIterator iterator(out_map, poly); !iterator.isPastEnd(); ++iterator) {
       const grid_map::Index index(*iterator);
-      data(index[0], index[1]) = 1.0;
+      fake_data(index[0], index[1]) = 1.0;
     }
   }
 
   cv::Mat cv_map;
-  grid_map::GridMapCvConverter::toImage<unsigned char, 1>(map, "navigation_area", CV_8UC1, cv_map);
+  grid_map::GridMapCvConverter::toImage<unsigned char, 1>(out_map, "navigation_area", CV_8UC1, cv_map);
 
   cv::blur(cv_map, cv_map, cv::Size(5, 5));
 
-  grid_map::GridMapCvConverter::addLayerFromImage<unsigned char, 1>(cv_map, "navigation_area", map);
+  grid_map::GridMapCvConverter::addLayerFromImage<unsigned char, 1>(cv_map, "navigation_area", out_map);
 
   nav_msgs::OccupancyGrid msg;
-  grid_map::GridMapRosConverter::toOccupancyGrid(map, "navigation_area", 0.0, 1.0, msg);
+  grid_map::GridMapRosConverter::toOccupancyGrid(out_map, "navigation_area", 0.0, 1.0, msg);
   map_pub.publish(msg);
 
   publishMapMonitoring();
@@ -419,6 +427,7 @@ void saveMapToFile() {
   }
 
   bag.close();
+  map_dirty = true;
 }
 
 /**
@@ -475,6 +484,7 @@ void readMapFromFile(const std::string &filename, bool append = false) {
 
   ROS_INFO_STREAM("Loaded " << mowing_areas.size() << " mowing areas and " << navigation_areas.size()
                             << " navigation areas from file.");
+  map_dirty = true;
 }
 
 bool addMowingArea(mower_map::AddMowingAreaSrvRequest &req, mower_map::AddMowingAreaSrvResponse &res) {
