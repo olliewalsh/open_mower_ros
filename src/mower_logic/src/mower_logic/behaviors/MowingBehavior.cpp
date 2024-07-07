@@ -341,7 +341,6 @@ bool MowingBehavior::execute_mowing_plan() {
         mower_map::SetNavPointSrv set_nav_point_srv;
         set_nav_point_srv.request.nav_pose = path.path.poses[currentMowingPathIndex].pose;
         setNavPointClient.call(set_nav_point_srv);
-        sleep(1);
       }
 
       mbf_msgs::MoveBaseGoal moveBaseGoal;

@@ -601,6 +601,7 @@ bool setNavPoint(mower_map::SetNavPointSrvRequest &req, mower_map::SetNavPointSr
   show_fake_obstacle = true;
 
   buildMap();
+  ros::Duration(3).sleep();
 
   return true;
 }
@@ -612,6 +613,7 @@ bool clearNavPoint(mower_map::ClearNavPointSrvRequest &req, mower_map::ClearNavP
     show_fake_obstacle = false;
 
     buildMap();
+    ros::Duration(3).sleep();
   }
 
   return true;
