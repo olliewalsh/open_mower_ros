@@ -8,8 +8,8 @@
 	branch = test
 [submodule "src/lib/slic3r_coverage_planner"]
 	path = src/lib/slic3r_coverage_planner
-	url = https://github.com/ClemensElflein/slic3r_coverage_planner.git
-	branch = main
+	url = https://github.com/olliewalsh/slic3r_coverage_planner.git
+	branch = better_fill
 [submodule "src/lib/ntrip_client"]
 	path = src/lib/ntrip_client
 	url = https://github.com/LORD-MicroStrain/ntrip_client.git
