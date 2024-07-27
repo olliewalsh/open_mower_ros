@@ -352,6 +352,13 @@ void velReceived(const geometry_msgs::Twist::ConstPtr &msg) {
     last_cmd_vel = ros::Time::now();
     target_speed_r = msg->linear.x + 0.5*wheel_distance_m*msg->angular.z;
     target_speed_l = msg->linear.x - 0.5*wheel_distance_m*msg->angular.z;
+    if (last_config.max_wheel_speed != 0.0) {
+        auto target_speed_scale = std::min(last_config.max_wheel_speed/abs(target_speed_r), last_config.max_wheel_speed/abs(target_speed_l));
+        if (target_speed_scale < 1.0) {
+            target_speed_r *= target_speed_scale;
+            target_speed_l *= target_speed_scale;
+        }
+    }
 }
 
 void handleLowLevelUIEvent(struct ll_ui_event *ui_event) {
