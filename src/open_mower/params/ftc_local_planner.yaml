@@ -1,5 +1,5 @@
 FTCPlanner:
-  acceleration: 0.05
+  acceleration: 0.1
   check_obstacles: true
   debug_pid: true
   forward_only: true
@@ -28,10 +28,10 @@ FTCPlanner:
   target_goal_distance_error: 0.1
   max_goal_distance_error: 0.2
   restore_defaults: false
-  speed_angular: 80.0
+  speed_angular: 60.0
   speed_fast: 0.38
   speed_fast_threshold: 1.5
   speed_fast_threshold_angle: 10.0
-  speed_slow: 0.2
+  speed_slow: 0.0
   lon_pid_speed_delta: true
-  follow_distance: 0.08
+  follow_distance: 0.0
