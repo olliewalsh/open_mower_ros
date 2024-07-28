@@ -337,7 +337,7 @@ bool MowingBehavior::execute_mowing_plan() {
       ROS_INFO_STREAM("MowingBehavior: (FIRST POINT)  Moving to path segment starting point");
       mower_map::ClearNavPointSrv clear_nav_point_srv;
       clearNavPointClient.call(clear_nav_point_srv);
-      if (path.is_outline && getConfig().add_fake_obstacle) {
+      if (path.is_outline && getConfig().add_fake_obstacle && first_point_attempt_counter == 0) {
         mower_map::SetNavPointSrv set_nav_point_srv;
         set_nav_point_srv.request.nav_pose = path.path.poses[currentMowingPathIndex].pose;
         setNavPointClient.call(set_nav_point_srv);
