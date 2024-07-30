@@ -562,17 +562,16 @@ bool MowingBehavior::execute_mowing_plan() {
           // if GPS -> PAUSE
           // if something else -> Recovery Behaviour ?
 
-          // currentMowingPathIndex might be 0 if we never consumed one of the points, we advance at least 1 point
-          if (currentMowingPathIndex == 0) currentMowingPathIndex++;
-          if (!requested_pause_flag) {
-            ROS_INFO_STREAM("MowingBehavior: (MOW) PAUSED due to MBF Error at " << currentMowingPathIndex);
-            paused = true;
-            update_actions();
-          }
+                    currentMowingPathIndex++;
+                    if (!requested_pause_flag) {
+                        ROS_INFO_STREAM("MowingBehavior: (MOW) PAUSED due to MBF Error at " << currentMowingPathIndex);
+                        paused = true;
+                        update_actions();
+                    }
+                }
+            }
         }
-      }
     }
-  }
 
   mowerEnabled_ = false;
 
