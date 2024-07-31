@@ -1,18 +1,18 @@
 FTCPlanner:
-  acceleration: 0.05
+  acceleration: 0.08
   check_obstacles: true
   debug_pid: true
   forward_only: true
   goal_timeout: 20.0
-  kp_lon: 0.48
+  kp_lon: 0.6
   ki_lon: 0.0
   ki_lon_max: 5.0
-  kd_lon: 0.23
+  kd_lon: 0.3
   ki_lat: 1.5
   ki_lat_max: 50
   kp_lat: 23.0
   kd_lat: 9.0
-  kp_ang: 1.3
+  kp_ang: 1.5
   ki_ang: 0.03
   ki_ang_max: 10
   kd_ang: 0.5
@@ -21,19 +21,17 @@ FTCPlanner:
   ki_ang_max_rotate: 31.0
   kd_ang_rotate: 0.2
   max_cmd_vel_ang: 1.8
-  max_cmd_vel_speed: 0.43
+  max_cmd_vel_speed: 0.44
   max_follow_distance: 1.0
   target_goal_angle_error: 10.0
   max_goal_angle_error: 20.0
   target_goal_distance_error: 0.1
   max_goal_distance_error: 0.2
   restore_defaults: false
-  speed_angular: 30.0
-  speed_fast: 0.38
+  speed_angular: 40.0
+  speed_fast: 0.39
   speed_fast_threshold: 1.5
   speed_fast_threshold_angle: 10.0
   speed_slow: 0.0
   lon_pid_speed_delta: true
-  follow_distance: 0.0
-  wheel_distance_m: 0.325
-  speed_fast_ang_pid_scale: 1.0
+  follow_distance: 0.025
