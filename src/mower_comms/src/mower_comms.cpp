@@ -119,7 +119,9 @@ void publishActuators() {
         speed_l += speed_err_l * last_config.kp_speed + last_config.kd_speed * (speed_err_l - last_speed_err_l) / 0.02;
         last_speed_err_r = speed_err_r;
         speed_err_r = target_speed_r - actual_speed_r;
-        speed_r += speed_err_r * last_config.kp_speed + last_config.kd_speed * (speed_err_r - last_speed_err_r) / 0.02;;
+        speed_r += speed_err_r * last_config.kp_speed + last_config.kd_speed * (speed_err_r - last_speed_err_r) / 0.02;
+        if(target_speed_l == 0) speed_l = 0;
+        if(target_speed_r == 0) speed_r = 0;
     }
     else {
         speed_l = target_speed_l;
