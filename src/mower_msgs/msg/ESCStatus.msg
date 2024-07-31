@@ -12,3 +12,4 @@ float32 temperature_motor
 float32 temperature_pcb
 float32 target_speed
 float32 speed
+float32 duty_cycle
