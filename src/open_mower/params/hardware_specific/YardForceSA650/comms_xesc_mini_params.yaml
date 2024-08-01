@@ -1,9 +1,12 @@
 left_xesc:
   xesc_type: "xesc_mini"
   serial_port: "/dev/ttyAMA4"
+  baudrate: 921600
 right_xesc:
   xesc_type: "xesc_mini"
   serial_port: "/dev/ttyAMA2"
+  baudrate: 921600
 mower_xesc:
   xesc_type: "xesc_mini"
   serial_port: "/dev/ttyAMA3"
+  baudrate: 921600
