@@ -15,7 +15,7 @@ FTCPlanner:
   kp_ang: 2.0
   ki_ang: 0.03
   ki_ang_max: 10
-  kd_ang: 0.6
+  kd_ang: 0.8
   kp_ang_rotate: 2.8
   ki_ang_rotate: 0.25
   ki_ang_max_rotate: 31.0
