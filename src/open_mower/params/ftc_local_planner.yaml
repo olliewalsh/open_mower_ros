@@ -8,14 +8,14 @@ FTCPlanner:
   ki_lon: 0.0
   ki_lon_max: 5.0
   kd_lon: 0.3
-  ki_lat: 3.0
+  ki_lat: 0.8
   ki_lat_max: 200
-  kp_lat: 6.0
-  kd_lat: 6.0
-  kp_ang: 1.5
+  kp_lat: 10.0
+  kd_lat: 7.0
+  kp_ang: 2.0
   ki_ang: 0.03
   ki_ang_max: 10
-  kd_ang: 0.5
+  kd_ang: 0.6
   kp_ang_rotate: 2.8
   ki_ang_rotate: 0.25
   ki_ang_max_rotate: 31.0
