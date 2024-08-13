@@ -34,5 +34,5 @@ FTCPlanner:
   speed_fast_threshold_angle: 10.0
   speed_slow: 0.0
   lon_pid_speed_delta: true
-  follow_distance: 0.005
+  follow_distance: 0.015
   velocity_lookahead_scale: 0.9
