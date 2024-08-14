@@ -8,6 +8,10 @@ FTCPlanner:
   ki_lon: 0.0
   ki_lon_max: 5.0
   kd_lon: 0.3
+  kp_lim: 0.0
+  ki_lim: 0.0
+  ki_lim_max: 5.0
+  kd_lim: 0.0
   ki_lat: 2.0
   ki_lat_max: 2.5
   kp_lat: 15.0
@@ -32,7 +36,7 @@ FTCPlanner:
   speed_fast: 0.42
   speed_fast_threshold: 1.5
   speed_fast_threshold_angle: 10.0
-  speed_slow: 0.2
+  speed_slow: 0
   lon_pid_speed_delta: true
   follow_distance: 0.02
   velocity_lookahead_scale: 0.95
