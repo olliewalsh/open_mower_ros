@@ -129,10 +129,10 @@ void publishActuators() {
     }
 
     if  (last_config.scale_speed) {
-        // Scale speeds to -1.0..1.0 range
-        float speed_scale = std::max(1.0f, std::max(abs(speed_l), abs(speed_r)));
-        speed_l /= speed_scale;
-        speed_r /= speed_scale;
+        // Scale speeds to -max_duty..+max_duty range
+        float speed_scale = std::max(float(last_config.max_duty), std::max(abs(speed_l), abs(speed_r)));
+        speed_l *= last_config.max_duty / speed_scale;
+        speed_r *= last_config.max_duty / speed_scale;
     } else {
         if (speed_l >= 1.0) {
             speed_l = 1.0;
