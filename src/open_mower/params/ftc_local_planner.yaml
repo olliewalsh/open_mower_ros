@@ -4,10 +4,10 @@ FTCPlanner:
   debug_pid: true
   forward_only: true
   goal_timeout: 20.0
-  kp_lon: 0.4
+  kp_lon: 0.6
   ki_lon: 0.0
   ki_lon_max: 5.0
-  kd_lon: 0.3
+  kd_lon: 0.36
   kp_lim: 3.0
   ki_lim: 0.0
   ki_lim_max: 1.0
@@ -26,7 +26,7 @@ FTCPlanner:
   kd_ang_rotate: 0.2
   max_cmd_vel_ang: 1.8
   max_cmd_vel_speed: 0.48
-  max_cmd_vel_acceleration: 1.1
+  max_cmd_vel_acceleration: 0.27
   max_follow_distance: 1.0
   target_goal_angle_error: 10.0
   max_goal_angle_error: 20.0
