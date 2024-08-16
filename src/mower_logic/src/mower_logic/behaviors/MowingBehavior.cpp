@@ -562,16 +562,20 @@ bool MowingBehavior::execute_mowing_plan() {
           // if GPS -> PAUSE
           // if something else -> Recovery Behaviour ?
 
-                    currentMowingPathIndex++;
-                    if (!requested_pause_flag) {
-                        ROS_INFO_STREAM("MowingBehavior: (MOW) PAUSED due to MBF Error at " << currentMowingPathIndex);
-                        paused = true;
-                        update_actions();
-                    }
-                }
-            }
-        }
-    }
+                  if (!requested_pause_flag) {
+                      if (this->hasGoodGPS()) {
+                          // Have good GPS so probably stuck?
+                          // Trim the path to ensure it doesn't continuously retry the same problematic pose
+                          currentMowingPathIndex++;
+                      }
+                      ROS_INFO_STREAM("MowingBehavior: (MOW) PAUSED due to MBF Error at " << currentMowingPathIndex);
+                      paused = true;
+                      update_actions();
+                  }
+              }
+          }
+      }
+  }
 
   mowerEnabled_ = false;
 
