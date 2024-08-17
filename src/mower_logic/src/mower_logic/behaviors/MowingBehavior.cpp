@@ -303,12 +303,18 @@ bool MowingBehavior::execute_mowing_plan() {
     }
     if (paused) {
       paused_time = ros::Time::now();
+      bool gps_wait = false;
       while (!this->hasGoodGPS())  // while no good GPS we wait
       {
+        gps_wait = true;
         ROS_INFO_STREAM("MowingBehavior: PAUSED (" << (ros::Time::now() - paused_time).toSec()
                                                    << "s) (waiting for GPS)");
         ros::Rate r(1.0);
         r.sleep();
+      }
+      if (gps_wait) {
+          ros::Rate r(ros::Duration(config.gps_wait_time, 0));
+          r.sleep();
       }
       ROS_INFO_STREAM("MowingBehavior: CONTINUING");
       paused = false;
