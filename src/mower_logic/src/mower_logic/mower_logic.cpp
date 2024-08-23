@@ -511,15 +511,17 @@ void checkSafety(const ros::TimerEvent &timer_event) {
 
 
     // Rain detected is initialized to true and flips to false if rain is not detected
-    // continuously for 20s. This is to avoid false positives due to noise
+    // continuously for rain_check_seconds. This is to avoid false positives due to noise
     rain_detected = rain_detected && last_status.rain_detected;
-    if (ros::Time::now() - last_rain_check > ros::Duration(20.0)) {
-        if(!dockingNeeded && rain_detected && last_config.dock_when_raining) {
+    if (last_config.rain_check_seconds == 0 || ros::Time::now() - last_rain_check > ros::Duration(last_config.rain_check_seconds)) {
+        if (!dockingNeeded && rain_detected && last_config.rain_mode) {
             dockingReason << "Rain detected";
             dockingNeeded = true;
-            auto new_config = getConfig();
-            new_config.automatic_mode_pause = true;
-            setConfig(new_config);
+            if (last_config.rain_mode == 2) {
+                auto new_config = getConfig();
+                new_config.automatic_mode_pause = true;
+                setConfig(new_config);
+            }
         }
         last_rain_check = ros::Time::now();
         rain_detected = true;
