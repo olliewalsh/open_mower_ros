@@ -39,6 +39,26 @@ IdleBehavior IdleBehavior::INSTANCE(false);
 IdleBehavior IdleBehavior::DOCKED_INSTANCE(true);
 
 std::string IdleBehavior::state_name() {
+  const auto last_config = getConfig();
+  const auto last_status = getStatus();
+  if(last_status.v_charge < 5.0) {
+      // Idle but not in dock
+      return "STRANDED";
+  }
+  else if (last_config.automatic_mode != eAutoMode::MANUAL) {
+      std::string mode = "";
+      if (last_config.automatic_mode == eAutoMode::SEMIAUTO) {
+          mode += "SEMI";
+      }
+      mode += "AUTO";
+      if (last_config.automatic_mode_pause) {
+          mode += "_PAUSE";
+      }
+      if (last_config.rain_mode == 2 && ros::Time::now() < rain_resume) {
+          mode += "_RAIN";
+      }
+      return mode;
+  }
   return "IDLE";
 }
 
@@ -108,7 +128,10 @@ Behavior *IdleBehavior::execute() {
 
       // This gets called if we need to refresh, e.g. on clearing maps
       if(aborted) {
-          return &IdleBehavior::INSTANCE;
+        if(last_status.v_charge < 5.0) {
+            return &DockingBehavior::INSTANCE;
+        }
+        return &IdleBehavior::INSTANCE;
       }
 
       if (last_config.docking_redock && stay_docked && last_status.v_charge < 5.0) {
@@ -155,7 +178,7 @@ bool IdleBehavior::mower_enabled() {
 }
 
 void IdleBehavior::command_home() {
-  // IdleBehavior == docked, don't do anything.
+    this->abort();
 }
 
 void IdleBehavior::command_start() {
