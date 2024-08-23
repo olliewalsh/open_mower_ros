@@ -133,6 +133,13 @@ export OM_AUTOMATIC_MODE_PAUSE=false
 
 export OM_OUTLINE_OFFSET=0.05
 
+# Rain mode
+#  0 - Ignore
+#  1 - Dock when rain detected.
+#      If automatic_mode is enabled will resume when rain is no longer detected
+#  2 - Dock and pause automatic mode
+export OM_RAIN_MODE=0
+
 ################################
 ##    External MQTT Broker    ##
 ################################
