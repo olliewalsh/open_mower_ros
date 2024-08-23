@@ -36,6 +36,26 @@ extern ros::ServiceClient dockingPointClient;
 IdleBehavior IdleBehavior::INSTANCE;
 
 std::string IdleBehavior::state_name() {
+    const auto last_config = getConfig();
+    const auto last_status = getStatus();
+    if(last_status.v_charge < 5.0) {
+        // Idle but not in dock
+        return "STRANDED";
+    }
+    else if (last_config.automatic_mode != eAutoMode::MANUAL) {
+        std::string mode = "";
+        if (last_config.automatic_mode == eAutoMode::SEMIAUTO) {
+            mode += "SEMI";
+        }
+        mode += "AUTO";
+        if (last_config.automatic_mode_pause) {
+            mode += "_PAUSE";
+        }
+        if (last_config.rain_mode == 2 && ros::Time::now() < rain_resume) {
+            mode += "_RAIN";
+        }
+        return mode;
+    }
     return "IDLE";
 }
 
@@ -109,6 +129,9 @@ Behavior *IdleBehavior::execute() {
 
         // This gets called if we need to refresh, e.g. on clearing maps
         if(aborted) {
+            if(last_status.v_charge < 5.0) {
+                return &DockingBehavior::INSTANCE;
+            }
             return &IdleBehavior::INSTANCE;
         }
 
@@ -152,7 +175,7 @@ bool IdleBehavior::mower_enabled() {
 }
 
 void IdleBehavior::command_home() {
-    // IdleBehavior == docked, don't do anything.
+    this->abort();
 }
 
 void IdleBehavior::command_start() {
@@ -168,7 +191,7 @@ void IdleBehavior::command_s1_long() {
 }
 
 void IdleBehavior::command_s2() {
-    
+
 }
 
 void IdleBehavior::command_s2_long() {
