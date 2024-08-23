@@ -88,6 +88,7 @@ ros::Time last_v_battery_check;
 double max_v_battery_seen = 0.0;
 ros::Time last_rain_check;
 bool rain_detected = true;
+ros::Time rain_resume;
 
 Behavior *currentBehavior = &IdleBehavior::INSTANCE;
 
@@ -514,10 +515,14 @@ void checkSafety(const ros::TimerEvent &timer_event) {
     // continuously for rain_check_seconds. This is to avoid false positives due to noise
     rain_detected = rain_detected && last_status.rain_detected;
     if (last_config.rain_check_seconds == 0 || ros::Time::now() - last_rain_check > ros::Duration(last_config.rain_check_seconds)) {
+        if (rain_detected) {
+            // Reset rain resume time
+            rain_resume = ros::Time::now() + ros::Duration(last_config.rain_check_seconds + last_config.rain_delay_minutes * 60);
+        }
         if (!dockingNeeded && rain_detected && last_config.rain_mode) {
             dockingReason << "Rain detected";
             dockingNeeded = true;
-            if (last_config.rain_mode == 2) {
+            if (last_config.rain_mode == 3) {
                 auto new_config = getConfig();
                 new_config.automatic_mode_pause = true;
                 setConfig(new_config);
@@ -894,7 +899,7 @@ int main(int argc, char **argv) {
 
 
 
-    last_rain_check = last_v_battery_check = ros::Time::now();
+    rain_resume = last_rain_check = last_v_battery_check = ros::Time::now();
     ros::Timer safety_timer = n->createTimer(ros::Duration(0.5), checkSafety);
     ros::Timer ui_timer = n->createTimer(ros::Duration(1.0), updateUI);
 
