@@ -849,7 +849,7 @@ int main(int argc, char **argv) {
   }
 
   ROS_INFO("Waiting for map server");
-  if (!mapClient.waitForExistence(ros::Duration(180.0, 0.0))) {
+  if (!mapClient.waitForExistence(ros::Duration(300.0, 0.0))) {
     ROS_ERROR("Map server service not found.");
     delete (reconfigServer);
     delete (mbfClient);
