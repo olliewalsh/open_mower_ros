@@ -75,6 +75,7 @@ float target_speed_l = 0, target_speed_r = 0;
 
 // Actual speeds (m/s) for the wheel ESCs
 float actual_speed_l = 0, actual_speed_r = 0;
+float last_actual_speed_l = 0, last_actual_speed_r = 0;
 
 float speed_err_l = 0, speed_err_r = 0;
 float last_speed_err_l = 0, last_speed_err_r = 0;
@@ -116,10 +117,14 @@ void publishActuators() {
     if(last_config.enable_speed_pid) {
         last_speed_err_l = speed_err_l;
         speed_err_l = target_speed_l - actual_speed_l;
-        speed_l += speed_err_l * last_config.kp_speed + last_config.kd_speed * (speed_err_l - last_speed_err_l) / 0.02;
+        speed_l += speed_err_l * last_config.kp_speed \
+            + last_config.kd_speed * (speed_err_l - last_speed_err_l) / 0.02 \
+            + last_config.kd_speed_input * (actual_speed_l - last_actual_speed_l) / 0.02;
         last_speed_err_r = speed_err_r;
         speed_err_r = target_speed_r - actual_speed_r;
-        speed_r += speed_err_r * last_config.kp_speed + last_config.kd_speed * (speed_err_r - last_speed_err_r) / 0.02;
+        speed_r += speed_err_r * last_config.kp_speed \
+            + last_config.kd_speed * (speed_err_r - last_speed_err_r) / 0.02 \
+            + last_config.kd_speed_input * (actual_speed_r - last_actual_speed_r) / 0.02;
         if(target_speed_l == 0) speed_l = 0;
         if(target_speed_r == 0) speed_r = 0;
     }
@@ -127,12 +132,30 @@ void publishActuators() {
         speed_l = target_speed_l;
         speed_r = target_speed_r;
     }
+    last_actual_speed_l = actual_speed_l;
+    last_actual_speed_r = actual_speed_r;
 
     if  (last_config.scale_speed) {
         // Scale speeds to -max_duty..+max_duty range
         float speed_scale = std::max(float(last_config.max_duty), std::max(abs(speed_l), abs(speed_r)));
         speed_l *= last_config.max_duty / speed_scale;
+        if(speed_l != 0 && abs(speed_l) < last_config.min_duty) {
+            if (speed_l < 0 ) {
+                speed_l = -last_config.min_duty;
+            }
+            else {
+                speed_l = last_config.min_duty;
+            }
+        }
         speed_r *= last_config.max_duty / speed_scale;
+        if(speed_r != 0 && abs(speed_r) < last_config.min_duty) {
+            if (speed_r < 0 ) {
+                speed_r = -last_config.min_duty;
+            }
+            else {
+                speed_r = last_config.min_duty;
+            }
+        }
     } else {
         if (speed_l >= 1.0) {
             speed_l = 1.0;
@@ -447,7 +470,7 @@ void handleLowLevelIMU(struct ll_imu *imu) {
     sensor_imu_msg.angular_velocity.x = imu_msg.gx;
     sensor_imu_msg.angular_velocity.y = imu_msg.gy;
     sensor_imu_msg.angular_velocity.z = imu_msg.gz;
- 
+
     sensor_imu_pub.publish(sensor_imu_msg);
     sensor_mag_pub.publish(sensor_mag_msg);
 }
