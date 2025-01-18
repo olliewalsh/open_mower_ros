@@ -1,7 +1,7 @@
 [submodule "src/lib/xesc_ros"]
 	path = src/lib/xesc_ros
 	url = https://github.com/olliewalsh/xesc_ros.git
-	branch = test
+	branch = test_rebase
 [submodule "src/lib/ftc_local_planner"]
 	path = src/lib/ftc_local_planner
 	url = https://github.com/ClemensElflein/ftc_local_planner.git
