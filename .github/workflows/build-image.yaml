@@ -31,16 +31,21 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
-        docker_build_arch: [ linux/arm64 , linux/amd64 ]
+        os: [ ubuntu-24.04-arm, ubuntu-24.04 ]
+        include:
+          - os: ubuntu-24.04-arm
+            arch: arm64
+          - os: ubuntu-24.04
+            arch: amd64
     steps:
       - name: Prepare
         env:
           REPOSITORY: '${{ github.repository }}'
         run: |
-          build_arch=${{ matrix.docker_build_arch }}
+          build_arch=${{ matrix.arch }}
           echo "BUILD_ARCH=${build_arch//\//-}" >> ${GITHUB_ENV}
 
           echo "REPOSITORY_LC=${REPOSITORY,,}" >> ${GITHUB_ENV}
@@ -65,18 +70,6 @@ jobs:
           images: |
             ghcr.io/${{ env.REPOSITORY_LC }}
 
-      # https://github.com/docker/setup-qemu-action
-      - name: Set up QEMU (arm64)
-        if: runner.arch != 'arm64' && matrix.docker_build_arch == 'linux/arm64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-      - name: Set up QEMU (x64)
-        if: runner.arch != 'x64' && matrix.docker_build_arch == 'linux/amd64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: amd64
-
       # https://github.com/docker/setup-buildx-action
       - name: Set up Docker Buildx
         id: buildx
@@ -95,7 +88,6 @@ jobs:
         with:
           context: .
           file: ./docker/Dockerfile
-          platforms: ${{ matrix.docker_build_arch }}
           no-cache: ${{ inputs.clean_build == true || false }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=ghcr.io/${{ env.REPOSITORY_LC }},push-by-digest=true,name-canonical=true,push=true
