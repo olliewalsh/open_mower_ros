@@ -37,15 +37,15 @@ jobs:
         os: [ ubuntu-24.04-arm, ubuntu-24.04 ]
         include:
           - os: ubuntu-24.04-arm
-            arch: arm64
+            docker_build_arch: arm64
           - os: ubuntu-24.04
-            arch: amd64
+            docker_build_arch: amd64
     steps:
       - name: Prepare
         env:
           REPOSITORY: '${{ github.repository }}'
         run: |
-          build_arch=${{ matrix.arch }}
+          build_arch=${{ matrix.docker_build_arch }}
           echo "BUILD_ARCH=${build_arch//\//-}" >> ${GITHUB_ENV}
 
           echo "REPOSITORY_LC=${REPOSITORY,,}" >> ${GITHUB_ENV}
@@ -88,6 +88,7 @@ jobs:
         with:
           context: .
           file: ./docker/Dockerfile
+          platforms: ${{ matrix.docker_build_arch }}
           no-cache: ${{ inputs.clean_build == true || false }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=ghcr.io/${{ env.REPOSITORY_LC }},push-by-digest=true,name-canonical=true,push=true
