@@ -109,7 +109,8 @@ Behavior *IdleBehavior::execute() {
         if (rain_delay) {
             ROS_INFO_STREAM_THROTTLE(300, "Rain delay: " << int((rain_resume - ros::Time::now()).toSec() / 60) << " minutes");
         }
-        const bool mower_ready = last_status.v_battery > last_config.battery_full_voltage && last_status.mow_esc_status.temperature_motor < last_config.motor_cold_temperature && !rain_delay;;
+        const bool charge_ready = last_status.v_battery > last_config.battery_full_voltage && last_status.charge_current < last_config.battery_full_current;
+        const bool mower_ready = charge_ready && last_status.mow_esc_status.temperature_motor < last_config.motor_cold_temperature && !rain_delay;;
 
         if (manual_start_mowing || ((automatic_mode || active_semiautomatic_task) && mower_ready && !last_config.automatic_mode_pause)) {
             // set the robot's position to the dock if we're actually docked
