@@ -106,7 +106,8 @@ Behavior *IdleBehavior::execute() {
 
         const bool automatic_mode = last_config.automatic_mode == eAutoMode::AUTO;
         const bool active_semiautomatic_task = last_config.automatic_mode == eAutoMode::SEMIAUTO && shared_state->active_semiautomatic_task && !shared_state->semiautomatic_task_paused;
-        const bool mower_ready = last_status.v_battery > last_config.battery_full_voltage && last_status.mow_esc_status.temperature_motor < last_config.motor_cold_temperature;
+        const bool charge_ready = last_status.v_battery > last_config.battery_full_voltage && last_status.charge_current < last_config.battery_full_current;
+        const bool mower_ready = charge_ready && last_status.mow_esc_status.temperature_motor < last_config.motor_cold_temperature;
 
         if (manual_start_mowing || ((automatic_mode || active_semiautomatic_task) && mower_ready && !last_config.automatic_mode_pause)) {
             // set the robot's position to the dock if we're actually docked
