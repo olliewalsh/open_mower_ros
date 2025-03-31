@@ -1,1 +1,2 @@
 ll_serial_port: "/dev/ttyAMA0"
+max_duty: 0.97
