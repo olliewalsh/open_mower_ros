@@ -85,11 +85,6 @@ class Behavior {
   }
 
   void start(mower_logic::MowerLogicConfig& c, std::shared_ptr<sSharedState> s) {
-    ROS_INFO_STREAM("");
-    ROS_INFO_STREAM("");
-    ROS_INFO_STREAM("--------------------------------------");
-    ROS_INFO_STREAM("- Entered state: " << state_name());
-    ROS_INFO_STREAM("--------------------------------------");
     aborted = false;
     paused = false;
     requested_pause_flag = 0;
@@ -98,6 +93,11 @@ class Behavior {
     startTime = ros::Time::now();
     isGPSGood = false;
     sub_state = 0;
+    ROS_INFO_STREAM("");
+    ROS_INFO_STREAM("");
+    ROS_INFO_STREAM("--------------------------------------");
+    ROS_INFO_STREAM("- Entered state: " << state_name());
+    ROS_INFO_STREAM("--------------------------------------");
     enter();
   }
 
