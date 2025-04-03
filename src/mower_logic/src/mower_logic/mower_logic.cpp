@@ -543,11 +543,6 @@ void checkSafety(const ros::TimerEvent &timer_event) {
 
   std::stringstream dockingReason("Docking: ", std::ios_base::ate | std::ios_base::in | std::ios_base::out);
 
-  if (last_config.automatic_mode != eAutoMode::MANUAL && last_config.automatic_mode_pause) {
-      dockingReason << "Manual pause";
-      dockingNeeded = true;
-  }
-
   // Dock if below critical voltage to avoid BMS undervoltage protection
   if (!dockingNeeded && (last_status.v_battery < last_config.battery_critical_voltage)) {
     dockingReason << "Battery voltage min critical: " << last_status.v_battery;
@@ -580,17 +575,28 @@ void checkSafety(const ros::TimerEvent &timer_event) {
       rain_resume =
           ros::Time::now() + ros::Duration(last_config.rain_check_seconds + last_config.rain_delay_minutes * 60);
     }
-    if (!dockingNeeded && rain_detected && last_config.rain_mode) {
-      dockingReason << "Rain detected";
-      dockingNeeded = true;
+    if (rain_detected && last_config.rain_mode) {
+      if (!dockingNeeded && currentBehavior == &MowingBehavior::INSTANCE) {
+        dockingReason << "Rain detected";
+        dockingNeeded = true;
+      }
       if (last_config.rain_mode == 3) {
         auto new_config = getConfig();
-        new_config.automatic_mode_pause = true;
-        setConfig(new_config);
+        if (!new_config.automatic_mode_pause) {
+          new_config.automatic_mode_pause = true;
+          setConfig(new_config);
+        }
       }
     }
     last_rain_check = ros::Time::now();
     rain_detected = true;
+  }
+
+  if (currentBehavior == &MowingBehavior::INSTANCE) {
+    if (!dockingNeeded && last_config.automatic_mode != eAutoMode::MANUAL && last_config.automatic_mode_pause) {
+      dockingReason << "Manual pause";
+      dockingNeeded = true;
+    }
   }
 
   if (dockingNeeded && currentBehavior != &DockingBehavior::INSTANCE &&
