@@ -113,6 +113,7 @@ void publishStatus(const ros::TimerEvent &timer_event) {
   }
   if (config.mower_running) {
     fake_mow_status.mow_esc_status.status = mower_msgs::ESCStatus::ESC_STATUS_RUNNING;
+    fake_mow_status.mow_esc_status.rpm = 3000;
   }
 
   fake_mow_status.v_battery = config.battery_voltage;
