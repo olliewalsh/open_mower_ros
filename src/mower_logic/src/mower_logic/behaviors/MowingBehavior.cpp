@@ -39,6 +39,7 @@ extern actionlib::SimpleActionClient<mbf_msgs::MoveBaseAction> *mbfClient;
 extern actionlib::SimpleActionClient<mbf_msgs::ExePathAction> *mbfClientExePath;
 extern mower_logic::MowerLogicConfig getConfig();
 extern void setConfig(mower_logic::MowerLogicConfig);
+extern mower_msgs::Status getStatus();
 
 extern void registerActions(std::string prefix, const std::vector<xbot_msgs::ActionInfo> &actions);
 
@@ -465,6 +466,16 @@ bool MowingBehavior::execute_mowing_plan() {
       // enable mower (only when we reach the start not on the way to mowing already)
       mowerEnabled_ = true;
 
+      // wait for mower to spin-up if enabled
+      {
+        ros::Rate r(10);
+        while(ros::ok()) {
+          if(!getConfig().enable_mower || abs(getStatus().mow_esc_status.rpm) > 2500) {
+            break;
+          }
+          r.sleep();
+        }
+      }
       mbf_msgs::ExePathGoal exePathGoal;
       nav_msgs::Path exePath;
       exePath.header = path.path.header;
