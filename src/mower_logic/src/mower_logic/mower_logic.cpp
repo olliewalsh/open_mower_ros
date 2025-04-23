@@ -442,20 +442,20 @@ void checkSafety(const ros::TimerEvent &timer_event) {
   // send to idle if emergency and we're not recording
   if (currentBehavior != nullptr) {
     if (last_status.emergency) {
-      if (currentBehavior == &DockingBehavior::INSTANCE && currentBehavior->get_sub_state() == 0 ) {
+      if (
+        currentBehavior == &UndockingBehavior::INSTANCE || currentBehavior == &UndockingBehavior::RETRY_INSTANCE ||
+        (currentBehavior == &DockingBehavior::INSTANCE && currentBehavior->get_sub_state() == 0 ) ||
+        (last_status.v_charge > 10.0 && (
+          currentBehavior == &AreaRecordingBehavior::INSTANCE ||
+          currentBehavior == &IdleBehavior::INSTANCE ||
+          currentBehavior == &IdleBehavior::DOCKED_INSTANCE
+        ))
+      ) {
         // we are docking
         setEmergencyMode(false);
       }
       else {
         currentBehavior->requestPause(pauseType::PAUSE_EMERGENCY);
-        if (currentBehavior == &AreaRecordingBehavior::INSTANCE || currentBehavior == &IdleBehavior::INSTANCE ||
-            currentBehavior == &IdleBehavior::DOCKED_INSTANCE) {
-          if (last_status.v_charge > 10.0) {
-            // emergency and docked and idle or area recording, so it's safe to reset the emergency mode, reset it. It's
-            // safe since we won't start moving in this mode.
-            setEmergencyMode(false);
-          }
-        }
       }
     } else {
       currentBehavior->requestContinue(pauseType::PAUSE_EMERGENCY);
