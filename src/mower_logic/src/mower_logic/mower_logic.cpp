@@ -442,7 +442,10 @@ void checkSafety(const ros::TimerEvent &timer_event) {
   // send to idle if emergency and we're not recording
   if (currentBehavior != nullptr) {
     if (last_status.emergency) {
-      if (currentBehavior == &DockingBehavior::INSTANCE && currentBehavior->get_sub_state() == 0 ) {
+      if (
+        currentBehavior == &UndockingBehavior::INSTANCE || currentBehavior == &UndockingBehavior::RETRY_INSTANCE ||
+        (currentBehavior == &DockingBehavior::INSTANCE && currentBehavior->get_sub_state() == 0 )
+      ) {
         // we are docking
         setEmergencyMode(false);
       }
