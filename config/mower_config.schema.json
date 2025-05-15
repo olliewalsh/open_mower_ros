@@ -159,7 +159,7 @@
                   "OM_NTRIP_RECONNECT_MAX": {
                     "type": "number",
                     "title": "NTRIP Max Reconnection Attempts",
-                    "default": "99999",
+                    "default": "0",
                     "description": "The maximum number of times the NTRIP client retries",
                     "x-environment-variable": "OM_NTRIP_RECONNECT_MAX"
                   }

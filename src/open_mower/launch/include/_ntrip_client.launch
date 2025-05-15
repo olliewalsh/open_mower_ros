@@ -19,7 +19,7 @@
     <!-- NTRIP Client Node -->
     <!-- ****************************************************************** -->
     <node name="ntrip_client" pkg="ntrip_client" type="ntrip_ros.py" output="screen"
-          respawn="true" respawn_delay="10">
+          respawn="true" respawn_delay="30">
 
         <!-- Optional parameter that will set the NTRIP version in the initial HTTP request to the NTRIP caster. -->
         <param name="ntrip_version" value="$(arg ntrip_version)"/>

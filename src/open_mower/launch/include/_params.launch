@@ -82,7 +82,7 @@
         <param name="ntrip_client/username" value="$(env OM_NTRIP_USER)"/>
         <param name="ntrip_client/password" value="$(env OM_NTRIP_PASSWORD)"/>
         <param name="ntrip_client/reconnect_attempt_wait_seconds" value="$(optenv OM_NTRIP_RECONNECT_WAIT_SECONDS 5)"/>
-        <param name="ntrip_client/reconnect_attempt_max" value="$(optenv OM_NTRIP_RECONNECT_MAX 99999)"/>
+        <param name="ntrip_client/reconnect_attempt_max" value="$(optenv OM_NTRIP_RECONNECT_MAX 0)"/>
 
         <!-- mower_logic -->
         <arg name="battery_empty_voltage" value="$(env OM_BATTERY_EMPTY_VOLTAGE)"/>
