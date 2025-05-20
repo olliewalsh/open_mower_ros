@@ -360,7 +360,7 @@ bool DockingBehavior::redirect_joystick() {
 }
 
 uint8_t DockingBehavior::get_sub_state() {
-  return 1;
+  return inApproachMode ? 0 : 2;
 }
 
 uint8_t DockingBehavior::get_state() {
