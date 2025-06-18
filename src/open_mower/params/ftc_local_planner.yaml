@@ -44,5 +44,5 @@ FTCPlanner:
   lon_pid_speed_delta: true
   follow_distance: 0.0
   velocity_lookahead_scale: 0.95
-  max_mow_motor_current: 1.5
-  speed_limit_min: 0.2
+  speed_limit_min: 0.05
+  min_mow_motor_rpm: 2800
