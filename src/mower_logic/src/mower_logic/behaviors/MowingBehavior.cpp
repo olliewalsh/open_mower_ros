@@ -467,7 +467,7 @@ bool MowingBehavior::execute_mowing_plan() {
       mowerEnabled_ = true;
 
       // wait for mower to spin-up if enabled
-      {
+      if(0){
         ros::Rate r(10);
         while(ros::ok()) {
           if(!getConfig().enable_mower || abs(getStatus().mow_esc_status.rpm) > 2500) {
