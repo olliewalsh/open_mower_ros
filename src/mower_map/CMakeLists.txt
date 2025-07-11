@@ -69,6 +69,7 @@ add_service_files(
         AddMowingAreaSrv.srv
         AppendMapSrv.srv
         ConvertToNavigationAreaSrv.srv
+        ConvertToMowingAreaSrv.srv
         DeleteMowingAreaSrv.srv
         GetDockingPointSrv.srv
         GetMowingAreaSrv.srv

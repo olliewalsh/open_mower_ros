@@ -38,10 +38,10 @@
 #include "mower_map/HasMowingAreaSrv.h"
 #include "mower_map/DeleteMowingAreaSrv.h"
 #include "mower_map/ConvertToNavigationAreaSrv.h"
+#include "mower_map/ConvertToMowingAreaSrv.h"
 #include "mower_map/AppendMapSrv.h"
 #include "mower_map/ClearMapSrv.h"
 #include "mower_map/ClearNavPointSrv.h"
-#include "mower_map/ConvertToNavigationAreaSrv.h"
 #include "mower_map/GetDockingPointSrv.h"
 #include "mower_map/SetDockingPointSrv.h"
 #include "mower_map/HasDockingPointSrv.h"
@@ -555,6 +555,25 @@ bool convertToNavigationArea(mower_map::ConvertToNavigationAreaSrvRequest &req,
   return true;
 }
 
+bool convertToMowingArea(mower_map::ConvertToMowingAreaSrvRequest &req,
+  mower_map::ConvertToMowingAreaSrvResponse &res) {
+ROS_INFO_STREAM("Got convert to mow area call with index: " << req.index);
+
+if (req.index >= navigation_areas.size()) {
+ROS_ERROR_STREAM("No navigation area with index: " << req.index);
+return false;
+}
+
+mowing_areas.insert(mowing_areas.begin() + req.to_index, navigation_areas[req.index]);
+
+navigation_areas.erase(navigation_areas.begin() + req.index);
+
+saveMapToFile();
+buildMap();
+
+return true;
+}
+
 bool appendMapFromFile(mower_map::AppendMapSrvRequest &req, mower_map::AppendMapSrvResponse &res) {
   ROS_INFO_STREAM("Appending maps from: " << req.bagfile);
 
@@ -652,6 +671,8 @@ int main(int argc, char **argv) {
   ros::ServiceServer append_maps_srv = n.advertiseService("mower_map_service/append_maps", appendMapFromFile);
   ros::ServiceServer convert_maps_srv = n.advertiseService("mower_map_service/convert_to_navigation_area",
                                                             convertToNavigationArea);
+  ros::ServiceServer convert_navs_srv = n.advertiseService("mower_map_service/convert_to_mowing_area",
+                                                            convertToMowingArea);
   ros::ServiceServer set_docking_point_srv = n.advertiseService("mower_map_service/set_docking_point",
                                                                 setDockingPoint);
   ros::ServiceServer get_docking_point_srv = n.advertiseService("mower_map_service/get_docking_point",
