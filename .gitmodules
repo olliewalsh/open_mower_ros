@@ -12,7 +12,7 @@
 	branch = better_fill
 [submodule "src/lib/ntrip_client"]
 	path = src/lib/ntrip_client
-	url = https://github.com/olliewalsh/ntrip_client.git
+	url = https://github.com/xtech/ntrip_client.git
 	branch = ros
 [submodule "src/lib/xbot_msgs"]
 	path = src/lib/xbot_msgs
