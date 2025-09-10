@@ -82,7 +82,7 @@ bool DockingBehavior::approach_docking_point() {
       loop_rate.sleep();
     }
 
-    int dock_point_count = config.docking_approach_distance * 10.0;
+    int dock_point_count = docking_approach_distance * 10.0;
     for (int i = 0; i <= dock_point_count; i++) {
       geometry_msgs::PoseStamped docking_pose_stamped_front = docking_pose_stamped;
       docking_pose_stamped_front.pose.position.x -= cos(yaw) * ((dock_point_count - i) / 10.0);
