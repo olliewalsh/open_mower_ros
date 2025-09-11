@@ -46,6 +46,7 @@ int main(int argc, char **argv) {
   pathSrv.request.fill_type = slic3r_coverage_planner::PlanPathRequest::FILL_LINEAR;
   pathSrv.request.distance = 0.13;
   pathSrv.request.outer_offset = 0.05;
+  pathSrv.request.fill_step = 1;
 
   ros::Duration loop_time(1);
   while (ros::ok()) {
