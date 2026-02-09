@@ -41,7 +41,6 @@ extern mower_logic::MowerLogicConfig getConfig();
 extern void setConfig(mower_logic::MowerLogicConfig);
 extern mower_msgs::Status getStatus();
 
-extern int mow_direction;
 extern void registerActions(std::string prefix, const std::vector<xbot_msgs::ActionInfo> &actions);
 
 MowingBehavior MowingBehavior::INSTANCE;
@@ -331,7 +330,6 @@ bool MowingBehavior::execute_mowing_plan() {
     if (currentMowingPathIndex >= path.path.poses.size()) {
       ROS_INFO_STREAM("MowingBehavior: Skipping empty path.");
       currentMowingPath++;
-      mow_direction = !mow_direction;
       currentMowingPathIndex = 0;
       continue;
     }
@@ -391,7 +389,6 @@ bool MowingBehavior::execute_mowing_plan() {
                     if(skip_path) {
                         skip_path= false;
                         currentMowingPath++;
-                        mow_direction = !mow_direction;
                         currentMowingPathIndex = 0;
                         clearNavPointClient.call(clear_nav_point_srv);
                         return false;
@@ -527,7 +524,6 @@ bool MowingBehavior::execute_mowing_plan() {
           if (skip_path) {
             skip_path = false;
             currentMowingPath++;
-            mow_direction = !mow_direction;
             currentMowingPathIndex = 0;
             return false;
           }
@@ -576,7 +572,6 @@ bool MowingBehavior::execute_mowing_plan() {
         {
           ROS_INFO_STREAM("MowingBehavior: (MOW) Mow path finished, skipping to next mow path.");
           currentMowingPath++;
-          mow_direction = !mow_direction;
           currentMowingPathIndex = 0;
           // continue with next segment
         } else {

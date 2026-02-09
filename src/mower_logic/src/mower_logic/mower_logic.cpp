@@ -70,7 +70,6 @@ actionlib::SimpleActionClient<mbf_msgs::ExePathAction> *mbfClientExePath;
 
 ros::Publisher cmd_vel_pub, high_level_state_publisher;
 mower_logic::MowerLogicConfig last_config;
-int mow_direction, last_mow_direction = 1;
 
 // store some values for safety checks
 ros::Time pose_time(0.0);
@@ -278,12 +277,11 @@ bool setMowerEnabled(bool enabled) {
   }
 
   // status change ?
-  if (last_status.mow_enabled != enabled || (enabled && mow_direction != last_mow_direction)) {
+  if (last_status.mow_enabled != enabled) {
     ros::Time started = ros::Time::now();
     mower_msgs::MowerControlSrv mow_srv;
     mow_srv.request.mow_enabled = enabled;
-    mow_srv.request.mow_direction = mow_direction;
-    last_mow_direction = mow_direction;
+    mow_srv.request.mow_direction = started.sec & 0x1;  // Randomize mower direction on second
     ROS_WARN_STREAM("#### om_mower_logic: setMowerEnabled("
                     << enabled << ", " << static_cast<unsigned>(mow_srv.request.mow_direction) << ") call");
 
