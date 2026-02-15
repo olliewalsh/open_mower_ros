@@ -36,7 +36,7 @@ namespace xesc_2040_driver {
                     status_.connection_state = XESC2040_CONNECTION_STATE::DISCONNECTED;
 
                     serial_.setPort(port_);
-                    serial_.setBaudrate(115200);
+                    serial_.setBaudrate(baudrate_);
                     auto to = serial::Timeout::simpleTimeout(100);
                     serial_.setTimeout(to);
                     serial_.open();
@@ -189,8 +189,9 @@ namespace xesc_2040_driver {
         send(reinterpret_cast<uint8_t *>(&controlPacket), sizeof(controlPacket));
     }
 
-    void Xesc2040Interface::start(const std::string &port) {
+    void Xesc2040Interface::start(const std::string &port, const uint32_t &baudrate) {
         port_ = port;
+        baudrate_ = baudrate;
         // start up a monitoring thread
         rx_thread_run_ = true;
         pthread_create(&rx_thread_handle_, NULL, &Xesc2040Interface::rx_thread_helper, this);

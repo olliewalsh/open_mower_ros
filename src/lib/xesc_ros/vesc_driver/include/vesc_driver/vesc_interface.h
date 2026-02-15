@@ -102,7 +102,7 @@ namespace vesc_driver {
          * @param port Address of the serial port, e.g. '/dev/ttyUSB0'.
          *
          */
-        VescInterface(const ErrorHandlerFunction &error_handler, uint32_t state_request_millis = 20);
+        VescInterface(const ErrorHandlerFunction &error_handler, uint32_t state_request_millis = 50);
 
         /**
          * VescInterface destructor.
@@ -119,7 +119,7 @@ namespace vesc_driver {
 
         void setPosition(double position);
 
-        void start(const std::string &port);
+        void start(const std::string &port, const uint32_t &baudrate);
 
         void stop();
 
@@ -157,6 +157,7 @@ namespace vesc_driver {
         ErrorHandlerFunction error_handler_;
         serial::Serial serial_;
         std::string port_;
+        uint32_t baudrate_;
         std::mutex status_mutex_;
         // since multiple threads will call the send() function, we need a mutex.
         std::mutex serial_tx_mutex_;
@@ -164,6 +165,8 @@ namespace vesc_driver {
         struct VescStatusStruct status_;
 
         uint32_t state_request_millis;
+        std::mutex last_state_request_mutex_;
+        std::chrono::time_point<std::chrono::steady_clock> last_state_request;
     };
 
 }  // namespace xesc_2040_driver

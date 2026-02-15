@@ -24,6 +24,18 @@
 #include "ExtrusionEntityCollection.hpp"
 
 
+class Linear : public FillRectilinear
+{
+public:
+    void fill_single_direction(ExPolygon expolygon, const direction_t &direction,
+	    coord_t x_shift, Polylines* out) {
+            return this->_fill_single_direction(expolygon, direction, x_shift, out);
+        }
+    direction_t infill_direction(const Surface &surface) const {
+        return this->_infill_direction(surface);
+    }
+};
+
 bool visualize_plan;
 ros::Publisher marker_array_publisher;
 
@@ -211,7 +223,7 @@ void traverse_from_right(std::vector<PerimeterGeneratorLoop> &contours, std::vec
     }
 }
 
-slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, Slic3r::Polygon &outline_poly, Slic3r::Polygons &group, bool isObstacle, Point *areaLastPoint) {
+slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, Slic3r::Polygon &outline_poly, Slic3r::Polygons &group, bool isObstacle, Point *areaLastPoint, double transition_distance) {
     slic3r_coverage_planner::Path path;
     path.is_outline = true;
     path.path.header = header;
@@ -250,7 +262,13 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
             // In order to smooth the transition we skip some points (think spiral movement of the mower).
             // Check, that the skip did not break the path (cross the outer poly during transition).
             // If it's fine, use the smoothed path, otherwise use the shortest point to split.
-            int smooth_transition_idx = (closest_idx + 3) % points.size();
+            int smooth_transition_idx = closest_idx;
+            double cur_transition_distance = 0;
+            while (cur_transition_distance < scale_(transition_distance)) {
+                int prev = smooth_transition_idx;
+                smooth_transition_idx = (smooth_transition_idx + 1) % points.size();
+                cur_transition_distance += points[prev].distance_to(points[smooth_transition_idx]);
+            }
 
             const Polygon *next_outer_poly;
             if (i < group.size() - 1) {
@@ -297,11 +315,6 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
         }
     }
 
-    if (is_first_point) {
-        // there wasn't any usable point, so return the empty path
-        return path;
-    }
-
     // finally, we add the final pose for "lastPoint" with the same orientation as the last pose
     geometry_msgs::PoseStamped pose;
     pose.header = header;
@@ -317,6 +330,47 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
 
     return path;
 }
+
+Polyline smooth_polyline(const Polyline &p, double clip_distance){
+    if (p.points.size() < 3) return p;
+    Polyline poly;
+    poly.append(p.first_point());
+    for (Points::const_iterator it = p.points.begin() + 1; it != p.points.end(); ++it) {
+        Line segment(*(it-1), *it);
+        if (segment.length() >= clip_distance * 3) {
+            poly.append(segment.point_at(clip_distance));
+            poly.append(segment.point_at(segment.length() - clip_distance));
+        } else {
+            poly.append(segment.point_at(segment.length()/2.0));
+        }
+    }
+    poly.append(p.last_point());
+    return poly;
+}
+
+Points sparse_spaced_points(const Polyline &p, double distance)
+{
+    Points points;
+
+    for (Points::const_iterator it = p.points.begin() + 1; it != p.points.end(); ++it) {
+        Points right_points;
+        Line segment(*(it-1), *it);
+        int i = 1;
+        double used = 0.0;
+        points.push_back(*(it-1));
+        while( (distance * i + used) < segment.length()/2 )
+        {
+            points.push_back(segment.point_at(distance * i + used));
+            right_points.push_back(segment.point_at(segment.length() - distance * i - used));
+            used += distance * i;
+            i *= 2;
+        }
+        points.insert(points.end(), right_points.rbegin(), right_points.rend());
+    }
+    points.push_back(p.last_point());
+    return points;
+}
+
 
 bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_planner::PlanPathResponse &res) {
 
@@ -337,7 +391,6 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
         }
         hole_poly.make_clockwise();
 
-        if (intersection(outline_poly, hole_poly).empty()) continue;
         expoly.holes.push_back(hole_poly);
     }
 
@@ -347,7 +400,7 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
 
     // Results are stored here
     std::vector<Polygons> area_outlines;
-    Polylines fill_lines;
+    std::vector<Polylines> fill_lines;
     std::vector<Polygons> obstacle_outlines;
 
 
@@ -456,58 +509,73 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
             }
         }
 
-        if (!req.skip_area_outline) {
-            traverse_from_right(contours[0], area_outlines);
+        traverse_from_right(contours[0], area_outlines);
+        for (auto &hole: holes) {
+            traverse_from_left(hole, obstacle_outlines);
         }
 
-        if (!req.skip_obstacle_outlines) {
-            for (auto &hole: holes) {
-                traverse_from_left(hole, obstacle_outlines);
-            }
-            for (auto &obstacle_group: obstacle_outlines) {
-                for (auto &poly: obstacle_group) {
-                    std::reverse(poly.points.begin(), poly.points.end());
-                }
+        for (auto &obstacle_group: obstacle_outlines) {
+            for (auto &poly: obstacle_group) {
+                std::reverse(poly.points.begin(), poly.points.end());
             }
         }
     }
 
 
-    if (!req.skip_fill) {
-        ExPolygons expp = union_ex(inner);
+    ExPolygons expp = union_ex(inner);
 
 
-        // Go through the innermost poly and create the fill path using a Fill object
-        for (auto &poly: expp) {
-            Slic3r::Surface surface(Slic3r::SurfaceType::stBottom, poly);
+    // Go through the innermost poly and create the fill path using a Fill object
+    for (auto &poly: expp) {
+        Slic3r::Surface surface(Slic3r::SurfaceType::stBottom, poly);
 
-            Slic3r::Fill *fill;
-            if (req.fill_type == slic3r_coverage_planner::PlanPathRequest::FILL_LINEAR) {
-                fill = new Slic3r::FillRectilinear();
-            } else {
-                fill = new Slic3r::FillConcentric();
+
+        Slic3r::Fill *fill;
+        if (req.fill_type == slic3r_coverage_planner::PlanPathRequest::FILL_LINEAR) {
+            fill = new Slic3r::FillRectilinear();
+        } else {
+            fill = new Slic3r::FillConcentric();
+        }
+        fill->link_max_length = scale_(1.0);
+        fill->angle = req.angle;
+        fill->z = scale_(1.0);
+        fill->endpoints_overlap = 0;
+        fill->density = 1.0 / req.fill_step;
+        fill->dont_connect = false;
+        fill->dont_adjust = true;
+        fill->min_spacing = req.distance;
+        fill->complete = false;
+        fill->link_max_length = 0;
+
+        ROS_INFO_STREAM("Starting Fill. Poly size:" << surface.expolygon.contour.points.size());
+
+
+        {
+            ExPolygons expp = offset_ex(surface.expolygon, req.outline_overlap_count ? -3*scale_(req.distance)/4 : -scale_(req.distance)/2);
+
+
+            for (int j=0; j < req.fill_step; j++) {
+                Polylines step_fill_lines;
+                for (size_t i = 0; i < expp.size(); ++i) {
+                    ((Linear*)fill)->fill_single_direction(
+                        expp[i],
+                        ((Linear*)fill)->infill_direction(surface),
+                        scale_(req.distance*j),
+                        &step_fill_lines
+                    );
+                }
+                fill_lines.push_back(step_fill_lines);
             }
-            fill->link_max_length = scale_(1.0);
-            fill->angle = req.angle;
-            fill->z = scale_(1.0);
-            fill->endpoints_overlap = 0;
-            fill->density = 1.0;
-            fill->dont_connect = false;
-            fill->dont_adjust = true;
-            fill->min_spacing = req.distance;
-            fill->complete = false;
-            fill->link_max_length = 0;
+        }
 
-            ROS_INFO_STREAM("Starting Fill. Poly size:" << surface.expolygon.contour.points.size());
+        delete fill;
+        fill = nullptr;
 
-            Slic3r::Polylines lines = fill->fill_surface(surface);
-            append_to(fill_lines, lines);
-            delete fill;
-            fill = nullptr;
-
-            ROS_INFO_STREAM("Fill Complete. Polyline count: " << lines.size());
-            for (int i = 0; i < lines.size(); i++) {
-                ROS_INFO_STREAM("Polyline " << i << " has point count: " << lines[i].points.size());
+        ROS_INFO_STREAM("Fill Complete");
+        for (int j = 0; j < fill_lines.size(); j++) {
+            ROS_INFO_STREAM("Step " << j << " Polyline count: " << fill_lines[j].size());
+            for (int i = 0; i < fill_lines[j].size(); i++) {
+                ROS_INFO_STREAM("Step " << j << " Polyline " << i << " has point count: " << fill_lines[j][i].points.size());
             }
         }
     }
@@ -528,10 +596,17 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
 
     Point areaLastPoint;
     for (auto &group: area_outlines) {
-        auto path = determinePathForOutline(header, outline_poly, group, false, &areaLastPoint);
-        if (!path.path.poses.empty()) {
-            res.paths.push_back(path);
+        auto path = determinePathForOutline(header, outline_poly, group, false, &areaLastPoint, req.distance * 3);
+        // Rotate last point 90 degrees
+        {
+            tf2::Quaternion q_orig, q_rot, q_new;
+            tf2::convert(path.path.poses.back().pose.orientation, q_orig);
+            q_rot.setRPY(0, 0, 3.14159/2.0);
+            q_new = q_rot*q_orig;
+            q_new.normalize();
+            tf2::convert(q_new, path.path.poses.back().pose.orientation);
         }
+        res.paths.push_back(path);
     }
 
     // The order for 3d printing seems to be to sweep across the X and then up the Y axis
@@ -540,30 +615,20 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
     if (obstacle_outlines.size() > 0) {
         // If no prev point set to the first point in first obstacle
         // Note: back() polygon is the first (outer) loop
-        auto prev_point = area_outlines.size() > 0 ? &areaLastPoint :
-            &obstacle_outlines.front().back().points.front();
+        auto prev_point = area_outlines.size() > 0 ? areaLastPoint :
+            obstacle_outlines.front().back().first_point();
 
         while (obstacle_outlines.size()) {
             // Sort be desc distance then pop closest outline from the back of the vector
             std::sort(obstacle_outlines.begin(), obstacle_outlines.end(),
                       [prev_point](Slic3r::Polygons &a, Slic3r::Polygons &b) {
                           // Note: back() polygon is the first (outer) loop
-                          auto a_firstPoint = a.back().points.front();
-                          double distance_a = sqrt(
-                                  (a_firstPoint.x - prev_point->x) * (a_firstPoint.x - prev_point->x) +
-                                  (a_firstPoint.y - prev_point->y) * (a_firstPoint.y - prev_point->y)
-                          );
-                          auto b_firstPoint = b.back().points.front();
-                          double distance_b = sqrt(
-                                  (b_firstPoint.x - prev_point->x) * (b_firstPoint.x - prev_point->x) +
-                                  (b_firstPoint.y - prev_point->y) * (b_firstPoint.y - prev_point->y)
-                          );
-                          return distance_a >= distance_b;
+                          return b.back().first_point().distance_to(prev_point) < a.back().first_point().distance_to(prev_point);
                       });
             ordered_obstacle_outlines.push_back(obstacle_outlines.back());
             obstacle_outlines.pop_back();
             // Note: front() polygon is the last (inner) loop
-            prev_point = &ordered_obstacle_outlines.back().front().points.back();
+            prev_point = ordered_obstacle_outlines.back().front().last_point();
         }
     }
 
@@ -572,64 +637,98 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
     // In order to make the mower approach the obstacle, we will reverse the path later.
     for (auto &group: ordered_obstacle_outlines) {
         // Reverse here to make the mower approach the obstacle instead of starting close to the obstacle
-        auto path = determinePathForOutline(header, outline_poly, group, true, nullptr);
-        if (!path.path.poses.empty()) {
-            std::reverse(path.path.poses.begin(), path.path.poses.end());
-            res.paths.push_back(path);
+        auto path = determinePathForOutline(header, outline_poly, group, true, nullptr, req.distance * 3);
+        std::reverse(path.path.poses.begin(), path.path.poses.end());
+        // Rotate last point 90 degrees
+        {
+            tf2::Quaternion q_orig, q_rot, q_new;
+            tf2::convert(path.path.poses.back().pose.orientation, q_orig);
+            q_rot.setRPY(0, 0, 3.14159/2.0);
+            q_new = q_rot*q_orig;
+            q_new.normalize();
+            tf2::convert(q_new, path.path.poses.back().pose.orientation);
+        }
+        res.paths.push_back(path);
+    }
+
+    Polylines ordered_fill_lines;
+
+    if(fill_lines.size() and fill_lines[0].size()) {
+        // If no prev point set to the first point in first fill line
+        auto prev_point = ordered_obstacle_outlines.size() ? ordered_obstacle_outlines.back().front().last_point() :
+            area_outlines.size() ? areaLastPoint :
+            fill_lines.front().front().first_point();
+        std::reverse(fill_lines.begin(), fill_lines.end());
+        while(fill_lines.size()) {
+            auto step_lines = fill_lines.back();
+            while (step_lines.size()) {
+                // Sort be desc distance then pop closest outline from the back of the vector
+                std::sort(step_lines.begin(), step_lines.end(),
+                    [prev_point](Polyline &a, Polyline &b) {
+                        auto a_firstPoint = a.first_point();
+                        auto b_firstPoint = b.first_point();
+                        return b.first_point().distance_to(prev_point) < a.first_point().distance_to(prev_point);
+                    });
+                ordered_fill_lines.push_back(step_lines.back());
+                step_lines.pop_back();
+                prev_point = ordered_fill_lines.back().last_point();
+            }
+            fill_lines.pop_back();
         }
     }
 
-    if (!req.skip_fill) {
-        for (int i = 0; i < fill_lines.size(); i++) {
-            auto &line = fill_lines[i];
-            slic3r_coverage_planner::Path path;
-            path.is_outline = false;
-            path.path.header = header;
+    double smooth_clip_first_pass = int(950.0*req.distance/3.0)/1000.0;
+    double smooth_clip_second_pass = int(950.0*req.distance/9.0)/1000.0;
 
-            line.remove_duplicate_points();
+    for( auto &line : ordered_fill_lines) {
+        slic3r_coverage_planner::Path path;
+        path.is_outline = false;
+        path.path.header = header;
 
+        line.remove_duplicate_points();
 
-            auto equally_spaced_points = line.equally_spaced_points(scale_(0.1));
-            if (equally_spaced_points.size() < 2) {
-                ROS_INFO("Skipping single dot");
+        line = smooth_polyline(smooth_polyline(line, scale_(smooth_clip_first_pass)), scale_(smooth_clip_second_pass));
+
+        auto equally_spaced_points = sparse_spaced_points(line, scale_(0.025));
+        if (equally_spaced_points.size() < 2) {
+            ROS_INFO("Skipping single dot");
+            continue;
+        }
+        ROS_INFO_STREAM("Got " << equally_spaced_points.size() << " points");
+
+        Point *lastPoint = nullptr;
+        for (auto &pt: equally_spaced_points) {
+            if (lastPoint == nullptr) {
+                lastPoint = &pt;
                 continue;
             }
-            ROS_INFO_STREAM("Got " << equally_spaced_points.size() << " points");
 
-            Point *lastPoint = nullptr;
-            for (auto &pt: equally_spaced_points) {
-                if (lastPoint == nullptr) {
-                    lastPoint = &pt;
-                    continue;
-                }
+            // calculate pose for "lastPoint" pointing to current point
 
-                // calculate pose for "lastPoint" pointing to current point
+            auto dir = pt - *lastPoint;
+            double orientation = atan2(dir.y, dir.x);
+            tf2::Quaternion q(0.0, 0.0, orientation);
 
-                auto dir = pt - *lastPoint;
-                double orientation = atan2(dir.y, dir.x);
-                tf2::Quaternion q(0.0, 0.0, orientation);
-
-                geometry_msgs::PoseStamped pose;
-                pose.header = header;
-                pose.pose.orientation = tf2::toMsg(q);
-                pose.pose.position.x = unscale(lastPoint->x);
-                pose.pose.position.y = unscale(lastPoint->y);
-                pose.pose.position.z = 0;
-                path.path.poses.push_back(pose);
-                lastPoint = &pt;
-            }
-
-            // finally, we add the final pose for "lastPoint" with the same orientation as the last pose
             geometry_msgs::PoseStamped pose;
             pose.header = header;
-            pose.pose.orientation = path.path.poses.back().pose.orientation;
+            pose.pose.orientation = tf2::toMsg(q);
             pose.pose.position.x = unscale(lastPoint->x);
             pose.pose.position.y = unscale(lastPoint->y);
             pose.pose.position.z = 0;
             path.path.poses.push_back(pose);
-
-            res.paths.push_back(path);
+            lastPoint = &pt;
         }
+
+        // finally, we add the final pose for "lastPoint" with the same orientation as the last pose
+        geometry_msgs::PoseStamped pose;
+        pose.header = header;
+        pose.pose.orientation = path.path.poses.back().pose.orientation;
+        pose.pose.position.x = unscale(lastPoint->x);
+        pose.pose.position.y = unscale(lastPoint->y);
+        pose.pose.position.z = 0;
+        path.path.poses.push_back(pose);
+
+        res.paths.push_back(path);
     }
 
     if (visualize_plan) {

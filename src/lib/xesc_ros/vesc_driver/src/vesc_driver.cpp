@@ -56,7 +56,11 @@ namespace vesc_driver {
             pole_pairs = 1;
         }
 
-        vesc_.start(port);
+        int baudrate;
+        if (!private_nh.getParam("baudrate", baudrate)) {
+            baudrate = 115200;
+        }
+        vesc_.start(port, baudrate);
     }
 
 
@@ -70,9 +74,11 @@ namespace vesc_driver {
     }
 
     void VescDriver::getStatus(xesc_msgs::XescStateStamped &state_msg) {
+        auto last_seq = vesc_status.seq;
         vesc_.get_status(&vesc_status);
 
-        state_msg.header.stamp = ros::Time::now();
+        if (vesc_status.seq != last_seq)
+            state_msg.header.stamp = ros::Time::now();
         state_msg.state.connection_state = vesc_status.connection_state;
         state_msg.state.fw_major = vesc_status.fw_version_major;
         state_msg.state.fw_minor = vesc_status.fw_version_minor;

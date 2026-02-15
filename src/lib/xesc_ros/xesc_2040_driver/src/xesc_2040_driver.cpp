@@ -20,10 +20,15 @@ xesc_2040_driver::Xesc2040Driver::Xesc2040Driver(ros::NodeHandle &nh, ros::NodeH
     float min_pcb_temp;
     float max_pcb_temp;
     std::string serial_port;
+    int baudrate;
 
     if(!private_nh.getParam("serial_port", serial_port)) {
         ROS_ERROR_STREAM("You need to provide parameter serial_port.");
         throw ros::InvalidParameterException("You need to provide parameter serial_port.");
+    }
+
+    if (!private_nh.getParam("baudrate", baudrate)) {
+        baudrate = 115200;
     }
 
     for(int i = 0; i < 8; i++) {
@@ -73,15 +78,17 @@ xesc_2040_driver::Xesc2040Driver::Xesc2040Driver(ros::NodeHandle &nh, ros::NodeH
                                     min_pcb_temp,
                                     max_pcb_temp);
 
-    xesc_interface->start(private_nh.param("serial_port", serial_port));
+    xesc_interface->start(private_nh.param("serial_port", serial_port), baudrate);
 }
 
 void xesc_2040_driver::Xesc2040Driver::getStatus(xesc_msgs::XescStateStamped &state_msg) {
     if(!xesc_interface)
         return;
+    auto last_seq = status.seq;
     xesc_interface->get_status(&status);
 
-    state_msg.header.stamp = ros::Time::now();
+    if(status.seq != last_seq)
+        state_msg.header.stamp = ros::Time::now();
     state_msg.state.connection_state = status.connection_state;
     state_msg.state.fw_major = status.fw_version_major;
     state_msg.state.fw_minor = status.fw_version_minor;

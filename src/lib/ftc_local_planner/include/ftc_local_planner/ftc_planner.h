@@ -13,6 +13,7 @@
 #include <dynamic_reconfigure/server.h>
 #include <ftc_local_planner/FTCPlannerConfig.h>
 #include <ftc_local_planner/PID.h>
+#include <ftc_local_planner/CP.h>
 #include <nav_core/base_local_planner.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2/LinearMath/Quaternion.h>
@@ -22,6 +23,7 @@
 #include "tf2_eigen/tf2_eigen.h"
 #include <mbf_costmap_core/costmap_controller.h>
 #include <visualization_msgs/Marker.h>
+#include "mower_msgs/Status.h"
 
 namespace ftc_local_planner
 {
@@ -35,13 +37,15 @@ namespace ftc_local_planner
             FOLLOWING,
             WAITING_FOR_GOAL_APPROACH,
             POST_ROTATE,
-            FINISHED
+            FINISHED,
+            INIT = 255
         };
 
     private:
         ros::ServiceServer progress_server;
         // State tracking
-        PlannerState current_state;
+        const PlannerState& current_state;
+        PlannerState current_state_;
         ros::Time state_entered_time;
 
         bool is_crashed;
@@ -50,13 +54,15 @@ namespace ftc_local_planner
 
         tf2_ros::Buffer *tf_buffer;
         costmap_2d::Costmap2DROS *costmap;
-        costmap_2d::Costmap2D* costmap_map_;   
+        costmap_2d::Costmap2D* costmap_map_;
 
         std::vector<geometry_msgs::PoseStamped> global_plan;
         ros::Publisher global_point_pub;
         ros::Publisher global_plan_pub;
         ros::Publisher progress_pub;
         ros::Publisher obstacle_marker_pub;
+
+        ros::Subscriber status_sub;
 
         FTCPlannerConfig config;
 
@@ -65,15 +71,17 @@ namespace ftc_local_planner
         /**
          * PID State
          */
-        double lat_error, lon_error, angle_error = 0.0;
+        double lat_error, lon_error, angle_error, lin_speed = 0.0;
         double last_lon_error = 0.0;
         double last_lat_error = 0.0;
         double last_angle_error = 0.0;
         double i_lon_error = 0.0;
         double i_lat_error = 0.0;
         double i_angle_error = 0.0;
+        double speed_limit = 0.0;
         ros::Time last_time;
 
+        mower_msgs::Status last_status;
         /**
          * Speed ramp for acceleration and deceleration
          */
@@ -84,19 +92,21 @@ namespace ftc_local_planner
          */
         uint32_t current_index;
         double current_progress;
-        Eigen::Affine3d local_control_point;
+        Eigen::Affine3d last_local_control_point, local_control_point;
 
         /**
          * Private members
          */
-        ros::Publisher pubPid;
+        ros::Publisher pubPid, pubCp;
         FailureDetector failure_detector_; //!< Detect if the robot got stucked
         ros::Time time_last_oscillation_;  //!< Store at which time stamp the last oscillation was detected
         bool oscillation_detected_ = false;
         bool oscillation_warning_ = false;
 
         double distanceLookahead();
-        PlannerState update_planner_state();
+        double velocityLookahead();
+        void set_planner_state(PlannerState s);
+        void update_planner_state();
         void update_control_point(double dt);
         void calculate_velocity_commands(double dt, geometry_msgs::TwistStamped &cmd_vel);
 
@@ -134,8 +144,10 @@ namespace ftc_local_planner
 
         void reconfigureCB(FTCPlannerConfig &config, uint32_t level);
 
+        void statusReceived(const mower_msgs::Status::ConstPtr &msg);
+
     public:
-        FTCPlanner();
+        FTCPlanner() : current_state_(INIT), current_state(current_state_) {};
 
         bool getProgress(ftc_local_planner::PlannerGetProgressRequest &req, ftc_local_planner::PlannerGetProgressResponse &res);
 

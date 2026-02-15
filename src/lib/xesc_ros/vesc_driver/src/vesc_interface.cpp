@@ -58,6 +58,11 @@ namespace vesc_driver {
             nanosleep(&time, nullptr);
 
             std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now();
+            bool request_state;
+            {
+                std::unique_lock<std::mutex> lk(last_state_request_mutex_);
+                request_state = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_state_request).count() > state_request_millis;
+            }
             VESC_CONNECTION_STATE state;
             {
                 std::unique_lock<std::mutex> lk(status_mutex_);
@@ -71,7 +76,7 @@ namespace vesc_driver {
                     requestFWVersion();
                 }
                 continue;
-            } else if(status_.connection_state == CONNECTED || status_.connection_state == CONNECTED_INCOMPATIBLE_FW) {
+            } else if(request_state && (status_.connection_state == CONNECTED || status_.connection_state == CONNECTED_INCOMPATIBLE_FW)) {
                 requestState();
             }
         }
@@ -98,6 +103,7 @@ namespace vesc_driver {
                 try {
                     serial_.setPort(port_);
                     serial_.open();
+                    serial_.setBaudrate(baudrate_);
                 } catch (std::exception &e) {
                     // retry later
                     sleep(1);
@@ -252,6 +258,10 @@ namespace vesc_driver {
     }
 
     void VescInterface::requestState() {
+        {
+            std::unique_lock<std::mutex> lk(last_state_request_mutex_);
+            last_state_request = std::chrono::steady_clock::now();
+        }
         send(VescPacketRequestValues());
     }
 
@@ -275,8 +285,9 @@ namespace vesc_driver {
         send(VescPacketSetPos(position));
     }
 
-    void VescInterface::start(const std::string &port) {
+    void VescInterface::start(const std::string &port, const uint32_t &baudrate) {
         port_ = port;
+        baudrate_ = baudrate;
         // start up a monitoring thread
         rx_thread_run_ = true;
         update_thread_run_ = true;
@@ -298,8 +309,11 @@ namespace vesc_driver {
     }
 
     void VescInterface::get_status(VescStatusStruct *status) {
-        std::unique_lock<std::mutex> lk(status_mutex_);
-        *status = status_;
+        {
+            std::unique_lock<std::mutex> lk(status_mutex_);
+            *status = status_;
+        }
+        requestState();
     }
 
     void VescInterface::wait_for_status(VescStatusStruct *status) {

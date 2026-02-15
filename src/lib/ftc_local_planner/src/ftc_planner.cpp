@@ -12,11 +12,6 @@ PLUGINLIB_EXPORT_CLASS(ftc_local_planner::FTCPlanner, mbf_costmap_core::CostmapC
 
 namespace ftc_local_planner
 {
-
-    FTCPlanner::FTCPlanner()
-    {
-    }
-
     void FTCPlanner::initialize(std::string name, tf2_ros::Buffer *tf, costmap_2d::Costmap2DROS *costmap_ros)
     {
         ros::NodeHandle private_nh("~/" + name);
@@ -38,18 +33,24 @@ namespace ftc_local_planner
                                                                                      _1, _2);
         reconfig_server->setCallback(cb);
 
-        current_state = PRE_ROTATE;
-
         // PID Debugging topic
         if (config.debug_pid)
         {
             pubPid = private_nh.advertise<ftc_local_planner::PID>("debug_pid", 1, true);
+            pubCp = private_nh.advertise<ftc_local_planner::CP>("debug_cp", 1, true);
         }
 
         // Recovery behavior initialization
         failure_detector_.setBufferLength(std::round(config.oscillation_recovery_min_duration * 10));
 
+        status_sub = private_nh.subscribe<mower_msgs::Status>("/mower/status", 0, &FTCPlanner::statusReceived, this, ros::TransportHints().tcpNoDelay(true));
+
         ROS_INFO("FTCLocalPlannerROS: Version 2 Init.");
+    }
+
+    void FTCPlanner::statusReceived(const mower_msgs::Status::ConstPtr &msg)
+    {
+        last_status = *msg;
     }
 
     void FTCPlanner::reconfigureCB(FTCPlannerConfig &c, uint32_t level)
@@ -62,7 +63,7 @@ namespace ftc_local_planner
         config = c;
 
         // just to be sure
-        current_movement_speed = config.speed_slow;
+        //current_movement_speed = config.speed_slow;
 
         // set recovery behavior
         failure_detector_.setBufferLength(std::round(config.oscillation_recovery_min_duration * 10));
@@ -70,8 +71,7 @@ namespace ftc_local_planner
 
     bool FTCPlanner::setPlan(const std::vector<geometry_msgs::PoseStamped> &plan)
     {
-        current_state = PRE_ROTATE;
-        state_entered_time = ros::Time::now();
+        set_planner_state(PRE_ROTATE);
         is_crashed = false;
 
         global_plan = plan;
@@ -79,7 +79,8 @@ namespace ftc_local_planner
         current_progress = 0.0;
 
         last_time = ros::Time::now();
-        current_movement_speed = config.speed_slow;
+        current_movement_speed = 0;
+        speed_limit = config.max_cmd_vel_speed;
 
         lat_error = 0.0;
         lon_error = 0.0;
@@ -87,6 +88,7 @@ namespace ftc_local_planner
         i_lon_error = 0.0;
         i_lat_error = 0.0;
         i_angle_error = 0.0;
+        lin_speed = 0.0;
 
         nav_msgs::Path path;
 
@@ -102,8 +104,8 @@ namespace ftc_local_planner
         else
         {
             ROS_WARN_STREAM("FTCLocalPlannerROS: Global plan was too short. Need a minimum of 3 poses - Cancelling.");
-            current_state = FINISHED;
-            state_entered_time = ros::Time::now();
+            set_planner_state(FINISHED);
+            return true;
         }
         global_plan_pub.publish(path);
 
@@ -179,13 +181,7 @@ namespace ftc_local_planner
         // First, we update the control point if needed. This is needed since we need the local_control_point to calculate the next state.
         update_control_point(dt);
         // Then, update the planner state.
-        auto new_planner_state = update_planner_state();
-        if (new_planner_state != current_state)
-        {
-            ROS_INFO_STREAM("FTCLocalPlannerROS: Switching to state " << new_planner_state);
-            state_entered_time = ros::Time::now();
-            current_state = new_planner_state;
-        }
+        update_planner_state();
 
         if (checkCollision(config.obstacle_lookahead))
         {
@@ -217,12 +213,23 @@ namespace ftc_local_planner
     bool FTCPlanner::cancel()
     {
         ROS_WARN_STREAM("FTCLocalPlannerROS: FTC planner was cancelled.");
-        current_state = FINISHED;
-        state_entered_time = ros::Time::now();
+        set_planner_state(FINISHED);
         return true;
     }
 
-    FTCPlanner::PlannerState FTCPlanner::update_planner_state()
+    void FTCPlanner::set_planner_state(PlannerState s) {
+        auto last_state = current_state;
+        current_state_ = s;
+        if( last_state != current_state) {
+            ROS_INFO_STREAM("FTCLocalPlannerROS: Switching to state " << current_state);
+            state_entered_time = ros::Time::now();
+            // Reset oscillation detection
+            failure_detector_.clear();
+            failure_detector_.setBufferLength(std::round(config.oscillation_recovery_min_duration * 10));
+        }
+    };
+
+    void FTCPlanner::update_planner_state()
     {
         switch (current_state)
         {
@@ -232,12 +239,14 @@ namespace ftc_local_planner
             {
                 ROS_ERROR_STREAM("FTCLocalPlannerROS: Error reaching goal. config.goal_timeout (" << config.goal_timeout << ") reached - Timeout in PRE_ROTATE phase.");
                 is_crashed = true;
-                return FINISHED;
+                set_planner_state(FINISHED);
+                return;
             }
             if (abs(angle_error) * (180.0 / M_PI) < config.max_goal_angle_error)
             {
                 ROS_INFO_STREAM("FTCLocalPlannerROS: PRE_ROTATE finished. Starting following");
-                return FOLLOWING;
+                set_planner_state(FOLLOWING);
+                return;
             }
         }
         break;
@@ -249,14 +258,16 @@ namespace ftc_local_planner
             {
                 ROS_ERROR_STREAM("FTCLocalPlannerROS: Robot is far away from global plan. distance (" << distance << ") > config.max_follow_distance (" << config.max_follow_distance << ") It probably has crashed.");
                 is_crashed = true;
-                return FINISHED;
+                set_planner_state(FINISHED);
+                return;
             }
 
             // check if we're done following
             if (current_index == global_plan.size() - 2)
             {
                 ROS_INFO_STREAM("FTCLocalPlannerROS: switching planner to position mode");
-                return WAITING_FOR_GOAL_APPROACH;
+                set_planner_state(WAITING_FOR_GOAL_APPROACH);
+                return;
             }
         }
         break;
@@ -266,26 +277,30 @@ namespace ftc_local_planner
             if (time_in_current_state() > config.goal_timeout)
             {
                 ROS_WARN_STREAM("FTCLocalPlannerROS: Could not reach goal position. config.goal_timeout (" << config.goal_timeout << ") reached - Attempting final rotation anyways.");
-                return POST_ROTATE;
+                set_planner_state(POST_ROTATE);
+                return;
             }
             if (distance < config.max_goal_distance_error)
             {
                 ROS_INFO_STREAM("FTCLocalPlannerROS: Reached goal position.");
-                return POST_ROTATE;
+                set_planner_state(POST_ROTATE);
+                return;
             }
         }
         break;
         case POST_ROTATE:
         {
-            if (time_in_current_state() > config.goal_timeout)
+            if (time_in_current_state() > config.goal_timeout && abs(angle_error) * (180.0 / M_PI) > config.max_goal_angle_error)
             {
                 ROS_WARN_STREAM("FTCLocalPlannerROS: Could not reach goal rotation. config.goal_timeout (" << config.goal_timeout << ") reached");
-                return FINISHED;
+                set_planner_state(FINISHED);
+                return;
             }
-            if (abs(angle_error) * (180.0 / M_PI) < config.max_goal_angle_error)
+            if (abs(angle_error) * (180.0 / M_PI) <= config.target_goal_angle_error)
             {
                 ROS_INFO_STREAM("FTCLocalPlannerROS: POST_ROTATE finished.");
-                return FINISHED;
+                set_planner_state(FINISHED);
+                return;
             }
         }
         break;
@@ -293,10 +308,84 @@ namespace ftc_local_planner
         {
             // Nothing to do here
         }
+        case INIT:
+        {
+            // Nothing to do here
+        }
         break;
         }
+    }
 
-        return current_state;
+    double FTCPlanner::velocityLookahead()
+    {
+        if (global_plan.size() < 2)
+        {
+            return 0;
+        }
+
+        //work out how many points look ahead we need to decelerate to 0 from current speed
+        double decelDist = (current_movement_speed * current_movement_speed) / (2.0 * config.acceleration);
+        double total_dist = 0.0;
+        std::vector<double> distances;
+        std::vector<double> rotations;
+        Eigen::Affine3d last_point = current_control_point;
+        Eigen::Quaternion<double> last_rot(current_control_point.linear());
+        uint32_t i = 0;
+        double dist = 0;
+        for (i = current_index + 1; i < global_plan.size(); i++)
+        {
+            Eigen::Affine3d next_point;
+            tf2::fromMsg(global_plan[i].pose, next_point);
+            dist += abs((next_point.translation() - last_point.translation()).norm());
+            if (dist < config.velocity_lookahead_min_step) {
+                continue;
+            }
+            distances.push_back(dist);
+            Eigen::Quaternion<double> next_rot(next_point.linear());
+            rotations.push_back(abs(next_rot.angularDistance(last_rot)));
+            total_dist += dist;
+            dist = 0;
+            last_point = next_point;
+            last_rot = next_rot;
+            if(total_dist >= decelDist)
+                break;
+        }
+
+        // Back-off if struggling to keep up
+        double max_speed = speed_limit;
+        if(i >= global_plan.size())
+        {
+            max_speed = 0.0; //if we are approaching end of the path finish with zero speed
+        }
+        if(distances.empty())
+        {
+            return 0;
+        }
+        else{
+            //now go back through the points to calculate max permissible speed
+
+            for(int32_t i = distances.size()-1;i>=0;i--)
+            {
+                //calculate max speed to allow time for rotations
+                double angle = rotations[i] * (180.0 / M_PI);
+                if (angle < config.velocity_lookahead_min_angle) {
+                    angle = 0.0;
+                }
+                double time_to_rotate = angle / config.speed_angular;
+                double speed = speed_limit;
+                if(time_to_rotate > 0.0)
+                    speed = config.velocity_lookahead_scale * distances[i]/time_to_rotate;
+
+                //calculate max speed with acceleration from previous step (actually decel but going backwards)
+                max_speed = sqrt((max_speed * max_speed) + (2 * config.acceleration * distances[i]));
+                if(max_speed > speed_limit)
+                    max_speed = speed_limit;
+                if(speed < max_speed)
+                    max_speed = speed;
+            }
+        }
+
+        return max_speed;
     }
 
     void FTCPlanner::update_control_point(double dt)
@@ -309,16 +398,24 @@ namespace ftc_local_planner
             break;
         case FOLLOWING:
         {
-            // Normal planner operation
+            double speed = 0.0;
             double straight_dist = distanceLookahead();
-            double speed;
-            if (straight_dist >= config.speed_fast_threshold)
+            if(config.speed_slow > 0.0)
             {
-                speed = config.speed_fast;
+                // Normal planner operation
+                if (straight_dist >= config.speed_fast_threshold)
+                {
+                    speed = config.speed_fast;
+                }
+                else
+                {
+                    speed = config.speed_slow;
+                }
             }
             else
             {
-                speed = config.speed_slow;
+                speed = velocityLookahead();
+                if(speed < 0.01) speed = 0.01;
             }
 
             if (speed > current_movement_speed)
@@ -353,7 +450,7 @@ namespace ftc_local_planner
 
                 double pose_distance_angular = current_rot.angularDistance(next_rot);
 
-                if (pose_distance <= 0.0)
+                if (pose_distance <= 0.0 && std::abs(pose_distance_angular) <= 0.00001)
                 {
                     ROS_WARN_STREAM("FTCLocalPlannerROS: Skipping duplicate point in global plan.");
                     current_index++;
@@ -379,10 +476,11 @@ namespace ftc_local_planner
                         (pose_distance * current_progress + distance_to_move) / pose_distance;
                     double current_progress_angle =
                         (pose_distance_angular * current_progress + angle_to_move) / pose_distance_angular;
+
                     current_progress = fmin(current_progress_angle, current_progress_distance);
                     if (current_progress > 1.0)
                     {
-                        ROS_WARN_STREAM("FTCLocalPlannerROS: FTC PLANNER: Progress > 1.0");
+                        ROS_WARN_STREAM("FTCLocalPlannerROS: FTC PLANNER: Progress > 1.0 dist " << current_progress_distance << "ang " << current_progress_angle);
                         //                    current_progress = 1.0;
                     }
                     distance_to_move = 0;
@@ -412,6 +510,7 @@ namespace ftc_local_planner
         case WAITING_FOR_GOAL_APPROACH:
             break;
         case FINISHED:
+        case INIT:
             break;
         }
 
@@ -421,12 +520,25 @@ namespace ftc_local_planner
             viz.pose = tf2::toMsg(current_control_point);
             global_point_pub.publish(viz);
         }
+
+        if (config.debug_pid)
+        {
+            ftc_local_planner::CP debugCpMsg;
+
+            debugCpMsg.stamp = ros::Time::now();
+            debugCpMsg.movement_speed = current_movement_speed;
+            debugCpMsg.progress = current_progress;
+            pubCp.publish(debugCpMsg);
+        }
+
         auto map_to_base = tf_buffer->lookupTransform("base_link", "map", ros::Time(), ros::Duration(1.0));
         tf2::doTransform(current_control_point, local_control_point, map_to_base);
 
         lat_error = local_control_point.translation().y();
         lon_error = local_control_point.translation().x();
+        lon_error -= config.follow_distance;
         angle_error = local_control_point.rotation().eulerAngles(0, 1, 2).z();
+
     }
 
     void FTCPlanner::calculate_velocity_commands(double dt, geometry_msgs::TwistStamped &cmd_vel)
@@ -437,6 +549,18 @@ namespace ftc_local_planner
             cmd_vel.twist.linear.x = 0;
             cmd_vel.twist.angular.z = 0;
             return;
+        }
+
+        if (lin_speed < 0)
+        {
+            // Going backwards, flip error
+            lat_error *= -1.0;
+            // TODO: Need this too? Don't think so: lon_error *= -1.0;
+        }
+
+        auto real_angle_error = angle_error;
+        if (config.ang_error_scale) {
+            angle_error *= config.ang_error_scale_factor / (config.ang_error_scale_factor + abs(lin_speed));
         }
 
         i_lon_error += lon_error * dt;
@@ -459,14 +583,35 @@ namespace ftc_local_planner
         {
             i_lat_error = -config.ki_lat_max;
         }
-        if (i_angle_error > config.ki_ang_max)
-        {
-            i_angle_error = config.ki_ang_max;
+        if (current_state == FOLLOWING) {
+            if (i_angle_error > config.ki_ang_max)
+            {
+                i_angle_error = config.ki_ang_max;
+            }
+            else if (i_angle_error < -config.ki_ang_max)
+            {
+                i_angle_error = -config.ki_ang_max;
+            }
         }
-        else if (i_angle_error < -config.ki_ang_max)
-        {
-            i_angle_error = -config.ki_ang_max;
+        else {
+            if (i_angle_error > config.ki_ang_max_rotate)
+            {
+                i_angle_error = config.ki_ang_max_rotate;
+            }
+            else if (i_angle_error < -config.ki_ang_max_rotate)
+            {
+                i_angle_error = -config.ki_ang_max_rotate;
+            }
         }
+
+        double d_input_lon = local_control_point.translation().x() - last_local_control_point.translation().x();
+        double d_input_lat = local_control_point.translation().y() - last_local_control_point.translation().y();
+        double d_input_angular = local_control_point.rotation().eulerAngles(0, 1, 2).z() - last_local_control_point.rotation().eulerAngles(0, 1, 2).z();
+        last_local_control_point = local_control_point;
+
+        double d_lat_input = d_input_lat / dt;
+        double d_lon_input = d_input_lon / dt;
+        double d_angle_input = d_input_angular / dt;
 
         double d_lat = (lat_error - last_lat_error) / dt;
         double d_lon = (lon_error - last_lon_error) / dt;
@@ -475,30 +620,91 @@ namespace ftc_local_planner
         last_lat_error = lat_error;
         last_lon_error = lon_error;
         last_angle_error = angle_error;
+        double mow_current_error = std::max(0.0, last_status.mower_esc_current - config.max_mow_motor_current);
+        speed_limit = std::min(config.max_cmd_vel_speed, std::max(
+            config.speed_limit_min,
+            std::min(
+                config.max_cmd_vel_speed - (lon_error * config.kp_lim + i_lon_error * config.ki_lim + d_lon * config.kd_lim),
+                config.max_cmd_vel_speed - (mow_current_error * config.kp_mow_current_lim)
+            )
+        ));
 
-        // allow linear movement only if in following state
+        double ang_speed = angle_error * config.kp_ang + i_angle_error * config.ki_ang + d_angle * config.kd_ang + d_angle_input * config.kd_ang_input;
+        if (current_state == PRE_ROTATE || current_state == POST_ROTATE)
+            ang_speed = angle_error * config.kp_ang_rotate + i_angle_error * config.ki_ang_rotate + d_angle * config.kd_ang_rotate;
 
-        if (current_state == FOLLOWING)
+        // Only apply lat PID while FOLLOWING
+        if ((current_state == FOLLOWING) || (current_state == WAITING_FOR_GOAL_APPROACH)) {
+            // reduce angular error gain if there is a large lateral error
+            double ang_gain_factor = 1.0;
+            if(config.lateral_priority_distance > 0.01)
+            {
+                if(abs(lat_error) >= config.lateral_priority_distance)
+                    ang_gain_factor = 0;
+                else
+                    ang_gain_factor = (config.lateral_priority_distance - abs(lat_error))/config.lateral_priority_distance;
+
+                if(ang_gain_factor < 0.1)
+                    ang_gain_factor = 0.1;
+            }
+            ang_speed *= ang_gain_factor;
+            ang_speed += lat_error * config.kp_lat + i_lat_error * config.ki_lat + d_lat * config.kd_lat + d_lat_input * config.kd_lat_input;
+        }
+
+        if (ang_speed > config.max_cmd_vel_ang)
         {
-            double lin_speed = lon_error * config.kp_lon + i_lon_error * config.ki_lon + d_lon * config.kd_lon;
+            ang_speed = config.max_cmd_vel_ang;
+        }
+        else if (ang_speed < -config.max_cmd_vel_ang)
+        {
+            ang_speed = -config.max_cmd_vel_ang;
+        }
+
+        if (current_state == PRE_ROTATE || current_state == POST_ROTATE) {
+            // check if robot oscillates
+            bool is_oscillating = checkOscillation(cmd_vel);
+            if (is_oscillating)
+            {
+                ang_speed = 0;
+            }
+        }
+        cmd_vel.twist.angular.z = ang_speed;
+
+        // Only allow linear movement while FOLLOWING or WAITING_FOR_GOAL_APPROACH
+        if (current_state == FOLLOWING || current_state == WAITING_FOR_GOAL_APPROACH)
+        {
+            if (config.lon_pid_speed_delta) {
+                // TODO: Maybe?
+                // double d_lin_speed = (current_movement_speed - lin_speed) + lon_error * config.kp_lon + i_lon_error * config.ki_lon + d_lon * config.kd_lon;
+                double d_lin_speed = lon_error * config.kp_lon + i_lon_error * config.ki_lon + d_lon * config.kd_lon + d_lon_input * config.kd_lon_input;
+                double max_acceleration = dt * config.max_cmd_vel_acceleration;
+                if (d_lin_speed >= 0) {
+                    if (d_lin_speed > max_acceleration) {
+                        d_lin_speed = max_acceleration;
+                    }
+                }
+                // else if (d_lin_speed < -max_acceleration) {
+                //     d_lin_speed = -max_acceleration;
+                // }
+                lin_speed += d_lin_speed;
+            }
+            else {
+                lin_speed = lon_error * config.kp_lon + i_lon_error * config.ki_lon + d_lon * config.kd_lon + d_lon_input * config.kd_lon_input;
+            }
             if (lin_speed < 0 && config.forward_only)
             {
                 lin_speed = 0;
             }
             else
             {
-                if (lin_speed > config.max_cmd_vel_speed)
+                double max_speed = config.max_cmd_vel_speed;
+                if (lin_speed > max_speed)
                 {
-                    lin_speed = config.max_cmd_vel_speed;
+                    lin_speed = max_speed;
                 }
-                else if (lin_speed < -config.max_cmd_vel_speed)
+                else if (lin_speed < -max_speed)
                 {
-                    lin_speed = -config.max_cmd_vel_speed;
-                }
-
-                if (lin_speed < 0)
-                {
-                    lat_error *= -1.0;
+                    lin_speed = -max_speed;
                 }
             }
             cmd_vel.twist.linear.x = lin_speed;
@@ -508,74 +714,45 @@ namespace ftc_local_planner
             cmd_vel.twist.linear.x = 0.0;
         }
 
-        if (current_state == FOLLOWING)
-        {
-
-            double ang_speed = angle_error * config.kp_ang + i_angle_error * config.ki_ang + d_angle * config.kd_ang +
-                               lat_error * config.kp_lat + i_lat_error * config.ki_lat + d_lat * config.kd_lat;
-
-            if (ang_speed > config.max_cmd_vel_ang)
-            {
-                ang_speed = config.max_cmd_vel_ang;
-            }
-            else if (ang_speed < -config.max_cmd_vel_ang)
-            {
-                ang_speed = -config.max_cmd_vel_ang;
-            }
-
-            cmd_vel.twist.angular.z = ang_speed;
-        }
-        else
-        {
-            double ang_speed = angle_error * config.kp_ang + i_angle_error * config.ki_ang + d_angle * config.kd_ang;
-            if (ang_speed > config.max_cmd_vel_ang)
-            {
-                ang_speed = config.max_cmd_vel_ang;
-            }
-            else if (ang_speed < -config.max_cmd_vel_ang)
-            {
-                ang_speed = -config.max_cmd_vel_ang;
-            }
-
-            cmd_vel.twist.angular.z = ang_speed;
-
-            // check if robot oscillates
-            bool is_oscillating = checkOscillation(cmd_vel);
-            if (is_oscillating)
-            {
-                ang_speed = config.max_cmd_vel_ang;
-                cmd_vel.twist.angular.z = ang_speed;
-            }
-        }
-
         if (config.debug_pid)
         {
             ftc_local_planner::PID debugPidMsg;
-            debugPidMsg.kp_lon_set = lon_error;
+
+            debugPidMsg.stamp = ros::Time::now();
 
             // proportional
             debugPidMsg.kp_lat_set = lat_error * config.kp_lat;
             debugPidMsg.kp_lon_set = lon_error * config.kp_lon;
+            debugPidMsg.kp_lim_set = lon_error * config.kp_lim;
             debugPidMsg.kp_ang_set = angle_error * config.kp_ang;
 
             // integral
             debugPidMsg.ki_lat_set = i_lat_error * config.ki_lat;
             debugPidMsg.ki_lon_set = i_lon_error * config.ki_lon;
+            debugPidMsg.ki_lim_set = i_lon_error * config.ki_lim;
             debugPidMsg.ki_ang_set = i_angle_error * config.ki_ang;
 
             // diff
             debugPidMsg.kd_lat_set = d_lat * config.kd_lat;
             debugPidMsg.kd_lon_set = d_lon * config.kd_lon;
+            debugPidMsg.kd_lim_set = d_lon * config.kd_lim;
             debugPidMsg.kd_ang_set = d_angle * config.kd_ang;
+
+            // diff input
+            debugPidMsg.kd_lat_input_set = d_lat_input * config.kd_lat_input;
+            debugPidMsg.kd_lon_input_set = d_lon_input * config.kd_lon_input;
+            debugPidMsg.kd_ang_input_set = d_angle_input * config.kd_ang_input;
 
             // errors
             debugPidMsg.lon_err = lon_error;
             debugPidMsg.lat_err = lat_error;
             debugPidMsg.ang_err = angle_error;
+            debugPidMsg.real_ang_err = real_angle_error;
 
             // speeds
             debugPidMsg.ang_speed = cmd_vel.twist.angular.z;
             debugPidMsg.lin_speed = cmd_vel.twist.linear.x;
+            debugPidMsg.speed_limit = speed_limit;
 
             pubPid.publish(debugPidMsg);
         }
