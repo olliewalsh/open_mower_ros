@@ -439,7 +439,7 @@ void buildMap() {
     Eigen::Vector2d obstacle_pos(fake_obstacle_pose.position.x, fake_obstacle_pose.position.y);
 
     {
-      grid_map::Position pos = obstacle_pos + 0.1 * left + 0.25 * front;
+      grid_map::Position pos = obstacle_pos + 0.1 * left + 0.55 * front;
       poly.addVertex(pos);
     }
     {
@@ -451,12 +451,12 @@ void buildMap() {
       poly.addVertex(pos);
     }
     {
-      grid_map::Position pos = obstacle_pos + 0.6 * left + 0.7 * front;
+      grid_map::Position pos = obstacle_pos + 0.6 * left + 1.0 * front;
       poly.addVertex(pos);
     }
 
     {
-      grid_map::Position pos = obstacle_pos - 0.6 * left + 0.7 * front;
+      grid_map::Position pos = obstacle_pos - 0.6 * left + 1.0 * front;
       poly.addVertex(pos);
     }
     {
@@ -468,7 +468,7 @@ void buildMap() {
       poly.addVertex(pos);
     }
     {
-      grid_map::Position pos = obstacle_pos - 0.1 * left + 0.25 * front;
+      grid_map::Position pos = obstacle_pos - 0.1 * left + 0.55 * front;
       poly.addVertex(pos);
     }
     for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
