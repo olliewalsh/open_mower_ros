@@ -620,19 +620,19 @@ void actionReceived(const std_msgs::String::ConstPtr& action) {
     return;
   }
 
-  if(action->data == "mower_logic:automatic_mowing/stop") {
+  if (action->data == "mower_logic:automatic_mowing/stop") {
     auto new_config = getConfig();
-    if(!new_config.manual_pause_mowing) {
-        new_config.manual_pause_mowing = true;
-        setConfig(new_config);
+    if (!new_config.manual_pause_mowing) {
+      new_config.manual_pause_mowing = true;
+      setConfig(new_config);
     }
     return;
   }
-  if(action->data == "mower_logic:automatic_mowing/start" ) {
+  if (action->data == "mower_logic:automatic_mowing/start") {
     auto new_config = getConfig();
-    if(new_config.manual_pause_mowing) {
-        new_config.manual_pause_mowing = false;
-        setConfig(new_config);
+    if (new_config.manual_pause_mowing) {
+      new_config.manual_pause_mowing = false;
+      setConfig(new_config);
     }
     return;
   }

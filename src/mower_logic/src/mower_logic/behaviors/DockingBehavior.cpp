@@ -52,8 +52,9 @@ bool DockingBehavior::approach_docking_point() {
   double roll, pitch, yaw;
   m.getRPY(roll, pitch, yaw);
 
-  double docking_approach_distance = config.docking_approach_distance + \
-        2*config.docking_approach_distance_variance*rand()/RAND_MAX - config.docking_approach_distance_variance;
+  double docking_approach_distance = config.docking_approach_distance +
+                                     2 * config.docking_approach_distance_variance * rand() / RAND_MAX -
+                                     config.docking_approach_distance_variance;
 
   // Get the approach start point
   {
@@ -191,29 +192,28 @@ bool DockingBehavior::dock_straight() {
 }
 
 bool DockingBehavior::recovery() {
-    ROS_INFO_STREAM("Docking recovery, navigating to a random pose and retrying");
+  ROS_INFO_STREAM("Docking recovery, navigating to a random pose and retrying");
 
-    auto odom_ptr = ros::topic::waitForMessage<xbot_msgs::AbsolutePose>("/xbot_positioning/xb_pose", ros::Duration(1, 0));
-    auto current_pos = odom_ptr->pose.pose.position;
+  auto odom_ptr = ros::topic::waitForMessage<xbot_msgs::AbsolutePose>("/xbot_positioning/xb_pose", ros::Duration(1, 0));
+  auto current_pos = odom_ptr->pose.pose.position;
 
-    geometry_msgs::PoseStamped recovery_pose;
-    recovery_pose.header.frame_id = "map";
-    recovery_pose.header.stamp = ros::Time::now();
+  geometry_msgs::PoseStamped recovery_pose;
+  recovery_pose.header.frame_id = "map";
+  recovery_pose.header.stamp = ros::Time::now();
 
-    recovery_pose.pose.position.x = current_pos.x + 4.0*rand()/RAND_MAX - 2.0;
-    recovery_pose.pose.position.y = current_pos.y + 4.0*rand()/RAND_MAX - 2.0;
+  recovery_pose.pose.position.x = current_pos.x + 4.0 * rand() / RAND_MAX - 2.0;
+  recovery_pose.pose.position.y = current_pos.y + 4.0 * rand() / RAND_MAX - 2.0;
 
-    double yaw = atan2(recovery_pose.pose.position.y - current_pos.y, recovery_pose.pose.position.x - current_pos.x);
-    tf2::Quaternion recovery_orientation(0.0, 0.0, yaw);
-    recovery_pose.pose.orientation = tf2::toMsg(recovery_orientation);
+  double yaw = atan2(recovery_pose.pose.position.y - current_pos.y, recovery_pose.pose.position.x - current_pos.x);
+  tf2::Quaternion recovery_orientation(0.0, 0.0, yaw);
+  recovery_pose.pose.orientation = tf2::toMsg(recovery_orientation);
 
-    mbf_msgs::MoveBaseGoal moveBaseGoal;
-    moveBaseGoal.target_pose = recovery_pose;
-    moveBaseGoal.controller = "FTCPlanner";
-    auto result = mbfClient->sendGoalAndWait(moveBaseGoal);
-    return (result.state_ != result.SUCCEEDED);
+  mbf_msgs::MoveBaseGoal moveBaseGoal;
+  moveBaseGoal.target_pose = recovery_pose;
+  moveBaseGoal.controller = "FTCPlanner";
+  auto result = mbfClient->sendGoalAndWait(moveBaseGoal);
+  return (result.state_ != result.SUCCEEDED);
 }
-
 
 std::string DockingBehavior::state_name() {
   return "DOCKING";
