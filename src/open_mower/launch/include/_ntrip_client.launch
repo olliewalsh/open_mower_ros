@@ -8,7 +8,7 @@
   <arg name="mountpoint"                      default = "$(env OM_NTRIP_ENDPOINT)" />
   <arg name="username"                        default = "$(env OM_NTRIP_USER)" />
   <arg name="password"                        default = "$(env OM_NTRIP_PASSWORD)" />
-  <arg name="ntrip_version"                   default = "" />
+  <arg name="ntrip_version"                   default = "Ntrip/2.0" />
   <arg name="ssl"                             default = "false" />
   <arg name="cert"                            default = "" />
   <arg name="key"                             default = "" />
