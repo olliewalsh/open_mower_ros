@@ -34,6 +34,8 @@
   <exec_depend>imu_filter_madgwick</exec_depend>
   <exec_depend>twist_mux</exec_depend>
   <exec_depend>rtcm_msgs</exec_depend>
+  <exec_depend>nmea_msgs</exec_depend>
+  <exec_depend>ros_ntrip_client</exec_depend>
   <exec_depend>rosbag_snapshot</exec_depend>
 
 
