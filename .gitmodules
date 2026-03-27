@@ -6,7 +6,8 @@
 	url = https://github.com/xtech/xbot_framework.git
 [submodule "services"]
 	path = services
-	url = https://github.com/xtech/definitions-open-mower.git
+	url = https://github.com/olliewalsh/definitions-open-mower.git
+	branch = feature/imu_collision
 [submodule "src/lib/ros_ntrip_client"]
 	path = src/lib/ros_ntrip_client
 	url = https://github.com/olliewalsh/ros_ntrip_client.git

@@ -27,6 +27,9 @@
 #include <spdlog/spdlog.h>
 #include <std_msgs/String.h>
 
+#include <algorithm>
+#include <limits>
+
 #include "../../../services/service_ids.h"
 #include "DiffDriveServiceInterface.h"
 #include "EmergencyServiceInterface.h"
@@ -202,9 +205,31 @@ int main(int argc, char** argv) {
   // IMU service
   std::string imu_axis_config;
   paramNh.getParam("services/imu/axis_config", imu_axis_config);
+  ImuServiceInterface::CollisionConfig imu_collision_config;
+  bool disable_collision_detection = true;
+  paramNh.getParam("services/imu/disable_collision_detection", disable_collision_detection);
+  imu_collision_config.disable_detection = disable_collision_detection ? 1 : 0;
+  paramNh.getParam("services/imu/collision_accel_threshold", imu_collision_config.accel_threshold);
+  paramNh.getParam("services/imu/collision_gyro_threshold", imu_collision_config.gyro_threshold);
+  paramNh.getParam("services/imu/collision_jerk_threshold", imu_collision_config.jerk_threshold);
+  paramNh.getParam("services/imu/collision_gravity_filter_hz", imu_collision_config.gravity_filter_hz);
+  paramNh.getParam("services/imu/collision_wheel_current_threshold", imu_collision_config.wheel_current_threshold);
+  paramNh.getParam("services/imu/collision_actual_linear_speed_threshold",
+                   imu_collision_config.actual_linear_speed_threshold);
+  paramNh.getParam("services/imu/collision_actual_angular_speed_threshold",
+                   imu_collision_config.actual_angular_speed_threshold);
+  paramNh.getParam("services/imu/collision_actual_speed_drop_threshold",
+                   imu_collision_config.actual_speed_drop_threshold);
+  int collision_consecutive_samples = static_cast<int>(imu_collision_config.consecutive_samples);
+  paramNh.getParam("services/imu/collision_consecutive_samples", collision_consecutive_samples);
+  collision_consecutive_samples =
+      std::clamp(collision_consecutive_samples, 0, static_cast<int>(std::numeric_limits<uint16_t>::max()));
+  imu_collision_config.consecutive_samples = static_cast<uint16_t>(collision_consecutive_samples);
   ROS_INFO_STREAM("IMU axis config: " << imu_axis_config);
+  ROS_INFO_STREAM("IMU collision detection: " << (disable_collision_detection ? "disabled" : "enabled"));
   sensor_imu_pub = n.advertise<sensor_msgs::Imu>("ll/imu/data_raw", 1);
-  imu_service = std::make_unique<ImuServiceInterface>(xbot::service_ids::IMU, ctx, sensor_imu_pub, imu_axis_config);
+  imu_service = std::make_unique<ImuServiceInterface>(xbot::service_ids::IMU, ctx, sensor_imu_pub, imu_axis_config,
+                                                      imu_collision_config);
   imu_service->Start();
 
   // Power service

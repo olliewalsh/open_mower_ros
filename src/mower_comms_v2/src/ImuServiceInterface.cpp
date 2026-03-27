@@ -45,6 +45,7 @@ bool ImuServiceInterface::validateAxisConfig() {
 }
 
 bool ImuServiceInterface::OnConfigurationRequested(uint16_t service_id) {
+  (void)service_id;
   std::array<int8_t, 3> axis_remap = {1, -2, -3};  // Default (YardForce mainboard) mapping: X=1, Y=-2, Z=-3
 
   StartTransaction(true);
@@ -66,6 +67,16 @@ bool ImuServiceInterface::OnConfigurationRequested(uint16_t service_id) {
     ROS_ERROR_STREAM("Invalid IMU axis config: " << axis_config_ << "! Using default YardForce +X-Y-Z mapping.");
   }
   SetRegisterAxisRemap(axis_remap.data(), axis_remap.size());
+  SetRegisterDisableCollisionDetection(collision_config_.disable_detection);
+  SetRegisterCollisionAccelThreshold(collision_config_.accel_threshold);
+  SetRegisterCollisionGyroThreshold(collision_config_.gyro_threshold);
+  SetRegisterCollisionJerkThreshold(collision_config_.jerk_threshold);
+  SetRegisterCollisionGravityFilterHz(collision_config_.gravity_filter_hz);
+  SetRegisterCollisionWheelCurrentThreshold(collision_config_.wheel_current_threshold);
+  SetRegisterCollisionActualLinearSpeedThreshold(collision_config_.actual_linear_speed_threshold);
+  SetRegisterCollisionActualAngularSpeedThreshold(collision_config_.actual_angular_speed_threshold);
+  SetRegisterCollisionActualSpeedDropThreshold(collision_config_.actual_speed_drop_threshold);
+  SetRegisterCollisionConsecutiveSamples(collision_config_.consecutive_samples);
   CommitTransaction();
 
   return true;
