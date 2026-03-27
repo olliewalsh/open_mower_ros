@@ -8,6 +8,16 @@ ll:
       baudrate: 921600
     imu:
       axis_config: "+Z+X+Y"
+      disable_collision_detection: false
+      collision_accel_threshold: 12.0
+      collision_gyro_threshold: 2.5
+      collision_jerk_threshold: 250.0
+      collision_gravity_filter_hz: 1.5
+      collision_wheel_current_threshold: 4.0
+      collision_actual_linear_speed_threshold: 0.08
+      collision_actual_angular_speed_threshold: 0.5
+      collision_actual_speed_drop_threshold: 0.2
+      collision_consecutive_samples: 2
     power:
       battery_empty_voltage: 23.5
       battery_critical_voltage: 22.5
