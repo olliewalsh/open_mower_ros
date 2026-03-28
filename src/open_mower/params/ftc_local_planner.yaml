@@ -1,30 +1,48 @@
 FTCPlanner:
-  acceleration: 0.1
-  check_obstacles: false
-  oscillation_recovery: false
+  acceleration: 0.085
+  check_obstacles: true
   debug_pid: true
   forward_only: true
   goal_timeout: 20.0
-  kd_ang: 0.5
-  kd_lat: 1.23
-  kd_lon: 0.0
-  ki_ang: 0.0
-  ki_ang_max: 62.0
-  ki_lat: 0.06153
-  ki_lat_max: 62.0
+  kp_lon: 0.9
   ki_lon: 0.0
-  ki_lon_max: 10.0
-  kp_ang: 3.0
-  kp_lat: 25.0
-  kp_lon: 4.0
-  max_cmd_vel_ang: 3.1
-  max_cmd_vel_speed: 1.0
-  max_follow_distance: 1.0
+  ki_lon_max: 5.0
+  kd_lon: 0.0
+  kd_lon_input: 1.0
+  kp_lim: 0.6
+  ki_lim: 0.0
+  ki_lim_max: 1.0
+  kd_lim: 0.0
+  ki_lat: 2.0
+  ki_lat_max: 2.5
+  kp_lat: 15.0
+  kd_lat: 0.0
+  kd_lat_input: 7.0
+  kp_ang: 2.0
+  ki_ang: 0.0
+  ki_ang_max: 10
+  kd_ang: 0.0
+  kd_ang_input: 0.5
+  kp_ang_rotate: 2.8
+  ki_ang_rotate: 0.25
+  ki_ang_max_rotate: 31.0
+  kd_ang_rotate: 0.2
+  max_cmd_vel_ang: 1.8
+  max_cmd_vel_speed: 0.5
+  max_cmd_vel_acceleration: 0.15
+  max_follow_distance: 0.35
+  target_goal_angle_error: 10.0
   max_goal_angle_error: 20.0
+  target_goal_distance_error: 0.1
   max_goal_distance_error: 0.2
   restore_defaults: false
-  speed_angular: 45.0
-  speed_fast: 0.4
-  speed_fast_threshold: 1.0
-  speed_fast_threshold_angle: 20.0
-  speed_slow: 0.15
+  speed_angular: 50.0
+  speed_fast: 0.38
+  speed_fast_threshold: 1.5
+  speed_fast_threshold_angle: 10.0
+  speed_slow: 0
+  lon_pid_speed_delta: true
+  follow_distance: 0.02
+  velocity_lookahead_scale: 0.95
+  speed_limit_min: 0.1
+  initial_path_trim: 0.08
