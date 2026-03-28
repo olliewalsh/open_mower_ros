@@ -18,6 +18,7 @@
 #include "Behavior.h"
 #include "UndockingBehavior.h"
 #include "ftc_local_planner/PlannerGetProgress.h"
+#include "geometry_msgs/Polygon.h"
 #include "slic3r_coverage_planner/Path.h"
 #include "slic3r_coverage_planner/PlanPath.h"
 #include "xbot_msgs/ActionInfo.h"
@@ -29,6 +30,8 @@ class MowingBehavior : public Behavior {
   bool skip_area;
   bool skip_path;
   bool create_mowing_plan(int area_index);
+  bool create_reentry_approach_pose(const slic3r_coverage_planner::Path& path, int path_index,
+                                    geometry_msgs::PoseStamped& approach_pose);
 
   bool execute_mowing_plan();
 
@@ -42,6 +45,8 @@ class MowingBehavior : public Behavior {
   int currentMowingPathIndex;
   std::string currentMowingPlanDigest;
   double currentMowingAngleIncrementSum;
+  geometry_msgs::Polygon currentAreaOutline;
+  std::vector<geometry_msgs::Polygon> currentAreaObstacles;
 
  public:
   MowingBehavior();

@@ -21,6 +21,10 @@
 #include <rosbag/bag.h>
 #include <rosbag/view.h>
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 #include "mower_logic/CheckPoint.h"
 #include "mower_map/ClearNavPointSrv.h"
 #include "mower_map/GetMowingAreaSrv.h"
@@ -36,10 +40,63 @@ extern actionlib::SimpleActionClient<mbf_msgs::MoveBaseAction>* mbfClient;
 extern actionlib::SimpleActionClient<mbf_msgs::ExePathAction>* mbfClientExePath;
 extern mower_logic::MowerLogicConfig getConfig();
 extern void setConfig(mower_logic::MowerLogicConfig);
+extern xbot_msgs::AbsolutePose getPose();
 
 extern void registerActions(std::string prefix, const std::vector<xbot_msgs::ActionInfo>& actions);
 
 MowingBehavior MowingBehavior::INSTANCE;
+
+namespace {
+bool pointInPolygon(const geometry_msgs::Point& point, const geometry_msgs::Polygon& polygon) {
+  if (polygon.points.size() < 3) {
+    return false;
+  }
+
+  bool inside = false;
+  for (size_t i = 0, j = polygon.points.size() - 1; i < polygon.points.size(); j = i++) {
+    const auto& pi = polygon.points[i];
+    const auto& pj = polygon.points[j];
+    bool intersects = ((pi.y > point.y) != (pj.y > point.y)) &&
+                      (point.x < (pj.x - pi.x) * (point.y - pi.y) / ((pj.y - pi.y) + 1e-9) + pi.x);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+bool isPointInFreeMowingSpace(const geometry_msgs::Point& point, const geometry_msgs::Polygon& area,
+                              const std::vector<geometry_msgs::Polygon>& obstacles) {
+  if (!pointInPolygon(point, area)) {
+    return false;
+  }
+  for (const auto& obstacle : obstacles) {
+    if (pointInPolygon(point, obstacle)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool isSegmentInFreeMowingSpace(const geometry_msgs::Point& start, const geometry_msgs::Point& end,
+                                const geometry_msgs::Polygon& area,
+                                const std::vector<geometry_msgs::Polygon>& obstacles) {
+  double dx = end.x - start.x;
+  double dy = end.y - start.y;
+  double length = std::hypot(dx, dy);
+  int samples = std::max(2, static_cast<int>(std::ceil(length / 0.05)) + 1);
+
+  for (int i = 0; i < samples; ++i) {
+    double t = static_cast<double>(i) / static_cast<double>(samples - 1);
+    geometry_msgs::Point sample;
+    sample.x = start.x + dx * t;
+    sample.y = start.y + dy * t;
+    if (!isPointInFreeMowingSpace(sample, area, obstacles)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+}  // namespace
 
 std::string MowingBehavior::state_name() {
   if (paused) {
@@ -146,6 +203,8 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
     ROS_ERROR_STREAM("MowingBehavior: Error loading mowing area");
     return false;
   }
+  currentAreaOutline = mapSrv.response.area.area;
+  currentAreaObstacles = mapSrv.response.area.obstacles;
 
   // Area orientation is the same as the first point
   double angle = 0;
@@ -223,6 +282,61 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
     currentMowingPathIndex = 0;
   }
 
+  return true;
+}
+
+bool MowingBehavior::create_reentry_approach_pose(const slic3r_coverage_planner::Path& path, int path_index,
+                                                  geometry_msgs::PoseStamped& approach_pose) {
+  if (path_index < 0 || path_index >= path.path.poses.size()) {
+    return false;
+  }
+
+  auto config = getConfig();
+  if (!config.use_reentry_approach || config.reentry_approach_distance <= 0.0) {
+    return false;
+  }
+
+  const auto& reentry_pose = path.path.poses[path_index];
+  double yaw = tf2::getYaw(reentry_pose.pose.orientation);
+  double tangent_x = std::cos(yaw);
+  double tangent_y = std::sin(yaw);
+  double normal_x = -tangent_y;
+  double normal_y = tangent_x;
+
+  xbot_msgs::AbsolutePose current_pose = getPose();
+  geometry_msgs::Point robot_point = current_pose.pose.pose.position;
+
+  struct Candidate {
+    geometry_msgs::PoseStamped pose;
+    double distance_to_robot = std::numeric_limits<double>::infinity();
+  };
+  std::vector<Candidate> valid_candidates;
+
+  for (double side_sign : {1.0, -1.0}) {
+    geometry_msgs::PoseStamped candidate = reentry_pose;
+    candidate.pose.position.x -= tangent_x * config.reentry_approach_distance;
+    candidate.pose.position.y -= tangent_y * config.reentry_approach_distance;
+    candidate.pose.position.x += normal_x * side_sign * config.reentry_inset_distance;
+    candidate.pose.position.y += normal_y * side_sign * config.reentry_inset_distance;
+
+    if (!isSegmentInFreeMowingSpace(candidate.pose.position, reentry_pose.pose.position, currentAreaOutline,
+                                    currentAreaObstacles)) {
+      continue;
+    }
+
+    double dx = candidate.pose.position.x - robot_point.x;
+    double dy = candidate.pose.position.y - robot_point.y;
+    valid_candidates.push_back({candidate, std::hypot(dx, dy)});
+  }
+
+  if (valid_candidates.empty()) {
+    return false;
+  }
+
+  auto best = std::min_element(
+      valid_candidates.begin(), valid_candidates.end(),
+      [](const Candidate& a, const Candidate& b) { return a.distance_to_robot < b.distance_to_robot; });
+  approach_pose = best->pose;
   return true;
 }
 
@@ -329,8 +443,12 @@ bool MowingBehavior::execute_mowing_plan() {
         sleep(1);
       }
 
+      geometry_msgs::PoseStamped approach_pose;
+      bool has_reentry_approach =
+          currentMowingPathIndex > 0 && create_reentry_approach_pose(path, currentMowingPathIndex, approach_pose);
+
       mbf_msgs::MoveBaseGoal moveBaseGoal;
-      moveBaseGoal.target_pose = path.path.poses[currentMowingPathIndex];
+      moveBaseGoal.target_pose = has_reentry_approach ? approach_pose : path.path.poses[currentMowingPathIndex];
       moveBaseGoal.controller = "FTCPlanner";
       mbfClient->sendGoal(moveBaseGoal);
       sleep(1);
@@ -437,9 +555,16 @@ bool MowingBehavior::execute_mowing_plan() {
       mbf_msgs::ExePathGoal exePathGoal;
       nav_msgs::Path exePath;
       exePath.header = path.path.header;
-      exePath.poses = std::vector<geometry_msgs::PoseStamped>(path.path.poses.begin() + currentMowingPathIndex,
-                                                              path.path.poses.end());
+      geometry_msgs::PoseStamped reentry_approach_pose;
+      bool has_reentry_approach = currentMowingPathIndex > 0 &&
+                                  create_reentry_approach_pose(path, currentMowingPathIndex, reentry_approach_pose);
+      if (has_reentry_approach) {
+        exePath.poses.push_back(reentry_approach_pose);
+      }
+      exePath.poses.insert(exePath.poses.end(), path.path.poses.begin() + currentMowingPathIndex,
+                           path.path.poses.end());
       int exePathStartIndex = currentMowingPathIndex;
+      int exePathIndexOffset = has_reentry_approach ? 1 : 0;
       exePathGoal.path = exePath;
       exePathGoal.angle_tolerance = 5.0 * (M_PI / 180.0);
       exePathGoal.dist_tolerance = 0.2;
@@ -490,7 +615,7 @@ bool MowingBehavior::execute_mowing_plan() {
             // show progress
             int currentIndex = getCurrentMowPathIndex();
             if (currentIndex != -1) {
-              currentMowingPathIndex = exePathStartIndex + currentIndex;
+              currentMowingPathIndex = exePathStartIndex + std::max(0, currentIndex - exePathIndexOffset);
             }
             ROS_INFO_STREAM_THROTTLE(
                 5, "MowingBehavior: (MOW) Progress: " << currentMowingPathIndex << "/" << path.path.poses.size());
