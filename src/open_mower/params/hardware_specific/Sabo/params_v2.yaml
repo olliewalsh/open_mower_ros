@@ -3,6 +3,9 @@ ll:
     diff_drive:
       wheel_distance_m: 0.45
       ticks_per_m: 1195.0
+      wheel_speed_feedforward: 1.5
+      wheel_speed_kp: 0.35
+      wheel_speed_ki: 1.5
     gps:
       protocol: "NMEA"
       baudrate: 921600
