@@ -240,6 +240,43 @@ namespace ftc_local_planner
         return std::atan2(std::sin(angle), std::cos(angle));
     }
 
+    bool FTCPlanner::is_cost_blocking(unsigned char cost) const
+    {
+        return cost == costmap_2d::NO_INFORMATION || cost >= costmap_2d::INSCRIBED_INFLATED_OBSTACLE;
+    }
+
+    void FTCPlanner::append_line_samples(const geometry_msgs::Point &start,
+                                         const geometry_msgs::Point &end,
+                                         double resolution,
+                                         std::vector<geometry_msgs::Point> &samples,
+                                         bool skip_first_point) const
+    {
+        double dx = end.x - start.x;
+        double dy = end.y - start.y;
+        double distance = std::hypot(dx, dy);
+
+        if (distance < 1e-6)
+        {
+            if (!skip_first_point)
+            {
+                samples.push_back(start);
+            }
+            return;
+        }
+
+        int steps = std::max(1, static_cast<int>(std::ceil(distance / resolution)));
+        int start_step = skip_first_point ? 1 : 0;
+        for (int step = start_step; step <= steps; ++step)
+        {
+            double ratio = static_cast<double>(step) / static_cast<double>(steps);
+            geometry_msgs::Point sample;
+            sample.x = start.x + dx * ratio;
+            sample.y = start.y + dy * ratio;
+            sample.z = 0.0;
+            samples.push_back(sample);
+        }
+    }
+
     bool FTCPlanner::is_pose_collision_free(const geometry_msgs::PoseStamped &pose) const
     {
         if (!config.check_obstacles)
@@ -252,9 +289,11 @@ namespace ftc_local_planner
 
         const auto &footprint_spec = costmap->getRobotFootprint();
         std::vector<geometry_msgs::Point> oriented_footprint;
+        double sample_resolution = std::max(costmap_map_->getResolution(), 0.02);
         if (!footprint_spec.empty())
         {
-            oriented_footprint.reserve(footprint_spec.size());
+            std::vector<geometry_msgs::Point> footprint_vertices;
+            footprint_vertices.reserve(footprint_spec.size());
 
             for (const auto &point : footprint_spec)
             {
@@ -265,7 +304,27 @@ namespace ftc_local_planner
                 footprint_point.x = world_point.x();
                 footprint_point.y = world_point.y();
                 footprint_point.z = 0.0;
-                oriented_footprint.push_back(footprint_point);
+                footprint_vertices.push_back(footprint_point);
+            }
+
+            geometry_msgs::Point centroid;
+            centroid.x = 0.0;
+            centroid.y = 0.0;
+            centroid.z = 0.0;
+            for (const auto &vertex : footprint_vertices)
+            {
+                centroid.x += vertex.x;
+                centroid.y += vertex.y;
+            }
+            centroid.x /= static_cast<double>(footprint_vertices.size());
+            centroid.y /= static_cast<double>(footprint_vertices.size());
+            oriented_footprint.push_back(centroid);
+
+            for (size_t i = 0; i < footprint_vertices.size(); ++i)
+            {
+                const auto &start = footprint_vertices[i];
+                const auto &end = footprint_vertices[(i + 1) % footprint_vertices.size()];
+                append_line_samples(start, end, sample_resolution, oriented_footprint, false);
             }
         }
         else if (config.rotate_collision_line_length > 0.0)
@@ -287,6 +346,14 @@ namespace ftc_local_planner
                 oriented_footprint.push_back(footprint_point);
             }
         }
+        else
+        {
+            geometry_msgs::Point base_point;
+            base_point.x = pose.pose.position.x;
+            base_point.y = pose.pose.position.y;
+            base_point.z = 0.0;
+            oriented_footprint.push_back(base_point);
+        }
 
         unsigned int mx;
         unsigned int my;
@@ -298,7 +365,7 @@ namespace ftc_local_planner
             }
 
             unsigned char costs = costmap_map_->getCost(mx, my);
-            if (costs >= costmap_2d::LETHAL_OBSTACLE)
+            if (is_cost_blocking(costs))
             {
                 return false;
             }
@@ -1020,68 +1087,70 @@ namespace ftc_local_planner
         unsigned int x;
         unsigned int y;
 
-        std::vector<geometry_msgs::Point> footprint;
         visualization_msgs::Marker obstacle_marker;
 
         if (!config.check_obstacles)
         {
             return false;
         }
-        // maximal costs
-        unsigned char previous_cost = 255;
-        // ensure look ahead not out of plan
-        if (global_plan.size() < max_points)
-        {
-            max_points = global_plan.size();
-        }
 
         // calculate cost of footprint at robots actual pose
         if (config.obstacle_footprint)
         {
-        costmap->getOrientedFootprint(footprint);
-        for (int i = 0; i < footprint.size(); i++)
-        {
-            // check cost of each point of footprint
-            if (costmap_map_->worldToMap(footprint[i].x, footprint[i].y, x, y))
+            geometry_msgs::TransformStamped base_to_map = tf_buffer->lookupTransform("map", "base_link", ros::Time(), ros::Duration(1.0));
+            geometry_msgs::PoseStamped current_pose;
+            current_pose.header = base_to_map.header;
+            current_pose.pose.position.x = base_to_map.transform.translation.x;
+            current_pose.pose.position.y = base_to_map.transform.translation.y;
+            current_pose.pose.position.z = base_to_map.transform.translation.z;
+            current_pose.pose.orientation = base_to_map.transform.rotation;
+
+            if (!is_pose_collision_free(current_pose))
             {
-                unsigned char costs = costmap_map_->getCost(x, y);
-                if (costs >= costmap_2d::LETHAL_OBSTACLE)
-                {
-                    ROS_WARN("FTCLocalPlannerROS: Possible collision of footprint at actual pose. Stop local planner.");
-                    return true;
-                }
+                ROS_WARN("FTCLocalPlannerROS: Possible collision of footprint at actual pose. Stop local planner.");
+                return true;
             }
         }
+
+        if (global_plan.empty())
+        {
+            return false;
         }
 
-        for (int i = 0; i < max_points; i++)
-        {
-            geometry_msgs::PoseStamped x_pose;
-            int index = current_index + i;
-            if (index > global_plan.size())
-            {
-                index = global_plan.size();
-            }
-            x_pose = global_plan[index];
+        size_t last_index = std::min(global_plan.size() - 1, static_cast<size_t>(current_index + std::max(0, max_points)));
+        double sample_resolution = std::max(costmap_map_->getResolution(), 0.05);
+        std::vector<geometry_msgs::Point> path_samples;
 
-            if (costmap_map_->worldToMap(x_pose.pose.position.x, x_pose.pose.position.y, x, y))
+        geometry_msgs::Point first_point = global_plan[current_index].pose.position;
+        first_point.z = 0.0;
+        path_samples.push_back(first_point);
+
+        for (size_t index = current_index + 1; index <= last_index; ++index)
+        {
+            geometry_msgs::Point start = global_plan[index - 1].pose.position;
+            geometry_msgs::Point end = global_plan[index].pose.position;
+            start.z = 0.0;
+            end.z = 0.0;
+            append_line_samples(start, end, sample_resolution, path_samples, true);
+        }
+
+        for (const auto &sample : path_samples)
+        {
+            if (!costmap_map_->worldToMap(sample.x, sample.y, x, y))
             {
-                unsigned char costs = costmap_map_->getCost(x, y);
-                if (config.debug_obstacle)
-                {
-                    debugObstacle(obstacle_marker, x, y, costs, max_points);
-                }
-                // Near at obstacel
-                if (costs > 0)
-                {
-                    // Possible collision
-                    if (costs > 127 && costs > previous_cost)
-                    {
-                        ROS_WARN("FTCLocalPlannerROS: Possible collision. Stop local planner.");
-                        return true;
-                    }
-                }
-                previous_cost = costs;
+                ROS_WARN("FTCLocalPlannerROS: Path sample is outside the local costmap. Stop local planner.");
+                return true;
+            }
+
+            unsigned char costs = costmap_map_->getCost(x, y);
+            if (config.debug_obstacle)
+            {
+                debugObstacle(obstacle_marker, x, y, costs, path_samples.size());
+            }
+            if (is_cost_blocking(costs))
+            {
+                ROS_WARN("FTCLocalPlannerROS: Possible collision. Stop local planner.");
+                return true;
             }
         }
         return false;

@@ -113,6 +113,9 @@ namespace ftc_local_planner
         void update_planner_state();
         void update_actual_twist(const geometry_msgs::TwistStamped &velocity);
         double normalize_angle(double angle) const;
+        bool is_cost_blocking(unsigned char cost) const;
+        void append_line_samples(const geometry_msgs::Point &start, const geometry_msgs::Point &end, double resolution,
+                                 std::vector<geometry_msgs::Point> &samples, bool skip_first_point) const;
         bool is_pose_collision_free(const geometry_msgs::PoseStamped &pose) const;
         bool is_rotation_direction_collision_free(const geometry_msgs::PoseStamped &target_pose, int direction_sign) const;
         void choose_rotate_direction(const geometry_msgs::PoseStamped &target_pose);
