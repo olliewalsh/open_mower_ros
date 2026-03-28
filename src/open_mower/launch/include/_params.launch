@@ -45,6 +45,9 @@
               file="$(env PARAMS_PATH)/comms_params.yaml"/>
         <param name="ll/services/diff_drive/ticks_per_m" value="$(env OM_WHEEL_TICKS_PER_M)"/>
         <param name="ll/services/diff_drive/wheel_distance_m" value="$(env OM_WHEEL_DISTANCE_M)"/>
+        <param name="ll/services/diff_drive/wheel_speed_feedforward" value="$(optenv OM_WHEEL_SPEED_FEEDFORWARD 1.5)"/>
+        <param name="ll/services/diff_drive/wheel_speed_kp" value="$(optenv OM_WHEEL_SPEED_KP 0.35)"/>
+        <param name="ll/services/diff_drive/wheel_speed_ki" value="$(optenv OM_WHEEL_SPEED_KI 1.5)"/>
         <param name="ll/services/sound/dfp_is_5v" value="$(optenv OM_DFP_IS_5V False)"/>
         <param name="ll/services/sound/language" value="$(optenv OM_LANGUAGE en)"/>
         <param name="ll/services/sound/volume" value="$(optenv OM_VOLUME -1)"/>
