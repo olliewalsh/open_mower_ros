@@ -89,6 +89,7 @@ namespace ftc_local_planner
         double filtered_actual_linear_speed = 0.0;
         double filtered_actual_angular_speed = 0.0;
         bool actual_twist_initialized_ = false;
+        double rotate_collision_line_length_ = 0.0;
 
         /**
          * State for point interpolation

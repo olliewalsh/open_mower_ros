@@ -33,6 +33,17 @@ namespace ftc_local_planner
                                                                                      _1, _2);
         reconfig_server->setCallback(cb);
 
+        double wheel_distance_m = 0.0;
+        if (private_nh.getParam("/ll/services/diff_drive/wheel_distance_m", wheel_distance_m) ||
+            private_nh.getParam("/services/diff_drive/wheel_distance_m", wheel_distance_m))
+        {
+            rotate_collision_line_length_ = 1.5 * wheel_distance_m;
+        }
+        else
+        {
+            ROS_WARN("FTCLocalPlannerROS: Could not read wheel distance for rotate collision fallback. Line fallback disabled.");
+        }
+
         // PID Debugging topic
         if (config.debug_pid)
         {
@@ -327,15 +338,15 @@ namespace ftc_local_planner
                 append_line_samples(start, end, sample_resolution, oriented_footprint, false);
             }
         }
-        else if (config.rotate_collision_line_length > 0.0)
+        else if (rotate_collision_line_length_ > 0.0)
         {
-            double line_resolution = std::max(config.rotate_collision_line_resolution, 0.01);
-            int samples = std::max(1, static_cast<int>(std::ceil(config.rotate_collision_line_length / line_resolution)));
+            double line_resolution = std::max(costmap_map_->getResolution(), 0.01);
+            int samples = std::max(1, static_cast<int>(std::ceil(rotate_collision_line_length_ / line_resolution)));
             oriented_footprint.reserve(samples + 1);
 
             for (int sample = 0; sample <= samples; ++sample)
             {
-                double x = config.rotate_collision_line_length * static_cast<double>(sample) / static_cast<double>(samples);
+                double x = rotate_collision_line_length_ * static_cast<double>(sample) / static_cast<double>(samples);
                 Eigen::Vector3d local_point(x, 0.0, 0.0);
                 Eigen::Vector3d world_point = pose_tf * local_point;
 
