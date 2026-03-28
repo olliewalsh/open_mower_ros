@@ -195,6 +195,7 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
   ROS_INFO_STREAM("MowingBehavior: Creating mowing plan for area: " << area_index);
   // Delete old plan and progress.
   currentMowingPaths.clear();
+  pendingReentryApproach = false;
 
   // get the mowing area
   mower_map::GetMowingAreaSrv mapSrv;
@@ -273,6 +274,7 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
   if (mowingPlanDigest == currentMowingPlanDigest) {
     ROS_INFO_STREAM("MowingBehavior: Advancing to checkpoint, path: " << currentMowingPath
                                                                       << " index: " << currentMowingPathIndex);
+    pendingReentryApproach = currentMowingPathIndex > 0;
   } else {
     ROS_INFO_STREAM("MowingBehavior: Ignoring checkpoint for plan ("
                     << currentMowingPlanDigest << ") current mowing plan is (" << mowingPlanDigest << ")");
@@ -471,7 +473,7 @@ bool MowingBehavior::execute_mowing_plan() {
       }
 
       nav_msgs::Path reentry_approach_path;
-      bool has_reentry_approach = currentMowingPathIndex > 0 &&
+      bool has_reentry_approach = pendingReentryApproach && currentMowingPathIndex > 0 &&
                                   create_reentry_approach_path(path, currentMowingPathIndex, reentry_approach_path);
 
       if (has_reentry_approach) {
@@ -592,6 +594,7 @@ bool MowingBehavior::execute_mowing_plan() {
       // we have reached the start pose of the mow area, reset error handling values
       first_point_attempt_counter = 0;
       first_point_trim_counter = 0;
+      pendingReentryApproach = false;
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////
