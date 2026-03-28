@@ -54,6 +54,7 @@ FTCPlanner:
   follow_distance: 0.02
   velocity_lookahead_scale: 0.95
   speed_limit_min: 0.1
+  max_mow_motor_current: 0.0
   min_mow_motor_rpm: 10000
   initial_path_trim: 0.08
   kp_mow_rpm_lim: 1.0
