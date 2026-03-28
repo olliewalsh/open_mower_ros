@@ -81,6 +81,9 @@ namespace ftc_local_planner
         last_time = ros::Time::now();
         current_movement_speed = 0;
         speed_limit = config.max_cmd_vel_speed;
+        filtered_actual_linear_speed = 0.0;
+        filtered_actual_angular_speed = 0.0;
+        actual_twist_initialized_ = false;
 
         lat_error = 0.0;
         lon_error = 0.0;
@@ -176,6 +179,8 @@ namespace ftc_local_planner
             cmd_vel.twist.angular.z = 0;
             return RET_SUCCESS;
         }
+
+        update_actual_twist(velocity);
 
         // We're not crashed and not finished.
         // First, we update the control point if needed. This is needed since we need the local_control_point to calculate the next state.
@@ -431,6 +436,24 @@ namespace ftc_local_planner
         return max_speed;
     }
 
+    void FTCPlanner::update_actual_twist(const geometry_msgs::TwistStamped &velocity)
+    {
+        double measured_linear_speed = std::abs(velocity.twist.linear.x);
+        double measured_angular_speed = std::abs(velocity.twist.angular.z);
+
+        if (!actual_twist_initialized_)
+        {
+            filtered_actual_linear_speed = measured_linear_speed;
+            filtered_actual_angular_speed = measured_angular_speed;
+            actual_twist_initialized_ = true;
+            return;
+        }
+
+        double alpha = config.cp_progress_twist_alpha;
+        filtered_actual_linear_speed += alpha * (measured_linear_speed - filtered_actual_linear_speed);
+        filtered_actual_angular_speed += alpha * (measured_angular_speed - filtered_actual_angular_speed);
+    }
+
     void FTCPlanner::update_control_point(double dt)
     {
 
@@ -476,8 +499,17 @@ namespace ftc_local_planner
                     current_movement_speed = speed;
             }
 
-            double distance_to_move = dt * current_movement_speed;
-            double angle_to_move = dt * config.speed_angular * (M_PI / 180.0);
+            double cp_linear_speed = current_movement_speed;
+            double cp_angular_speed = config.speed_angular * (M_PI / 180.0);
+
+            if (config.use_actual_twist_for_cp_progress && actual_twist_initialized_)
+            {
+                cp_linear_speed = std::min(cp_linear_speed, filtered_actual_linear_speed + config.cp_progress_linear_margin);
+                cp_angular_speed = std::min(cp_angular_speed, filtered_actual_angular_speed + config.cp_progress_angular_margin);
+            }
+
+            double distance_to_move = dt * cp_linear_speed;
+            double angle_to_move = dt * cp_angular_speed;
 
             Eigen::Affine3d nextPose, currentPose;
             while (angle_to_move > 0 && distance_to_move > 0 && current_index < global_plan.size() - 2)

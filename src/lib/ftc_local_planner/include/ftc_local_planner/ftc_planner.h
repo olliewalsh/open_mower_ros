@@ -86,6 +86,9 @@ namespace ftc_local_planner
          * Speed ramp for acceleration and deceleration
          */
         double current_movement_speed;
+        double filtered_actual_linear_speed = 0.0;
+        double filtered_actual_angular_speed = 0.0;
+        bool actual_twist_initialized_ = false;
 
         /**
          * State for point interpolation
@@ -107,6 +110,7 @@ namespace ftc_local_planner
         double velocityLookahead();
         void set_planner_state(PlannerState s);
         void update_planner_state();
+        void update_actual_twist(const geometry_msgs::TwistStamped &velocity);
         void update_control_point(double dt);
         void calculate_velocity_commands(double dt, geometry_msgs::TwistStamped &cmd_vel);
 
