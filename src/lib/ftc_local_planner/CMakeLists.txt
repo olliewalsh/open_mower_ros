@@ -42,6 +42,7 @@ add_service_files(
 add_message_files(
         FILES
         PID.msg
+        CP.msg
 )
 
 generate_messages(
