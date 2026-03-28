@@ -600,7 +600,12 @@ void buildMap() {
   for (const auto& area : map_data.areas) {
     if (!area.active) continue;
     if (area.type == "obstacle") {
-      applyArea(map, data, area, 1.0);
+      grid_map::Polygon poly = internalPolygonToGridMap(area.outline);
+      for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
+        const grid_map::Index index(*iterator);
+        data(index[0], index[1]) = 1.0;
+      }
+      sweepFootprintAlongOutline(map, data, area.outline, 0.0);
     }
   }
 
