@@ -52,6 +52,7 @@ ros::Publisher action_pub;
 ros::Publisher sensor_imu_pub;
 
 ros::ServiceClient highLevelClient;
+std::unique_ptr<ros::NodeHandle> ll_param_nh = nullptr;
 
 std::unique_ptr<EmergencyServiceInterface> emergency_service = nullptr;
 std::unique_ptr<DiffDriveServiceInterface> diff_drive_service = nullptr;
@@ -64,6 +65,9 @@ std::unique_ptr<InputServiceInterface> input_service = nullptr;
 std::unique_ptr<HighLevelServiceInterface> high_level_service = nullptr;
 
 xbot::serviceif::Context ctx{};
+double diff_drive_wheel_speed_feedforward = 1.5;
+double diff_drive_wheel_speed_kp = 0.35;
+double diff_drive_wheel_speed_ki = 1.5;
 
 bool setEmergencyStop(mower_msgs::EmergencyStopSrvRequest& req, mower_msgs::EmergencyStopSrvResponse& res) {
   emergency_service->SetHighLevelEmergency(req.reason);
@@ -99,6 +103,33 @@ void sendMowerEnabledTimerTask(const ros::TimerEvent& e) {
   mower_service->Tick();
 }
 
+void syncDiffDriveGainsTimerTask(const ros::TimerEvent&) {
+  if (!diff_drive_service || !ll_param_nh) return;
+
+  double wheel_speed_feedforward = diff_drive_wheel_speed_feedforward;
+  double wheel_speed_kp = diff_drive_wheel_speed_kp;
+  double wheel_speed_ki = diff_drive_wheel_speed_ki;
+
+  ll_param_nh->param("services/diff_drive/wheel_speed_feedforward", wheel_speed_feedforward, wheel_speed_feedforward);
+  ll_param_nh->param("services/diff_drive/wheel_speed_kp", wheel_speed_kp, wheel_speed_kp);
+  ll_param_nh->param("services/diff_drive/wheel_speed_ki", wheel_speed_ki, wheel_speed_ki);
+
+  if (wheel_speed_feedforward == diff_drive_wheel_speed_feedforward && wheel_speed_kp == diff_drive_wheel_speed_kp &&
+      wheel_speed_ki == diff_drive_wheel_speed_ki) {
+    return;
+  }
+
+  diff_drive_wheel_speed_feedforward = wheel_speed_feedforward;
+  diff_drive_wheel_speed_kp = wheel_speed_kp;
+  diff_drive_wheel_speed_ki = wheel_speed_ki;
+
+  ROS_INFO_STREAM("Updating wheel speed gains ff/kp/ki: " << diff_drive_wheel_speed_feedforward << ", "
+                                                          << diff_drive_wheel_speed_kp << ", "
+                                                          << diff_drive_wheel_speed_ki);
+  diff_drive_service->UpdateWheelSpeedGains(diff_drive_wheel_speed_feedforward, diff_drive_wheel_speed_kp,
+                                            diff_drive_wheel_speed_ki);
+}
+
 bool setMowEnabled(mower_msgs::MowerControlSrvRequest& req, mower_msgs::MowerControlSrvResponse& res) {
   // enable + direction -> signed speed: +1 forward, -1 reverse, 0 off.
   const float speed = req.mow_enabled ? (req.mow_direction ? 1.0f : -1.0f) : 0.0f;
@@ -131,6 +162,7 @@ int main(int argc, char** argv) {
 
   ros::NodeHandle n;
   ros::NodeHandle paramNh("/ll");
+  ll_param_nh = std::make_unique<ros::NodeHandle>(paramNh);
 
   highLevelClient = n.serviceClient<mower_msgs::HighLevelControlSrv>("mower_service/high_level_control");
   action_pub = n.advertise<std_msgs::String>("xbot/action", 1);
@@ -152,6 +184,9 @@ int main(int argc, char** argv) {
   status_right_esc_pub = n.advertise<mower_msgs::ESCStatus>("ll/diff_drive/right_esc_status", 1);
   double wheel_ticks_per_m = 0.0;
   double wheel_distance_m = 0.0;
+  diff_drive_wheel_speed_feedforward = 1.5;
+  diff_drive_wheel_speed_kp = 0.35;
+  diff_drive_wheel_speed_ki = 1.5;
   if (!paramNh.getParam("services/diff_drive/ticks_per_m", wheel_ticks_per_m)) {
     ROS_ERROR("Need to provide param services/diff_drive/ticks_per_m");
     return 1;
@@ -160,8 +195,14 @@ int main(int argc, char** argv) {
     ROS_ERROR("Need to provide param services/diff_drive/wheel_distance_m");
     return 1;
   }
+  paramNh.param("services/diff_drive/wheel_speed_feedforward", diff_drive_wheel_speed_feedforward,
+                diff_drive_wheel_speed_feedforward);
+  paramNh.param("services/diff_drive/wheel_speed_kp", diff_drive_wheel_speed_kp, diff_drive_wheel_speed_kp);
+  paramNh.param("services/diff_drive/wheel_speed_ki", diff_drive_wheel_speed_ki, diff_drive_wheel_speed_ki);
   ROS_INFO_STREAM("Wheel ticks [1/m]: " << wheel_ticks_per_m);
   ROS_INFO_STREAM("Wheel distance [m]: " << wheel_distance_m);
+  ROS_INFO_STREAM("Wheel speed gains ff/kp/ki: " << diff_drive_wheel_speed_feedforward << ", "
+                                                 << diff_drive_wheel_speed_kp << ", " << diff_drive_wheel_speed_ki);
 
   int baud_rate = 0;
   paramNh.getParam("services/gps/baud_rate", baud_rate);
@@ -180,9 +221,10 @@ int main(int argc, char** argv) {
   ROS_INFO_STREAM("GPS protocol: " << protocol << ", baud rate: " << baud_rate
                                    << ", gps port index:" << gps_port_index);
 
-  diff_drive_service = std::make_unique<DiffDriveServiceInterface>(xbot::service_ids::DIFF_DRIVE, ctx, actual_twist_pub,
-                                                                   status_left_esc_pub, status_right_esc_pub,
-                                                                   wheel_ticks_per_m, wheel_distance_m);
+  diff_drive_service = std::make_unique<DiffDriveServiceInterface>(
+      xbot::service_ids::DIFF_DRIVE, ctx, actual_twist_pub, status_left_esc_pub, status_right_esc_pub,
+      wheel_ticks_per_m, wheel_distance_m, diff_drive_wheel_speed_feedforward, diff_drive_wheel_speed_kp,
+      diff_drive_wheel_speed_ki);
   diff_drive_service->Start();
 
   // Mower service
@@ -295,6 +337,7 @@ int main(int argc, char** argv) {
   // ros::Subscriber high_level_status_sub = n.subscribe("/mower_logic/current_state", 0, highLevelStatusReceived);
   ros::Timer publish_timer = n.createTimer(ros::Duration(0.5), sendEmergencyHeartbeatTimerTask);
   ros::Timer publish_timer_2 = n.createTimer(ros::Duration(5.0), sendMowerEnabledTimerTask);
+  ros::Timer diff_drive_gains_timer = n.createTimer(ros::Duration(1.0), syncDiffDriveGainsTimerTask);
   ros::Subscriber action_sub = n.subscribe("xbot/action", 0, actionReceived, ros::TransportHints().tcpNoDelay(true));
 
   ROS_INFO("All mower_comms_v2 services started");

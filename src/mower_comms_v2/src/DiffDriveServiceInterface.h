@@ -18,13 +18,17 @@ class DiffDriveServiceInterface : public DiffDriveServiceInterfaceBase {
                             const ros::Publisher& actual_twist_publisher,
                             const ros::Publisher& left_esc_status_publisher,
                             const ros::Publisher& right_esc_status_publisher, double ticks_per_meter,
-                            double wheel_distance)
+                            double wheel_distance, double wheel_speed_feedforward, double wheel_speed_kp,
+                            double wheel_speed_ki)
       : DiffDriveServiceInterfaceBase(service_id, ctx),
         actual_twist_publisher_(actual_twist_publisher),
         left_esc_status_publisher_(left_esc_status_publisher),
         right_esc_status_publisher_(right_esc_status_publisher),
         wheel_distance_(wheel_distance),
-        ticks_per_meter_(ticks_per_meter) {
+        ticks_per_meter_(ticks_per_meter),
+        wheel_speed_feedforward_(wheel_speed_feedforward),
+        wheel_speed_kp_(wheel_speed_kp),
+        wheel_speed_ki_(wheel_speed_ki) {
   }
 
   bool OnConfigurationRequested(uint16_t service_id) override;
@@ -34,6 +38,7 @@ class DiffDriveServiceInterface : public DiffDriveServiceInterfaceBase {
    * @param msg The ROS message
    */
   void SendTwist(const geometry_msgs::TwistConstPtr& msg);
+  void UpdateWheelSpeedGains(double wheel_speed_feedforward, double wheel_speed_kp, double wheel_speed_ki);
 
  protected:
   /**
@@ -66,6 +71,9 @@ class DiffDriveServiceInterface : public DiffDriveServiceInterfaceBase {
   const ros::Publisher& right_esc_status_publisher_;
   double wheel_distance_;
   double ticks_per_meter_;
+  double wheel_speed_feedforward_;
+  double wheel_speed_kp_;
+  double wheel_speed_ki_;
 
   // Store the latest ESC state
   mower_msgs::ESCStatus left_esc_state_{};

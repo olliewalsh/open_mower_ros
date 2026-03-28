@@ -11,8 +11,24 @@ bool DiffDriveServiceInterface::OnConfigurationRequested(uint16_t service_id) {
   StartTransaction(true);
   SetRegisterWheelDistance(wheel_distance_);
   SetRegisterWheelTicksPerMeter(ticks_per_meter_);
+  SetRegisterWheelSpeedFeedforward(wheel_speed_feedforward_);
+  SetRegisterWheelSpeedKp(wheel_speed_kp_);
+  SetRegisterWheelSpeedKi(wheel_speed_ki_);
   CommitTransaction();
   return true;
+}
+
+void DiffDriveServiceInterface::UpdateWheelSpeedGains(double wheel_speed_feedforward, double wheel_speed_kp,
+                                                      double wheel_speed_ki) {
+  wheel_speed_feedforward_ = wheel_speed_feedforward;
+  wheel_speed_kp_ = wheel_speed_kp;
+  wheel_speed_ki_ = wheel_speed_ki;
+
+  StartTransaction(true);
+  SetRegisterWheelSpeedFeedforward(wheel_speed_feedforward_);
+  SetRegisterWheelSpeedKp(wheel_speed_kp_);
+  SetRegisterWheelSpeedKi(wheel_speed_ki_);
+  CommitTransaction();
 }
 
 void DiffDriveServiceInterface::SendTwist(const geometry_msgs::TwistConstPtr& msg) {
