@@ -228,11 +228,171 @@ namespace ftc_local_planner
         if( last_state != current_state) {
             ROS_INFO_STREAM("FTCLocalPlannerROS: Switching to state " << current_state);
             state_entered_time = ros::Time::now();
+            rotate_direction_sign_ = 0;
             // Reset oscillation detection
             failure_detector_.clear();
             failure_detector_.setBufferLength(std::round(config.oscillation_recovery_min_duration * 10));
         }
     };
+
+    double FTCPlanner::normalize_angle(double angle) const
+    {
+        return std::atan2(std::sin(angle), std::cos(angle));
+    }
+
+    bool FTCPlanner::is_pose_collision_free(const geometry_msgs::PoseStamped &pose) const
+    {
+        if (!config.check_obstacles)
+        {
+            return true;
+        }
+
+        Eigen::Affine3d pose_tf;
+        tf2::fromMsg(pose.pose, pose_tf);
+
+        const auto &footprint_spec = costmap->getRobotFootprint();
+        std::vector<geometry_msgs::Point> oriented_footprint;
+        if (!footprint_spec.empty())
+        {
+            oriented_footprint.reserve(footprint_spec.size());
+
+            for (const auto &point : footprint_spec)
+            {
+                Eigen::Vector3d local_point(point.x, point.y, 0.0);
+                Eigen::Vector3d world_point = pose_tf * local_point;
+
+                geometry_msgs::Point footprint_point;
+                footprint_point.x = world_point.x();
+                footprint_point.y = world_point.y();
+                footprint_point.z = 0.0;
+                oriented_footprint.push_back(footprint_point);
+            }
+        }
+        else if (config.rotate_collision_line_length > 0.0)
+        {
+            double line_resolution = std::max(config.rotate_collision_line_resolution, 0.01);
+            int samples = std::max(1, static_cast<int>(std::ceil(config.rotate_collision_line_length / line_resolution)));
+            oriented_footprint.reserve(samples + 1);
+
+            for (int sample = 0; sample <= samples; ++sample)
+            {
+                double x = config.rotate_collision_line_length * static_cast<double>(sample) / static_cast<double>(samples);
+                Eigen::Vector3d local_point(x, 0.0, 0.0);
+                Eigen::Vector3d world_point = pose_tf * local_point;
+
+                geometry_msgs::Point footprint_point;
+                footprint_point.x = world_point.x();
+                footprint_point.y = world_point.y();
+                footprint_point.z = 0.0;
+                oriented_footprint.push_back(footprint_point);
+            }
+        }
+
+        unsigned int mx;
+        unsigned int my;
+        for (const auto &point : oriented_footprint)
+        {
+            if (!costmap_map_->worldToMap(point.x, point.y, mx, my))
+            {
+                return false;
+            }
+
+            unsigned char costs = costmap_map_->getCost(mx, my);
+            if (costs >= costmap_2d::LETHAL_OBSTACLE)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool FTCPlanner::is_rotation_direction_collision_free(const geometry_msgs::PoseStamped &target_pose, int direction_sign) const
+    {
+        if (!config.check_obstacles)
+        {
+            return true;
+        }
+
+        geometry_msgs::TransformStamped base_to_map = tf_buffer->lookupTransform("map", "base_link", ros::Time(), ros::Duration(1.0));
+        geometry_msgs::PoseStamped current_pose;
+        current_pose.header = base_to_map.header;
+        current_pose.pose.position.x = base_to_map.transform.translation.x;
+        current_pose.pose.position.y = base_to_map.transform.translation.y;
+        current_pose.pose.position.z = base_to_map.transform.translation.z;
+        current_pose.pose.orientation = base_to_map.transform.rotation;
+
+        double start_yaw = tf2::getYaw(current_pose.pose.orientation);
+        double target_yaw = tf2::getYaw(target_pose.pose.orientation);
+        double delta_yaw = normalize_angle(target_yaw - start_yaw);
+
+        if (std::abs(delta_yaw) < 1e-4)
+        {
+            return true;
+        }
+
+        double signed_delta = delta_yaw;
+        if (direction_sign > 0 && signed_delta < 0.0)
+        {
+            signed_delta += 2.0 * M_PI;
+        }
+        else if (direction_sign < 0 && signed_delta > 0.0)
+        {
+            signed_delta -= 2.0 * M_PI;
+        }
+
+        double step_size = 5.0 * (M_PI / 180.0);
+        int steps = std::max(1, static_cast<int>(std::ceil(std::abs(signed_delta) / step_size)));
+
+        geometry_msgs::PoseStamped sample_pose = current_pose;
+        sample_pose.pose.position = current_pose.pose.position;
+
+        for (int step = 1; step <= steps; ++step)
+        {
+            double yaw = start_yaw + (signed_delta * static_cast<double>(step) / static_cast<double>(steps));
+            tf2::Quaternion q;
+            q.setRPY(0.0, 0.0, yaw);
+            sample_pose.pose.orientation = tf2::toMsg(q);
+
+            if (!is_pose_collision_free(sample_pose))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    void FTCPlanner::choose_rotate_direction(const geometry_msgs::PoseStamped &target_pose)
+    {
+        if (rotate_direction_sign_ != 0)
+        {
+            return;
+        }
+
+        double shortest_delta = angle_error;
+        int preferred_direction = shortest_delta >= 0.0 ? 1 : -1;
+        int alternate_direction = -preferred_direction;
+
+        bool preferred_free = is_rotation_direction_collision_free(target_pose, preferred_direction);
+        bool alternate_free = is_rotation_direction_collision_free(target_pose, alternate_direction);
+
+        if (preferred_free)
+        {
+            rotate_direction_sign_ = preferred_direction;
+            return;
+        }
+
+        if (alternate_free)
+        {
+            rotate_direction_sign_ = alternate_direction;
+            ROS_WARN_STREAM("FTCLocalPlannerROS: Using non-shortest rotation direction to avoid obstacle collision.");
+            return;
+        }
+
+        rotate_direction_sign_ = preferred_direction;
+        ROS_WARN_STREAM("FTCLocalPlannerROS: No collision-free rotation direction found. Falling back to shortest rotation.");
+    }
 
     void FTCPlanner::update_planner_state()
     {
@@ -240,6 +400,8 @@ namespace ftc_local_planner
         {
         case PRE_ROTATE:
         {
+            geometry_msgs::PoseStamped target_pose = global_plan[0];
+            choose_rotate_direction(target_pose);
             double angular_lag = std::abs(angle_error);
             double angular_lag_speed = std::max(config.max_cmd_vel_ang, config.angular_lag_min_speed);
             double angular_lag_time = angular_lag / angular_lag_speed;
@@ -324,6 +486,8 @@ namespace ftc_local_planner
         break;
         case POST_ROTATE:
         {
+            geometry_msgs::PoseStamped target_pose = global_plan[global_plan.size() - 1];
+            choose_rotate_direction(target_pose);
             double angular_lag = std::abs(angle_error);
             double angular_lag_speed = std::max(config.max_cmd_vel_ang, config.angular_lag_min_speed);
             double angular_lag_time = angular_lag / angular_lag_speed;
@@ -634,6 +798,18 @@ namespace ftc_local_planner
         }
 
         auto real_angle_error = angle_error;
+        if ((current_state == PRE_ROTATE || current_state == POST_ROTATE) && rotate_direction_sign_ != 0)
+        {
+            if (rotate_direction_sign_ > 0 && angle_error < 0.0)
+            {
+                angle_error += 2.0 * M_PI;
+            }
+            else if (rotate_direction_sign_ < 0 && angle_error > 0.0)
+            {
+                angle_error -= 2.0 * M_PI;
+            }
+        }
+
         if (config.ang_error_scale) {
             angle_error *= config.ang_error_scale_factor / (config.ang_error_scale_factor + abs(lin_speed));
         }

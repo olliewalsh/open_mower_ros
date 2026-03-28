@@ -105,12 +105,17 @@ namespace ftc_local_planner
         ros::Time time_last_oscillation_;  //!< Store at which time stamp the last oscillation was detected
         bool oscillation_detected_ = false;
         bool oscillation_warning_ = false;
+        int rotate_direction_sign_ = 0;
 
         double distanceLookahead();
         double velocityLookahead();
         void set_planner_state(PlannerState s);
         void update_planner_state();
         void update_actual_twist(const geometry_msgs::TwistStamped &velocity);
+        double normalize_angle(double angle) const;
+        bool is_pose_collision_free(const geometry_msgs::PoseStamped &pose) const;
+        bool is_rotation_direction_collision_free(const geometry_msgs::PoseStamped &target_pose, int direction_sign) const;
+        void choose_rotate_direction(const geometry_msgs::PoseStamped &target_pose);
         void update_control_point(double dt);
         void calculate_velocity_commands(double dt, geometry_msgs::TwistStamped &cmd_vel);
 
