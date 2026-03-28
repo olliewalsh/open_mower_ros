@@ -12,6 +12,7 @@
 // You should have received a copy of the GNU General Public License along with OpenMower. If not, see
 // <https://www.gnu.org/licenses/>.
 //
+#include "XmlRpcValue.h"
 #include "grid_map_cv/GridMapCvConverter.hpp"
 #include "grid_map_ros/GridMapRosConverter.hpp"
 #include "grid_map_ros/PolygonRosConverter.hpp"
@@ -68,6 +69,8 @@ struct Point {
 };
 
 typedef std::vector<Point> Polygon;
+
+grid_map::Polygon internalPolygonToGridMap(const Polygon& poly);
 
 struct MapArea {
   std::string id;
@@ -182,6 +185,187 @@ geometry_msgs::Pose fake_obstacle_pose;
 
 // The grid map. This is built from the polygons loaded from the file.
 grid_map::GridMap map;
+Polygon sweep_footprint;
+bool has_sweep_footprint = false;
+double sweep_sample_resolution = 0.025;
+
+Polygon makeCircularFootprint(double radius, int samples = 16) {
+  Polygon result;
+  if (radius <= 0.0) {
+    return result;
+  }
+
+  result.reserve(samples);
+  for (int i = 0; i < samples; ++i) {
+    double angle = (2.0 * M_PI * static_cast<double>(i)) / static_cast<double>(samples);
+    result.push_back({radius * std::cos(angle), radius * std::sin(angle)});
+  }
+  return result;
+}
+
+bool parseFootprintParam(const XmlRpc::XmlRpcValue& footprint_param, Polygon& footprint) {
+  auto xmlRpcNumberToDouble = [](const XmlRpc::XmlRpcValue& value, double& out_value) -> bool {
+    if (value.getType() == XmlRpc::XmlRpcValue::TypeDouble) {
+      out_value = static_cast<double>(value);
+      return true;
+    }
+    if (value.getType() == XmlRpc::XmlRpcValue::TypeInt) {
+      out_value = static_cast<int>(value);
+      return true;
+    }
+    return false;
+  };
+
+  if (footprint_param.getType() != XmlRpc::XmlRpcValue::TypeArray || footprint_param.size() < 3) {
+    ROS_ERROR("Invalid footprint parameter type. Expected an array.");
+    return false;
+  }
+
+  footprint.clear();
+  footprint.reserve(footprint_param.size());
+  for (int i = 0; i < footprint_param.size(); ++i) {
+    if (footprint_param[i].getType() != XmlRpc::XmlRpcValue::TypeArray || footprint_param[i].size() != 2) {
+      ROS_ERROR("Invalid footprint parameter format. Expected [[x, y], ...].");
+      return false;
+    }
+
+    double x;
+    double y;
+    if (!xmlRpcNumberToDouble(footprint_param[i][0], x) || !xmlRpcNumberToDouble(footprint_param[i][1], y)) {
+      ROS_ERROR("Invalid footprint parameter format. Expected numeric [[x, y], ...].");
+      return false;
+    }
+
+    footprint.push_back({x, y});
+  }
+
+  return true;
+}
+
+bool loadSweepFootprint(ros::NodeHandle& nh) {
+  const std::vector<std::string> footprint_params = {
+      "footprint",
+      "/move_base_flex/global_costmap/footprint",
+      "/move_base_flex/local_costmap/footprint",
+      "/global_costmap/footprint",
+      "/local_costmap/footprint",
+  };
+
+  for (const auto& param_name : footprint_params) {
+    XmlRpc::XmlRpcValue footprint_param;
+    if (!nh.getParam(param_name, footprint_param)) {
+      continue;
+    }
+
+    Polygon footprint;
+    if (parseFootprintParam(footprint_param, footprint)) {
+      sweep_footprint = footprint;
+      has_sweep_footprint = true;
+      ROS_INFO_STREAM("Loaded map sweep footprint from param " << param_name);
+      return true;
+    }
+    return false;
+  }
+
+  const std::vector<std::string> radius_params = {
+      "robot_radius",
+      "/move_base_flex/global_costmap/robot_radius",
+      "/move_base_flex/local_costmap/robot_radius",
+      "/global_costmap/robot_radius",
+      "/local_costmap/robot_radius",
+  };
+
+  for (const auto& param_name : radius_params) {
+    double robot_radius = 0.0;
+    if (!nh.getParam(param_name, robot_radius) || robot_radius <= 0.0) {
+      continue;
+    }
+
+    sweep_footprint = makeCircularFootprint(robot_radius);
+    has_sweep_footprint = !sweep_footprint.empty();
+    if (has_sweep_footprint) {
+      ROS_INFO_STREAM("Loaded map sweep footprint from radius param " << param_name);
+      return true;
+    }
+  }
+
+  has_sweep_footprint = false;
+  return false;
+}
+
+double getSweepFootprintRadius() {
+  double max_radius = 0.0;
+  for (const auto& point : sweep_footprint) {
+    max_radius = std::max(max_radius, std::hypot(point.x, point.y));
+  }
+  return max_radius;
+}
+
+grid_map::Polygon makeSweptFootprintPolygon(double x, double y, double heading) {
+  grid_map::Polygon poly;
+  double c = std::cos(heading);
+  double s = std::sin(heading);
+
+  for (const auto& point : sweep_footprint) {
+    grid_map::Position pos;
+    pos.x() = x + point.x * c - point.y * s;
+    pos.y() = y + point.x * s + point.y * c;
+    poly.addVertex(pos);
+  }
+
+  return poly;
+}
+
+void stampFootprint(grid_map::GridMap& map, grid_map::Matrix& data, double x, double y, double heading, double value) {
+  if (!has_sweep_footprint) {
+    return;
+  }
+
+  grid_map::Polygon poly = makeSweptFootprintPolygon(x, y, heading);
+  for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
+    const grid_map::Index index(*iterator);
+    data(index[0], index[1]) = value;
+  }
+}
+
+void sweepFootprintAlongOutline(grid_map::GridMap& map, grid_map::Matrix& data, const Polygon& outline, double value) {
+  if (!has_sweep_footprint || outline.size() < 2) {
+    return;
+  }
+
+  double resolution = std::max(sweep_sample_resolution, map.getResolution() * 0.5);
+
+  for (size_t i = 0; i < outline.size(); ++i) {
+    const Point& start = outline[i];
+    const Point& end = outline[(i + 1) % outline.size()];
+    double dx = end.x - start.x;
+    double dy = end.y - start.y;
+    double distance = std::hypot(dx, dy);
+
+    if (distance < 1e-6) {
+      continue;
+    }
+
+    double heading = std::atan2(dy, dx);
+    int steps = std::max(1, static_cast<int>(std::ceil(distance / resolution)));
+    for (int step = 0; step <= steps; ++step) {
+      double ratio = static_cast<double>(step) / static_cast<double>(steps);
+      double x = start.x + dx * ratio;
+      double y = start.y + dy * ratio;
+      stampFootprint(map, data, x, y, heading, value);
+    }
+  }
+}
+
+void applyArea(grid_map::GridMap& map, grid_map::Matrix& data, const MapArea& area, double value) {
+  grid_map::Polygon poly = internalPolygonToGridMap(area.outline);
+  for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
+    const grid_map::Index index(*iterator);
+    data(index[0], index[1]) = value;
+  }
+
+  sweepFootprintAlongOutline(map, data, area.outline, value);
+}
 
 // clang-format off
 xbot_rpc::RpcProvider rpc_provider("mower_map_service", {{
@@ -362,6 +546,7 @@ void buildMap() {
 
   // loop through all areas and calculate a size where everything fits
   bool has_valid_area = false;
+  double sweep_padding = has_sweep_footprint ? getSweepFootprintRadius() : 0.0;
   for (const auto& area : map_data.areas) {
     if (!area.active) continue;
     if (area.type != "mow" && area.type != "nav" && area.type != "obstacle") continue;
@@ -376,10 +561,10 @@ void buildMap() {
 
   // Enlarge the map by 1m in all directions.
   // This guarantees that even after blurring, the map has an occupied border.
-  maxX += 1.0;
-  minX -= 1.0;
-  maxY += 1.0;
-  minY -= 1.0;
+  maxX += 1.0 + sweep_padding;
+  minX -= 1.0 + sweep_padding;
+  maxY += 1.0 + sweep_padding;
+  minY -= 1.0 + sweep_padding;
 
   // Check, if the map was empty. If so, we'd create a huge map. Therefore we build an empty 10x10m map instead.
   if (!has_valid_area) {
@@ -407,20 +592,15 @@ void buildMap() {
   grid_map::Matrix& data = map["navigation_area"];
   for (const auto& area : map_data.areas) {
     if (!area.active) continue;
-
-    double value;
     if (area.type == "mow" || area.type == "nav") {
-      value = 0.0;
-    } else if (area.type == "obstacle") {
-      value = 1.0;
-    } else {
-      continue;
+      applyArea(map, data, area, 0.0);
     }
+  }
 
-    grid_map::Polygon poly = internalPolygonToGridMap(area.outline);
-    for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
-      const grid_map::Index index(*iterator);
-      data(index[0], index[1]) = value;
+  for (const auto& area : map_data.areas) {
+    if (!area.active) continue;
+    if (area.type == "obstacle") {
+      applyArea(map, data, area, 1.0);
     }
   }
 
@@ -725,12 +905,20 @@ void convertLegacyMapToJson() {
 int main(int argc, char** argv) {
   ros::init(argc, argv, "mower_map_service");
   ros::NodeHandle n;
+  ros::NodeHandle private_nh("~");
   json_map_pub = n.advertise<std_msgs::String>("mower_map_service/json_map", 1, true);
   map_pub = n.advertise<nav_msgs::OccupancyGrid>("mower_map_service/map", 10, true);
   map_server_viz_array_pub = n.advertise<visualization_msgs::MarkerArray>("mower_map_service/map_viz", 10, true);
   map_size_pub = n.advertise<xbot_msgs::MapSize>("mower_map_service/map_size", 10, true);
 
   rpc_provider.init();
+
+  private_nh.param("sweep_sample_resolution", sweep_sample_resolution, 0.025);
+  if (loadSweepFootprint(private_nh)) {
+    ROS_INFO_STREAM("Loaded sweep footprint with " << sweep_footprint.size() << " points for map rasterization.");
+  } else {
+    ROS_WARN("No sweep footprint configured for map rasterization. Outline footprint sweep is disabled.");
+  }
 
   if (!std::filesystem::exists(MAP_FILE) && std::filesystem::exists(LEGACY_MAP_FILE)) {
     ROS_INFO("Found legacy map file, converting to JSON...");
