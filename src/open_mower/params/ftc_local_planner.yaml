@@ -57,4 +57,4 @@ FTCPlanner:
   max_mow_motor_current: 0.0
   min_mow_motor_rpm: 10000
   initial_path_trim: 0.08
-  kp_mow_rpm_lim: 1.0
+  kp_mow_rpm_lim: 0.25
