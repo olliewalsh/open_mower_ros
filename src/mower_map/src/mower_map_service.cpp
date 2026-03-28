@@ -367,6 +367,14 @@ void applyArea(grid_map::GridMap& map, grid_map::Matrix& data, const MapArea& ar
   sweepFootprintAlongOutline(map, data, area.outline, value);
 }
 
+void applyDockingStation(grid_map::GridMap& map, grid_map::Matrix& data, const DockingStation& docking_station) {
+  if (!docking_station.active) {
+    return;
+  }
+
+  stampFootprint(map, data, docking_station.position.x, docking_station.position.y, docking_station.heading, 0.0);
+}
+
 // clang-format off
 xbot_rpc::RpcProvider rpc_provider("mower_map_service", {{
   RPC_METHOD("map.replace", {
@@ -558,6 +566,14 @@ void buildMap() {
       has_valid_area = true;
     }
   }
+  for (const auto& docking_station : map_data.docking_stations) {
+    if (!docking_station.active) continue;
+    minX = std::min(minX, static_cast<float>(docking_station.position.x));
+    maxX = std::max(maxX, static_cast<float>(docking_station.position.x));
+    minY = std::min(minY, static_cast<float>(docking_station.position.y));
+    maxY = std::max(maxY, static_cast<float>(docking_station.position.y));
+    has_valid_area = true;
+  }
 
   // Enlarge the map by 1m in all directions.
   // This guarantees that even after blurring, the map has an occupied border.
@@ -607,6 +623,10 @@ void buildMap() {
       }
       sweepFootprintAlongOutline(map, data, area.outline, 0.0);
     }
+  }
+
+  for (const auto& docking_station : map_data.docking_stations) {
+    applyDockingStation(map, data, docking_station);
   }
 
   if (show_fake_obstacle) {
