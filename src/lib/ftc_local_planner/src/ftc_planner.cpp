@@ -1175,8 +1175,8 @@ namespace ftc_local_planner
         {
             if (!costmap_map_->worldToMap(sample.x, sample.y, x, y))
             {
-                ROS_WARN("FTCLocalPlannerROS: Path sample is outside the local costmap. Stop local planner.");
-                return true;
+                ROS_DEBUG("FTCLocalPlannerROS: Path sample is outside the local costmap. Stop lookahead collision checking at local map boundary.");
+                break;
             }
 
             unsigned char costs = costmap_map_->getCost(x, y);
