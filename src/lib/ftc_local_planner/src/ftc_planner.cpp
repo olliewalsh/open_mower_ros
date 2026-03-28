@@ -255,7 +255,7 @@ namespace ftc_local_planner
 
     bool FTCPlanner::is_cost_blocking(unsigned char cost) const
     {
-        return cost == costmap_2d::NO_INFORMATION || cost >= costmap_2d::INSCRIBED_INFLATED_OBSTACLE;
+        return cost >= costmap_2d::INSCRIBED_INFLATED_OBSTACLE;
     }
 
     void FTCPlanner::append_line_samples(const geometry_msgs::Point &start,
