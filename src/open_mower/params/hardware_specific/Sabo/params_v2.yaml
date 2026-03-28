@@ -13,6 +13,7 @@ ll:
       collision_gyro_threshold: 2.5
       collision_jerk_threshold: 250.0
       collision_gravity_filter_hz: 1.5
+      collision_signal_filter_hz: 25.0
       collision_wheel_current_threshold: 4.0
       collision_actual_linear_speed_threshold: 0.08
       collision_actual_angular_speed_threshold: 0.5

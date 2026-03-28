@@ -25,6 +25,7 @@
 #include <sensor_msgs/Imu.h>
 #include <spdlog/sinks/callback_sink.h>
 #include <spdlog/spdlog.h>
+#include <std_msgs/Float64MultiArray.h>
 #include <std_msgs/String.h>
 
 #include <algorithm>
@@ -51,6 +52,7 @@ ros::Publisher actual_twist_pub;
 ros::Publisher action_pub;
 
 ros::Publisher sensor_imu_pub;
+ros::Publisher imu_collision_debug_pub;
 
 ros::ServiceClient highLevelClient;
 
@@ -213,6 +215,7 @@ int main(int argc, char** argv) {
   paramNh.getParam("services/imu/collision_gyro_threshold", imu_collision_config.gyro_threshold);
   paramNh.getParam("services/imu/collision_jerk_threshold", imu_collision_config.jerk_threshold);
   paramNh.getParam("services/imu/collision_gravity_filter_hz", imu_collision_config.gravity_filter_hz);
+  paramNh.getParam("services/imu/collision_signal_filter_hz", imu_collision_config.signal_filter_hz);
   paramNh.getParam("services/imu/collision_wheel_current_threshold", imu_collision_config.wheel_current_threshold);
   paramNh.getParam("services/imu/collision_actual_linear_speed_threshold",
                    imu_collision_config.actual_linear_speed_threshold);
@@ -228,8 +231,9 @@ int main(int argc, char** argv) {
   ROS_INFO_STREAM("IMU axis config: " << imu_axis_config);
   ROS_INFO_STREAM("IMU collision detection: " << (disable_collision_detection ? "disabled" : "enabled"));
   sensor_imu_pub = n.advertise<sensor_msgs::Imu>("ll/imu/data_raw", 1);
-  imu_service = std::make_unique<ImuServiceInterface>(xbot::service_ids::IMU, ctx, sensor_imu_pub, imu_axis_config,
-                                                      imu_collision_config);
+  imu_collision_debug_pub = n.advertise<std_msgs::Float64MultiArray>("ll/imu/collision_debug", 1);
+  imu_service = std::make_unique<ImuServiceInterface>(xbot::service_ids::IMU, ctx, sensor_imu_pub,
+                                                      imu_collision_debug_pub, imu_axis_config, imu_collision_config);
   imu_service->Start();
 
   // Power service

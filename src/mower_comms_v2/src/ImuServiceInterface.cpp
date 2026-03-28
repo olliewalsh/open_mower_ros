@@ -20,6 +20,11 @@ void ImuServiceInterface::OnAxesChanged(const double* new_value, uint32_t length
   imu_publisher_.publish(imu_msg);
 }
 
+void ImuServiceInterface::OnCollisionDebugChanged(const double* new_value, uint32_t length) {
+  collision_debug_msg_.data.assign(new_value, new_value + length);
+  collision_debug_publisher_.publish(collision_debug_msg_);
+}
+
 bool ImuServiceInterface::validateAxisConfig() {
   if (axis_config_.size() != 6) {
     ROS_ERROR_STREAM("Invalid IMU axis config length of '" << axis_config_ << "': " << axis_config_.size() << " != 6");
@@ -72,6 +77,7 @@ bool ImuServiceInterface::OnConfigurationRequested(uint16_t service_id) {
   SetRegisterCollisionGyroThreshold(collision_config_.gyro_threshold);
   SetRegisterCollisionJerkThreshold(collision_config_.jerk_threshold);
   SetRegisterCollisionGravityFilterHz(collision_config_.gravity_filter_hz);
+  SetRegisterCollisionSignalFilterHz(collision_config_.signal_filter_hz);
   SetRegisterCollisionWheelCurrentThreshold(collision_config_.wheel_current_threshold);
   SetRegisterCollisionActualLinearSpeedThreshold(collision_config_.actual_linear_speed_threshold);
   SetRegisterCollisionActualAngularSpeedThreshold(collision_config_.actual_angular_speed_threshold);
