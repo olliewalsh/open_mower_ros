@@ -770,7 +770,8 @@ namespace ftc_local_planner
             double cp_linear_speed = current_movement_speed;
             double cp_angular_speed = config.speed_angular * (M_PI / 180.0);
 
-            if (config.use_actual_twist_for_cp_progress && actual_twist_initialized_)
+            if (config.use_actual_twist_for_cp_progress && actual_twist_initialized_ &&
+                current_movement_speed >= config.cp_progress_min_speed)
             {
                 cp_linear_speed = std::min(cp_linear_speed, filtered_actual_linear_speed + config.cp_progress_linear_margin);
                 cp_angular_speed = std::min(cp_angular_speed, filtered_actual_angular_speed + config.cp_progress_angular_margin);
