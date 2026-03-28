@@ -297,7 +297,12 @@ bool MowingBehavior::create_reentry_approach_pose(const slic3r_coverage_planner:
   }
 
   const auto& reentry_pose = path.path.poses[path_index];
-  double yaw = tf2::getYaw(reentry_pose.pose.orientation);
+  tf2::Quaternion reentry_quat;
+  tf2::fromMsg(reentry_pose.pose.orientation, reentry_quat);
+  double unused_roll;
+  double unused_pitch;
+  double yaw;
+  tf2::Matrix3x3(reentry_quat).getRPY(unused_roll, unused_pitch, yaw);
   double tangent_x = std::cos(yaw);
   double tangent_y = std::sin(yaw);
   double normal_x = -tangent_y;
@@ -337,6 +342,28 @@ bool MowingBehavior::create_reentry_approach_pose(const slic3r_coverage_planner:
       valid_candidates.begin(), valid_candidates.end(),
       [](const Candidate& a, const Candidate& b) { return a.distance_to_robot < b.distance_to_robot; });
   approach_pose = best->pose;
+  return true;
+}
+
+bool MowingBehavior::create_reentry_approach_path(const slic3r_coverage_planner::Path& path, int path_index,
+                                                  nav_msgs::Path& approach_path) {
+  geometry_msgs::PoseStamped approach_pose;
+  if (!create_reentry_approach_pose(path, path_index, approach_pose)) {
+    return false;
+  }
+
+  const auto& reentry_pose = path.path.poses[path_index];
+  xbot_msgs::AbsolutePose current_pose = getPose();
+
+  geometry_msgs::PoseStamped current_pose_stamped;
+  current_pose_stamped.header = reentry_pose.header;
+  current_pose_stamped.pose = current_pose.pose.pose;
+
+  approach_path.header = path.path.header;
+  approach_path.poses.clear();
+  approach_path.poses.push_back(current_pose_stamped);
+  approach_path.poses.push_back(approach_pose);
+  approach_path.poses.push_back(reentry_pose);
   return true;
 }
 
@@ -443,21 +470,31 @@ bool MowingBehavior::execute_mowing_plan() {
         sleep(1);
       }
 
-      geometry_msgs::PoseStamped approach_pose;
-      bool has_reentry_approach =
-          currentMowingPathIndex > 0 && create_reentry_approach_pose(path, currentMowingPathIndex, approach_pose);
+      nav_msgs::Path reentry_approach_path;
+      bool has_reentry_approach = currentMowingPathIndex > 0 &&
+                                  create_reentry_approach_path(path, currentMowingPathIndex, reentry_approach_path);
 
-      mbf_msgs::MoveBaseGoal moveBaseGoal;
-      moveBaseGoal.target_pose = has_reentry_approach ? approach_pose : path.path.poses[currentMowingPathIndex];
-      moveBaseGoal.controller = "FTCPlanner";
-      mbfClient->sendGoal(moveBaseGoal);
+      if (has_reentry_approach) {
+        mbf_msgs::ExePathGoal approachGoal;
+        approachGoal.path = reentry_approach_path;
+        approachGoal.angle_tolerance = 5.0 * (M_PI / 180.0);
+        approachGoal.dist_tolerance = 0.2;
+        approachGoal.tolerance_from_action = true;
+        approachGoal.controller = "FTCPlanner";
+        mbfClientExePath->sendGoal(approachGoal);
+      } else {
+        mbf_msgs::MoveBaseGoal moveBaseGoal;
+        moveBaseGoal.target_pose = path.path.poses[currentMowingPathIndex];
+        moveBaseGoal.controller = "FTCPlanner";
+        mbfClient->sendGoal(moveBaseGoal);
+      }
       sleep(1);
       actionlib::SimpleClientGoalState current_status(actionlib::SimpleClientGoalState::PENDING);
       ros::Rate r(10);
 
       // wait for path execution to finish
       while (ros::ok()) {
-        current_status = mbfClient->getState();
+        current_status = has_reentry_approach ? mbfClientExePath->getState() : mbfClient->getState();
         if (current_status.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
             current_status.state_ == actionlib::SimpleClientGoalState::PENDING) {
           // path is being executed, everything seems fine.
@@ -466,7 +503,11 @@ bool MowingBehavior::execute_mowing_plan() {
             ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) SKIP AREA was requested.");
             // remove all paths in current area and return true
             mowerEnabled = false;
-            mbfClientExePath->cancelAllGoals();
+            if (has_reentry_approach) {
+              mbfClientExePath->cancelAllGoals();
+            } else {
+              mbfClient->cancelAllGoals();
+            }
             currentMowingPaths.clear();
             skip_area = false;
             return true;
@@ -479,13 +520,21 @@ bool MowingBehavior::execute_mowing_plan() {
           }
           if (aborted) {
             ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) ABORT was requested - stopping path execution.");
-            mbfClientExePath->cancelAllGoals();
+            if (has_reentry_approach) {
+              mbfClientExePath->cancelAllGoals();
+            } else {
+              mbfClient->cancelAllGoals();
+            }
             mowerEnabled = false;
             return false;
           }
           if (requested_pause_flag) {
             ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) PAUSE was requested - stopping path execution.");
-            mbfClientExePath->cancelAllGoals();
+            if (has_reentry_approach) {
+              mbfClientExePath->cancelAllGoals();
+            } else {
+              mbfClient->cancelAllGoals();
+            }
             mowerEnabled = false;
             return false;
           }
@@ -555,16 +604,9 @@ bool MowingBehavior::execute_mowing_plan() {
       mbf_msgs::ExePathGoal exePathGoal;
       nav_msgs::Path exePath;
       exePath.header = path.path.header;
-      geometry_msgs::PoseStamped reentry_approach_pose;
-      bool has_reentry_approach = currentMowingPathIndex > 0 &&
-                                  create_reentry_approach_pose(path, currentMowingPathIndex, reentry_approach_pose);
-      if (has_reentry_approach) {
-        exePath.poses.push_back(reentry_approach_pose);
-      }
       exePath.poses.insert(exePath.poses.end(), path.path.poses.begin() + currentMowingPathIndex,
                            path.path.poses.end());
       int exePathStartIndex = currentMowingPathIndex;
-      int exePathIndexOffset = has_reentry_approach ? 1 : 0;
       exePathGoal.path = exePath;
       exePathGoal.angle_tolerance = 5.0 * (M_PI / 180.0);
       exePathGoal.dist_tolerance = 0.2;
@@ -615,7 +657,7 @@ bool MowingBehavior::execute_mowing_plan() {
             // show progress
             int currentIndex = getCurrentMowPathIndex();
             if (currentIndex != -1) {
-              currentMowingPathIndex = exePathStartIndex + std::max(0, currentIndex - exePathIndexOffset);
+              currentMowingPathIndex = exePathStartIndex + currentIndex;
             }
             ROS_INFO_STREAM_THROTTLE(
                 5, "MowingBehavior: (MOW) Progress: " << currentMowingPathIndex << "/" << path.path.poses.size());

@@ -90,6 +90,8 @@ namespace ftc_local_planner
         double filtered_actual_angular_speed = 0.0;
         bool actual_twist_initialized_ = false;
         double rotate_collision_line_length_ = 0.0;
+        bool angular_lag_reference_initialized_ = false;
+        double angular_lag_reference_error_ = 0.0;
 
         /**
          * State for point interpolation
@@ -120,6 +122,7 @@ namespace ftc_local_planner
         bool is_pose_collision_free(const geometry_msgs::PoseStamped &pose) const;
         bool is_rotation_direction_collision_free(const geometry_msgs::PoseStamped &target_pose, int direction_sign) const;
         void choose_rotate_direction(const geometry_msgs::PoseStamped &target_pose);
+        double compute_angular_lag_time(double angular_error, double angular_speed);
         void update_control_point(double dt);
         void calculate_velocity_commands(double dt, geometry_msgs::TwistStamped &cmd_vel);
 

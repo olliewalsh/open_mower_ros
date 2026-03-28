@@ -240,6 +240,8 @@ namespace ftc_local_planner
             ROS_INFO_STREAM("FTCLocalPlannerROS: Switching to state " << current_state);
             state_entered_time = ros::Time::now();
             rotate_direction_sign_ = 0;
+            angular_lag_reference_initialized_ = false;
+            angular_lag_reference_error_ = 0.0;
             // Reset oscillation detection
             failure_detector_.clear();
             failure_detector_.setBufferLength(std::round(config.oscillation_recovery_min_duration * 10));
@@ -400,8 +402,16 @@ namespace ftc_local_planner
         current_pose.pose.position.z = base_to_map.transform.translation.z;
         current_pose.pose.orientation = base_to_map.transform.rotation;
 
-        double start_yaw = tf2::getYaw(current_pose.pose.orientation);
-        double target_yaw = tf2::getYaw(target_pose.pose.orientation);
+        tf2::Quaternion start_quat;
+        tf2::Quaternion target_quat;
+        tf2::fromMsg(current_pose.pose.orientation, start_quat);
+        tf2::fromMsg(target_pose.pose.orientation, target_quat);
+        double unused_roll;
+        double unused_pitch;
+        double start_yaw;
+        double target_yaw;
+        tf2::Matrix3x3(start_quat).getRPY(unused_roll, unused_pitch, start_yaw);
+        tf2::Matrix3x3(target_quat).getRPY(unused_roll, unused_pitch, target_yaw);
         double delta_yaw = normalize_angle(target_yaw - start_yaw);
 
         if (std::abs(delta_yaw) < 1e-4)
@@ -472,6 +482,22 @@ namespace ftc_local_planner
         ROS_WARN_STREAM("FTCLocalPlannerROS: No collision-free rotation direction found. Falling back to shortest rotation.");
     }
 
+    double FTCPlanner::compute_angular_lag_time(double angular_error, double angular_speed)
+    {
+        double abs_error = std::abs(angular_error);
+        if (!angular_lag_reference_initialized_)
+        {
+            angular_lag_reference_error_ = abs_error;
+            angular_lag_reference_initialized_ = true;
+            return 0.0;
+        }
+
+        double elapsed = time_in_current_state();
+        double ideal_remaining_error = std::max(0.0, angular_lag_reference_error_ - elapsed * angular_speed);
+        double excess_error = std::max(0.0, abs_error - ideal_remaining_error);
+        return excess_error / angular_speed;
+    }
+
     void FTCPlanner::update_planner_state()
     {
         switch (current_state)
@@ -482,7 +508,7 @@ namespace ftc_local_planner
             choose_rotate_direction(target_pose);
             double angular_lag = std::abs(angle_error);
             double angular_lag_speed = std::max(config.max_cmd_vel_ang, config.angular_lag_min_speed);
-            double angular_lag_time = angular_lag / angular_lag_speed;
+            double angular_lag_time = compute_angular_lag_time(angle_error, angular_lag_speed);
 
             if (config.max_angular_lag_time > 0.0 && angular_lag_time > config.max_angular_lag_time)
             {
@@ -568,7 +594,7 @@ namespace ftc_local_planner
             choose_rotate_direction(target_pose);
             double angular_lag = std::abs(angle_error);
             double angular_lag_speed = std::max(config.max_cmd_vel_ang, config.angular_lag_min_speed);
-            double angular_lag_time = angular_lag / angular_lag_speed;
+            double angular_lag_time = compute_angular_lag_time(angle_error, angular_lag_speed);
 
             if (config.max_angular_lag_time > 0.0 && angular_lag_time > config.max_angular_lag_time)
             {

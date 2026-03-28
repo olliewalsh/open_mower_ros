@@ -264,7 +264,7 @@ bool loadSweepFootprint(ros::NodeHandle& nh) {
       ROS_INFO_STREAM("Loaded map sweep footprint from param " << param_name);
       return true;
     }
-    return false;
+    ROS_WARN_STREAM("Ignoring invalid map sweep footprint param " << param_name << " and continuing fallback lookup.");
   }
 
   const std::vector<std::string> radius_params = {
