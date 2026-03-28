@@ -3,6 +3,9 @@ ll:
     diff_drive:
       wheel_distance_m: 0.325
       ticks_per_m: 1964.0
+      wheel_speed_feedforward: 1.5
+      wheel_speed_kp: 0.35
+      wheel_speed_ki: 1.5
     power:
       battery_full_voltage: 28.5
       battery_empty_voltage: 24.0
