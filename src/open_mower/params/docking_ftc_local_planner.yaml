@@ -25,6 +25,8 @@ DockingFTCPlanner:
   max_follow_distance: 1.0
   max_follow_lag_time: 4.0
   follow_lag_min_speed: 0.05
+  max_angular_lag_time: 4.0
+  angular_lag_min_speed: 0.2
   target_goal_angle_error: 20.0
   max_goal_angle_error: 20.0
   target_goal_distance_error: 0.1

@@ -33,6 +33,8 @@ FTCPlanner:
   max_follow_distance: 0.35
   max_follow_lag_time: 0.7
   follow_lag_min_speed: 0.05
+  max_angular_lag_time: 2.0
+  angular_lag_min_speed: 0.2
   target_goal_angle_error: 10.0
   max_goal_angle_error: 20.0
   target_goal_distance_error: 0.1

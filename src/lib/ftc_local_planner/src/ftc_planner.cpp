@@ -235,6 +235,21 @@ namespace ftc_local_planner
         {
         case PRE_ROTATE:
         {
+            double angular_lag = std::abs(angle_error);
+            double angular_lag_speed = std::max(config.max_cmd_vel_ang, config.angular_lag_min_speed);
+            double angular_lag_time = angular_lag / angular_lag_speed;
+
+            if (config.max_angular_lag_time > 0.0 && angular_lag_time > config.max_angular_lag_time)
+            {
+                ROS_ERROR_STREAM("FTCLocalPlannerROS: Robot is lagging in PRE_ROTATE. angular_lag_time (" << angular_lag_time
+                                 << " s) > config.max_angular_lag_time (" << config.max_angular_lag_time
+                                 << " s), angular_lag (" << angular_lag << " rad), angular_lag_speed (" << angular_lag_speed
+                                 << " rad/s). It probably has crashed.");
+                is_crashed = true;
+                set_planner_state(FINISHED);
+                return;
+            }
+
             if (time_in_current_state() > config.goal_timeout)
             {
                 ROS_ERROR_STREAM("FTCLocalPlannerROS: Error reaching goal. config.goal_timeout (" << config.goal_timeout << ") reached - Timeout in PRE_ROTATE phase.");
@@ -304,6 +319,20 @@ namespace ftc_local_planner
         break;
         case POST_ROTATE:
         {
+            double angular_lag = std::abs(angle_error);
+            double angular_lag_speed = std::max(config.max_cmd_vel_ang, config.angular_lag_min_speed);
+            double angular_lag_time = angular_lag / angular_lag_speed;
+
+            if (config.max_angular_lag_time > 0.0 && angular_lag_time > config.max_angular_lag_time)
+            {
+                ROS_WARN_STREAM("FTCLocalPlannerROS: Robot is lagging in POST_ROTATE. angular_lag_time (" << angular_lag_time
+                                << " s) > config.max_angular_lag_time (" << config.max_angular_lag_time
+                                << " s), angular_lag (" << angular_lag << " rad), angular_lag_speed (" << angular_lag_speed
+                                << " rad/s). Finishing.");
+                set_planner_state(FINISHED);
+                return;
+            }
+
             if (time_in_current_state() > config.goal_timeout && abs(angle_error) * (180.0 / M_PI) > config.max_goal_angle_error)
             {
                 ROS_WARN_STREAM("FTCLocalPlannerROS: Could not reach goal rotation. config.goal_timeout (" << config.goal_timeout << ") reached");
