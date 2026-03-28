@@ -253,8 +253,22 @@ namespace ftc_local_planner
         case FOLLOWING:
         {
             double distance = local_control_point.translation().norm();
+            double longitudinal_lag = std::max(0.0, lon_error);
+            double lag_speed = std::max(current_movement_speed, config.follow_lag_min_speed);
+            double follow_lag_time = longitudinal_lag / lag_speed;
+
+            if (config.max_follow_lag_time > 0.0 && follow_lag_time > config.max_follow_lag_time)
+            {
+                ROS_ERROR_STREAM("FTCLocalPlannerROS: Robot is lagging behind the control point. follow_lag_time (" << follow_lag_time
+                                 << " s) > config.max_follow_lag_time (" << config.max_follow_lag_time
+                                 << " s), longitudinal_lag (" << longitudinal_lag << " m), lag_speed (" << lag_speed << " m/s). It probably has crashed.");
+                is_crashed = true;
+                set_planner_state(FINISHED);
+                return;
+            }
+
             // check for crash
-            if (distance > config.max_follow_distance)
+            if (config.max_follow_distance > 0.0 && distance > config.max_follow_distance)
             {
                 ROS_ERROR_STREAM("FTCLocalPlannerROS: Robot is far away from global plan. distance (" << distance << ") > config.max_follow_distance (" << config.max_follow_distance << ") It probably has crashed.");
                 is_crashed = true;
