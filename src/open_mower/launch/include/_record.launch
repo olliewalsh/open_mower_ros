@@ -15,6 +15,7 @@
 /mower/status
 /mower/imu
 /imu/data_raw
+/ll/imu/collision_debug
 /imu/mag
 /ublox/navrelposned
 /ublox/fix " />

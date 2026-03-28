@@ -7,6 +7,7 @@
 
 #include <ros/publisher.h>
 #include <sensor_msgs/Imu.h>
+#include <std_msgs/Float64MultiArray.h>
 
 #include <ImuServiceInterfaceBase.hpp>
 
@@ -18,6 +19,7 @@ class ImuServiceInterface : public ImuServiceInterfaceBase {
     float gyro_threshold = 0.0f;
     float jerk_threshold = 0.0f;
     float gravity_filter_hz = 0.0f;
+    float signal_filter_hz = 0.0f;
     float wheel_current_threshold = 0.0f;
     float actual_linear_speed_threshold = 0.0f;
     float actual_angular_speed_threshold = 0.0f;
@@ -26,9 +28,11 @@ class ImuServiceInterface : public ImuServiceInterfaceBase {
   };
 
   ImuServiceInterface(uint16_t service_id, const xbot::serviceif::Context& ctx, const ros::Publisher& imu_publisher,
-                      const std::string& axis_config, const CollisionConfig& collision_config)
+                      const ros::Publisher& collision_debug_publisher, const std::string& axis_config,
+                      const CollisionConfig& collision_config)
       : ImuServiceInterfaceBase(service_id, ctx),
         imu_publisher_(imu_publisher),
+        collision_debug_publisher_(collision_debug_publisher),
         axis_config_(axis_config),
         collision_config_(collision_config) {
   }
@@ -37,13 +41,16 @@ class ImuServiceInterface : public ImuServiceInterfaceBase {
 
  protected:
   void OnAxesChanged(const double* new_value, uint32_t length) override;
+  void OnCollisionDebugChanged(const double* new_value, uint32_t length) override;
 
  private:
   const ros::Publisher& imu_publisher_;
+  const ros::Publisher& collision_debug_publisher_;
   std::string axis_config_;
   CollisionConfig collision_config_;
 
   sensor_msgs::Imu imu_msg{};
+  std_msgs::Float64MultiArray collision_debug_msg_{};
   bool validateAxisConfig();
 };
 
