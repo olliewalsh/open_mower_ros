@@ -125,8 +125,6 @@ namespace ftc_local_planner
         bool is_rotation_direction_collision_free(const geometry_msgs::PoseStamped &target_pose, int direction_sign) const;
         void choose_rotate_direction(const geometry_msgs::PoseStamped &target_pose);
         double compute_angular_lag_time(double angular_error, double angular_speed);
-        double compute_mow_rpm_error() const;
-        double compute_mow_rpm_speed_limit(double mow_rpm_error) const;
         void update_control_point(double dt);
         void calculate_velocity_commands(double dt, geometry_msgs::TwistStamped &cmd_vel);
 
