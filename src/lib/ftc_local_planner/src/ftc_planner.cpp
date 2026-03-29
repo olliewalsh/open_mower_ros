@@ -880,7 +880,8 @@ namespace ftc_local_planner
 
         lat_error = local_control_point.translation().y();
         lon_error = local_control_point.translation().x();
-        lon_error -= config.follow_distance;
+        double effective_follow_distance = config.follow_distance + current_movement_speed * config.follow_time_offset;
+        lon_error -= effective_follow_distance;
         angle_error = local_control_point.rotation().eulerAngles(0, 1, 2).z();
 
     }

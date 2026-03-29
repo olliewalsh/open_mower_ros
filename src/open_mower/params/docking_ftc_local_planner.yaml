@@ -43,3 +43,4 @@ DockingFTCPlanner:
   cp_progress_linear_margin: 0.03
   cp_progress_angular_margin: 0.15
   lateral_priority_distance: 0.0
+  follow_time_offset: 0.0
