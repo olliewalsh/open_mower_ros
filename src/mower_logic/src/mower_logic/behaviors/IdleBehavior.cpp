@@ -96,6 +96,7 @@ Behavior* IdleBehavior::execute() {
 
     const bool mower_ready = last_battery_v > last_power_config.battery_full_voltage &&
                              last_status.mower_motor_temperature < last_config.motor_cold_temperature &&
+                             last_status.mower_esc_temperature < last_config.mower_esc_cold_temperature &&
                              !last_config.manual_pause_mowing && !rain_delay;
 
     const bool currently_charging = last_charge_v > 10.0;
