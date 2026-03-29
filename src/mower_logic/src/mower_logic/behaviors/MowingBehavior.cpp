@@ -354,7 +354,7 @@ bool MowingBehavior::execute_mowing_plan() {
 
       mbf_msgs::MoveBaseGoal moveBaseGoal;
       moveBaseGoal.target_pose =
-          has_reentry_approach ? reentry_plan.approach_pose : path.path.poses[currentMowingPathIndex];
+          has_reentry_approach ? reentry_plan.staging_pose : path.path.poses[currentMowingPathIndex];
       moveBaseGoal.controller = "FTCPlanner";
       mbfClient->sendGoal(moveBaseGoal);
 

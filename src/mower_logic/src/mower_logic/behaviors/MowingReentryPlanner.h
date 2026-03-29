@@ -18,6 +18,7 @@ class MowingReentryPlanner {
   struct Plan {
     bool valid = false;
     geometry_msgs::PoseStamped approach_pose;
+    geometry_msgs::PoseStamped staging_pose;
     nav_msgs::Path lead_in_path;
   };
 
