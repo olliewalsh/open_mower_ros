@@ -722,6 +722,20 @@ namespace ftc_local_planner
         filtered_actual_angular_speed += alpha * (measured_angular_speed - filtered_actual_angular_speed);
     }
 
+    double FTCPlanner::compute_mow_rpm_error() const
+    {
+        if (config.min_mow_motor_rpm > 0 && last_status.mow_enabled)
+        {
+            return std::max(0.0, static_cast<double>(config.min_mow_motor_rpm) - std::abs(static_cast<double>(last_status.mower_motor_rpm))) / 1000.0;
+        }
+        return 0.0;
+    }
+
+    double FTCPlanner::compute_mow_rpm_speed_limit(double mow_rpm_error) const
+    {
+        return config.max_cmd_vel_speed - (mow_rpm_error * config.kp_mow_rpm_lim);
+    }
+
     void FTCPlanner::update_control_point(double dt)
     {
 
@@ -750,6 +764,14 @@ namespace ftc_local_planner
             {
                 speed = velocityLookahead();
                 if(speed < 0.01) speed = 0.01;
+            }
+
+            double mow_rpm_error = compute_mow_rpm_error();
+            if (mow_rpm_error > 0.0)
+            {
+                double mow_rpm_speed_limit = compute_mow_rpm_speed_limit(mow_rpm_error);
+                speed = std::min(speed, mow_rpm_speed_limit);
+                current_movement_speed = std::min(current_movement_speed, speed);
             }
 
             if (speed > current_movement_speed)
@@ -982,18 +1004,14 @@ namespace ftc_local_planner
         {
             mow_current_error = std::max(0.0, last_status.mower_esc_current - config.max_mow_motor_current);
         }
-        double mow_rpm_error = 0.0;
-        if (config.min_mow_motor_rpm > 0 && last_status.mow_enabled)
-        {
-            mow_rpm_error = std::max(0.0, static_cast<double>(config.min_mow_motor_rpm) - std::abs(static_cast<double>(last_status.mower_motor_rpm))) / 1000.0;
-        }
+        double mow_rpm_error = compute_mow_rpm_error();
         speed_limit = std::min(config.max_cmd_vel_speed, std::max(
             config.speed_limit_min,
             std::min(
                 config.max_cmd_vel_speed - (lon_error * config.kp_lim + i_lon_error * config.ki_lim + d_lon * config.kd_lim),
                 std::min(
                     config.max_cmd_vel_speed - (mow_current_error * config.kp_mow_current_lim),
-                    config.max_cmd_vel_speed - (mow_rpm_error * config.kp_mow_rpm_lim)
+                    compute_mow_rpm_speed_limit(mow_rpm_error)
                 )
             )
         ));
