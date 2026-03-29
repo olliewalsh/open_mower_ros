@@ -54,7 +54,7 @@ namespace ftc_local_planner
         // Recovery behavior initialization
         failure_detector_.setBufferLength(std::round(config.oscillation_recovery_min_duration * 10));
 
-        status_sub = private_nh.subscribe<mower_msgs::Status>("/mower/status", 0, &FTCPlanner::statusReceived, this, ros::TransportHints().tcpNoDelay(true));
+        status_sub = private_nh.subscribe<mower_msgs::Status>("/ll/mower_status", 0, &FTCPlanner::statusReceived, this, ros::TransportHints().tcpNoDelay(true));
 
         ROS_INFO("FTCLocalPlannerROS: Version 2 Init.");
     }
