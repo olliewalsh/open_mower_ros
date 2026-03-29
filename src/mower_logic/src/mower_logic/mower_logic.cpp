@@ -413,6 +413,14 @@ void checkSafety(const ros::TimerEvent& timer_event) {
     } else {
       currentBehavior->requestContinue(pauseType::PAUSE_EMERGENCY);
     }
+
+    const bool mower_overtemp = last_status.mower_motor_temperature >= last_config.motor_hot_temperature ||
+                                last_status.mower_esc_temperature >= last_config.mower_esc_hot_temperature;
+    if (mower_overtemp) {
+      currentBehavior->requestPause(pauseType::PAUSE_OVERTEMP);
+    } else {
+      currentBehavior->requestContinue(pauseType::PAUSE_OVERTEMP);
+    }
   }
 
   // TODO: Have a single point where we check for this timeout instead of twice (here and in the behavior)
@@ -523,11 +531,6 @@ void checkSafety(const ros::TimerEvent& timer_event) {
     }
     max_v_battery_seen = 0.0;
     last_v_battery_check = ros::Time::now();
-  }
-
-  if (!dockingNeeded && last_status.mower_motor_temperature >= last_config.motor_hot_temperature) {
-    dockingReason << "Mow motor over temp: " << last_status.mower_motor_temperature;
-    dockingNeeded = true;
   }
 
   // Rain detected is initialized to true and flips to false if rain is not detected

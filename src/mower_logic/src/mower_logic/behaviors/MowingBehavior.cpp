@@ -418,6 +418,12 @@ bool MowingBehavior::execute_mowing_plan() {
         std::string pause_reason = "";
         if (requested_pause_flag & pauseType::PAUSE_EMERGENCY) {
           pause_reason += "on EMERGENCY";
+          if (requested_pause_flag & (pauseType::PAUSE_MANUAL | pauseType::PAUSE_OVERTEMP)) {
+            pause_reason += " and ";
+          }
+        }
+        if (requested_pause_flag & pauseType::PAUSE_OVERTEMP) {
+          pause_reason += "waiting for cool-down";
           if (requested_pause_flag & pauseType::PAUSE_MANUAL) {
             pause_reason += " and ";
           }

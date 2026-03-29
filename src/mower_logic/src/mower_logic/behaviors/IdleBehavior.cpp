@@ -92,6 +92,7 @@ Behavior* IdleBehavior::execute() {
 
     const bool mower_ready = last_battery_v > last_power_config.battery_full_voltage &&
                              last_status.mower_motor_temperature < last_config.motor_cold_temperature &&
+                             last_status.mower_esc_temperature < last_config.mower_esc_cold_temperature &&
                              !last_config.manual_pause_mowing && !rain_delay;
 
     if (manual_start_mowing || ((automatic_mode || active_semiautomatic_task) && mower_ready)) {
