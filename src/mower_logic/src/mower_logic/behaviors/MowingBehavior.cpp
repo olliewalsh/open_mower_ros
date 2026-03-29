@@ -363,6 +363,7 @@ bool MowingBehavior::execute_mowing_plan() {
 
   // loop through all mowingPaths to execute the plan fully.
   while (currentMowingPath < currentMowingPaths.size() && ros::ok() && !aborted) {
+    auto& path = currentMowingPaths[currentMowingPath];
     ////////////////////////////////////////////////
     // PAUSE HANDLING
     ////////////////////////////////////////////////
@@ -427,7 +428,6 @@ bool MowingBehavior::execute_mowing_plan() {
       update_actions();
     }
 
-    auto& path = currentMowingPaths[currentMowingPath];
     ROS_INFO_STREAM("MowingBehavior: Path segment length: " << path.path.poses.size() << " poses.");
 
     // Check if path is empty. If so, directly skip it
