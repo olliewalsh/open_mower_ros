@@ -99,6 +99,10 @@ ros::Time last_rain_check;
 bool rain_detected = true;
 ros::Time rain_resume;
 bool mower_overtemp_latched = false;
+ros::Time mower_rpm_low_since(0.0);
+ros::Time mower_enabled_since(0.0);
+bool mower_stall_latched = false;
+bool last_mow_enabled_state = false;
 
 /**
  * Some thread safe methods to get a copy of the logic state
@@ -524,6 +528,44 @@ void checkSafety(const ros::TimerEvent& timer_event) {
       currentBehavior->requestPause(pauseType::PAUSE_OVERTEMP);
     } else {
       currentBehavior->requestContinue(pauseType::PAUSE_OVERTEMP);
+    }
+
+    if (last_status.mow_enabled != last_mow_enabled_state) {
+      last_mow_enabled_state = last_status.mow_enabled;
+      if (last_status.mow_enabled) {
+        mower_enabled_since = ros::Time::now();
+      } else {
+        mower_rpm_low_since = ros::Time(0.0);
+        mower_stall_latched = false;
+        currentBehavior->requestContinue(pauseType::PAUSE_MOW_STALL);
+      }
+    }
+
+    bool stall_detection_active =
+        currentBehavior != nullptr && currentBehavior->mower_enabled() && last_status.mow_enabled &&
+        last_config.mower_stall_rpm > 0 &&
+        (ros::Time::now() - mower_enabled_since) > ros::Duration(last_config.mower_stall_startup_grace);
+
+    if (stall_detection_active && last_status.mower_motor_rpm > 0 &&
+        last_status.mower_motor_rpm < last_config.mower_stall_rpm) {
+      if (mower_rpm_low_since.isZero()) {
+        mower_rpm_low_since = ros::Time::now();
+      }
+      if (!mower_stall_latched &&
+          (ros::Time::now() - mower_rpm_low_since) >= ros::Duration(last_config.mower_stall_detect_duration)) {
+        mower_stall_latched = true;
+        ROS_WARN_STREAM("Detected mower stall. eRPM " << last_status.mower_motor_rpm << " < "
+                                                      << last_config.mower_stall_rpm);
+      }
+    } else {
+      mower_rpm_low_since = ros::Time(0.0);
+      if (!last_status.mow_enabled) {
+        mower_stall_latched = false;
+      }
+    }
+
+    if (mower_stall_latched) {
+      currentBehavior->requestPause(pauseType::PAUSE_MOW_STALL);
     }
   }
 

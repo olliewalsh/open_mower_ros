@@ -22,6 +22,7 @@
 #include <rosbag/view.h>
 
 #include <cmath>
+#include <limits>
 
 #include "mower_logic/CheckPoint.h"
 #include "mower_map/ClearNavPointSrv.h"
@@ -39,6 +40,8 @@ extern actionlib::SimpleActionClient<mbf_msgs::ExePathAction>* mbfClientExePath;
 extern mower_logic::MowerLogicConfig getConfig();
 extern void setConfig(mower_logic::MowerLogicConfig);
 extern xbot_msgs::AbsolutePose getPose();
+extern mower_msgs::Status getStatus();
+extern bool setMowerEnabled(bool enabled);
 
 extern void registerActions(std::string prefix, const std::vector<xbot_msgs::ActionInfo>& actions);
 
@@ -242,6 +245,103 @@ int getCurrentMowPathIndex() {
   return (currentIndex);
 }
 
+bool MowingBehavior::handle_mower_stall_pause() {
+  const auto cfg = getConfig();
+  if (cfg.mower_stall_max_restart_attempts <= 0) {
+    return false;
+  }
+
+  for (int attempt = 1; attempt <= cfg.mower_stall_max_restart_attempts && !aborted; ++attempt) {
+    ROS_WARN_STREAM("MowingBehavior: Stall recovery attempt " << attempt << " / "
+                                                              << cfg.mower_stall_max_restart_attempts);
+    setMowerEnabled(false);
+    ros::Duration(cfg.mower_stall_restart_delay).sleep();
+    if (aborted) {
+      return false;
+    }
+
+    setMowerEnabled(true);
+    ros::Time restart_started = ros::Time::now();
+    ros::Rate poll_rate(5.0);
+    while (ros::ok() && !aborted &&
+           (ros::Time::now() - restart_started) < ros::Duration(cfg.mower_stall_restart_timeout)) {
+      auto status = getStatus();
+      if (status.mow_enabled && status.mower_motor_rpm >= cfg.mower_restart_rpm) {
+        ROS_INFO_STREAM("MowingBehavior: Stall recovery succeeded at eRPM " << status.mower_motor_rpm);
+        this->requestContinue(pauseType::PAUSE_MOW_STALL);
+        return true;
+      }
+      poll_rate.sleep();
+    }
+  }
+
+  ROS_ERROR_STREAM("MowingBehavior: Mower stall recovery failed; leaving mowing paused.");
+  return false;
+}
+
+void MowingBehavior::update_resume_index_for_current_pose(const nav_msgs::Path& path) {
+  if (currentMowingPathIndex >= path.poses.size()) {
+    return;
+  }
+
+  const auto cfg = getConfig();
+  const auto current_pose = getPose();
+  const double px = current_pose.pose.pose.position.x;
+  const double py = current_pose.pose.pose.position.y;
+
+  size_t best_segment_start = static_cast<size_t>(currentMowingPathIndex);
+  double best_segment_t = 0.0;
+  double best_distance_sq = std::numeric_limits<double>::max();
+  double distance_along_path = 0.0;
+  double best_progress_distance = 0.0;
+
+  for (size_t i = static_cast<size_t>(currentMowingPathIndex); i + 1 < path.poses.size(); ++i) {
+    const auto& a = path.poses[i].pose.position;
+    const auto& b = path.poses[i + 1].pose.position;
+    const double dx = b.x - a.x;
+    const double dy = b.y - a.y;
+    const double segment_length_sq = dx * dx + dy * dy;
+    double t = 0.0;
+    if (segment_length_sq > 1e-9) {
+      t = ((px - a.x) * dx + (py - a.y) * dy) / segment_length_sq;
+      t = std::max(0.0, std::min(1.0, t));
+    }
+
+    const double proj_x = a.x + dx * t;
+    const double proj_y = a.y + dy * t;
+    const double dist_sq = (px - proj_x) * (px - proj_x) + (py - proj_y) * (py - proj_y);
+    if (dist_sq < best_distance_sq) {
+      best_distance_sq = dist_sq;
+      best_segment_start = i;
+      best_segment_t = t;
+      best_progress_distance = distance_along_path + std::sqrt(segment_length_sq) * t;
+    }
+
+    distance_along_path += std::sqrt(segment_length_sq);
+  }
+
+  const double target_progress_distance = best_progress_distance + cfg.mower_resume_lookahead;
+  size_t resume_index = best_segment_start;
+  double accumulated_distance = 0.0;
+  for (size_t i = static_cast<size_t>(currentMowingPathIndex); i + 1 < path.poses.size(); ++i) {
+    const auto& a = path.poses[i].pose.position;
+    const auto& b = path.poses[i + 1].pose.position;
+    const double segment_length = std::hypot(b.x - a.x, b.y - a.y);
+    if (accumulated_distance + segment_length >= target_progress_distance) {
+      resume_index = i + 1;
+      break;
+    }
+    accumulated_distance += segment_length;
+    resume_index = i + 1;
+  }
+
+  if (resume_index < path.poses.size() && static_cast<int>(resume_index) != currentMowingPathIndex) {
+    ROS_INFO_STREAM("MowingBehavior: Adjusting resume index from " << currentMowingPathIndex << " to " << resume_index
+                                                                   << " based on current pose projection.");
+    currentMowingPathIndex = static_cast<int>(resume_index);
+  }
+}
+
 void printNavState(int state) {
   switch (state) {
     case actionlib::SimpleClientGoalState::PENDING: ROS_INFO(">>> State: Pending <<<"); break;
@@ -286,6 +386,12 @@ bool MowingBehavior::execute_mowing_plan() {
         }
         if (requested_pause_flag & pauseType::PAUSE_OVERTEMP) {
           pause_reason += "waiting for cool-down";
+          if (requested_pause_flag & (pauseType::PAUSE_MANUAL | pauseType::PAUSE_MOW_STALL)) {
+            pause_reason += " and ";
+          }
+        }
+        if (requested_pause_flag & pauseType::PAUSE_MOW_STALL) {
+          pause_reason += "recovering from mower stall";
           if (requested_pause_flag & pauseType::PAUSE_MANUAL) {
             pause_reason += " and ";
           }
@@ -294,6 +400,13 @@ bool MowingBehavior::execute_mowing_plan() {
           pause_reason += "waiting for CONTINUE";
         }
         ROS_INFO_STREAM_THROTTLE(30, "MowingBehavior: PAUSED (" << pause_reason << ")");
+        if (requested_pause_flag & pauseType::PAUSE_MOW_STALL) {
+          if (!handle_mower_stall_pause()) {
+            ros::Rate r(1.0);
+            r.sleep();
+            continue;
+          }
+        }
         ros::Rate r(1.0);
         r.sleep();
       }
@@ -309,6 +422,7 @@ bool MowingBehavior::execute_mowing_plan() {
         r.sleep();
       }
       ROS_INFO_STREAM("MowingBehavior: CONTINUING");
+      update_resume_index_for_current_pose(path.path);
       paused = false;
       update_actions();
     }
