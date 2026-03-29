@@ -592,8 +592,10 @@ namespace ftc_local_planner
             double longitudinal_lag = std::max(0.0, lon_error);
             double lag_speed = std::max(current_movement_speed, config.follow_lag_min_speed);
             double follow_lag_time = longitudinal_lag / lag_speed;
+            double follow_lag_grace_period = std::max(0.5, config.max_follow_lag_time);
 
-            if (config.max_follow_lag_time > 0.0 && follow_lag_time > config.max_follow_lag_time)
+            if (config.max_follow_lag_time > 0.0 && time_in_current_state() > follow_lag_grace_period &&
+                follow_lag_time > config.max_follow_lag_time)
             {
                 ROS_ERROR_STREAM("FTCLocalPlannerROS: Robot is lagging behind the control point. follow_lag_time (" << follow_lag_time
                                  << " s) > config.max_follow_lag_time (" << config.max_follow_lag_time
