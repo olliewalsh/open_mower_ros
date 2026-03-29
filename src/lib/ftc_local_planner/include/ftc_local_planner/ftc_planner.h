@@ -115,6 +115,8 @@ namespace ftc_local_planner
         void set_planner_state(PlannerState s);
         void update_planner_state();
         void update_actual_twist(const geometry_msgs::TwistStamped &velocity);
+        std::vector<geometry_msgs::PoseStamped> prune_initial_plan_points(
+            const std::vector<geometry_msgs::PoseStamped> &plan) const;
         double normalize_angle(double angle) const;
         bool is_cost_blocking(unsigned char cost) const;
         void append_line_samples(const geometry_msgs::Point &start, const geometry_msgs::Point &end, double resolution,

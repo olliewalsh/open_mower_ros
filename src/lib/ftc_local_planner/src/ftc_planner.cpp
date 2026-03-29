@@ -85,7 +85,7 @@ namespace ftc_local_planner
         set_planner_state(PRE_ROTATE);
         is_crashed = false;
 
-        global_plan = plan;
+        global_plan = prune_initial_plan_points(plan);
         current_index = 0;
         current_progress = 0.0;
 
@@ -112,8 +112,8 @@ namespace ftc_local_planner
             global_plan.push_back(global_plan.back());
             // give second from last point last oriantation as the point before that
             global_plan[global_plan.size() - 2].pose.orientation = global_plan[global_plan.size() - 3].pose.orientation;
-            path.header = plan.front().header;
-            path.poses = plan;
+            path.header = global_plan.front().header;
+            path.poses = global_plan;
         }
         else
         {
@@ -126,6 +126,56 @@ namespace ftc_local_planner
         ROS_INFO_STREAM("FTCLocalPlannerROS: Got new global plan with " << plan.size() << " points.");
 
         return true;
+    }
+
+    std::vector<geometry_msgs::PoseStamped> FTCPlanner::prune_initial_plan_points(
+        const std::vector<geometry_msgs::PoseStamped> &plan) const
+    {
+        if (plan.size() <= 3)
+        {
+            return plan;
+        }
+
+        std::vector<geometry_msgs::PoseStamped> pruned_plan = plan;
+
+        try
+        {
+            auto map_to_base = tf_buffer->lookupTransform("base_link", plan.front().header.frame_id, ros::Time(),
+                                                          ros::Duration(0.2));
+            size_t skip_count = 0;
+            const size_t max_skip = std::min<size_t>(5, plan.size() - 3);
+
+            while (skip_count < max_skip)
+            {
+                geometry_msgs::PoseStamped local_pose;
+                tf2::doTransform(pruned_plan[skip_count], local_pose, map_to_base);
+                double local_x = local_pose.pose.position.x;
+                double local_y = local_pose.pose.position.y;
+                double distance = std::hypot(local_x, local_y);
+                double forward_tolerance = config.initial_pose_prune_tolerance;
+                double distance_tolerance = std::max(config.initial_pose_prune_tolerance, forward_tolerance * 1.5);
+
+                if (local_x < forward_tolerance && distance < distance_tolerance)
+                {
+                    skip_count++;
+                    continue;
+                }
+                break;
+            }
+
+            if (skip_count > 0)
+            {
+                pruned_plan.erase(pruned_plan.begin(), pruned_plan.begin() + static_cast<long>(skip_count));
+                ROS_INFO_STREAM("FTCLocalPlannerROS: Skipped " << skip_count
+                                 << " initial path poses that were effectively behind/coincident with the robot.");
+            }
+        }
+        catch (const tf2::TransformException &ex)
+        {
+            ROS_WARN_STREAM("FTCLocalPlannerROS: Unable to prune initial path poses: " << ex.what());
+        }
+
+        return pruned_plan;
     }
 
     FTCPlanner::~FTCPlanner()
