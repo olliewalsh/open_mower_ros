@@ -98,6 +98,7 @@ std::vector<geometry_msgs::Point> navigation_footprint;
 ros::Time last_rain_check;
 bool rain_detected = true;
 ros::Time rain_resume;
+bool mower_overtemp_latched = false;
 
 /**
  * Some thread safe methods to get a copy of the logic state
@@ -509,9 +510,17 @@ void checkSafety(const ros::TimerEvent& timer_event) {
       currentBehavior->requestContinue(pauseType::PAUSE_EMERGENCY);
     }
 
-    const bool mower_overtemp = last_status.mower_motor_temperature >= last_config.motor_hot_temperature ||
-                                last_status.mower_esc_temperature >= last_config.mower_esc_hot_temperature;
-    if (mower_overtemp) {
+    const bool mower_overtemp_hot = last_status.mower_motor_temperature >= last_config.motor_hot_temperature ||
+                                    last_status.mower_esc_temperature >= last_config.mower_esc_hot_temperature;
+    const bool mower_overtemp_cool = last_status.mower_motor_temperature < last_config.motor_cold_temperature &&
+                                     last_status.mower_esc_temperature < last_config.mower_esc_cold_temperature;
+    if (!mower_overtemp_latched && mower_overtemp_hot) {
+      mower_overtemp_latched = true;
+    } else if (mower_overtemp_latched && mower_overtemp_cool) {
+      mower_overtemp_latched = false;
+    }
+
+    if (mower_overtemp_latched) {
       currentBehavior->requestPause(pauseType::PAUSE_OVERTEMP);
     } else {
       currentBehavior->requestContinue(pauseType::PAUSE_OVERTEMP);
