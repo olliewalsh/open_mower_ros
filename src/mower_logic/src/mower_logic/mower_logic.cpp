@@ -537,8 +537,7 @@ void checkSafety(const ros::TimerEvent& timer_event) {
         mower_enabled_since = ros::Time::now();
       } else {
         mower_rpm_low_since = ros::Time(0.0);
-        if (!mower_stall_recovery_in_progress) {
-          mower_stall_latched = false;
+        if (!mower_stall_recovery_in_progress && !mower_stall_latched) {
           currentBehavior->requestContinue(pauseType::PAUSE_MOW_STALL);
         }
       }
@@ -562,7 +561,7 @@ void checkSafety(const ros::TimerEvent& timer_event) {
       }
     } else {
       mower_rpm_low_since = ros::Time(0.0);
-      if (!last_status.mow_enabled) {
+      if (!last_status.mow_enabled && !mower_stall_recovery_in_progress && !mower_stall_latched) {
         mower_stall_latched = false;
       }
     }
