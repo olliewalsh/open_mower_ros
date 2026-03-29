@@ -427,9 +427,7 @@ MowingReentryPlanner::Plan MowingReentryPlanner::plan(
 
   result.approach_pose = best->pose;
   result.staging_pose = best->pose;
-  tf2::Quaternion staging_quat;
-  staging_quat.setRPY(0.0, 0.0, 0.0);
-  result.staging_pose.pose.orientation = tf2::toMsg(staging_quat);
+  result.staging_pose.pose.orientation = current_pose.pose.pose.orientation;
   result.lead_in_path.header = path.path.header;
   result.lead_in_path.poses.push_back(result.approach_pose);
   for (size_t i = path_index; i < path.path.poses.size() && result.lead_in_path.poses.size() < 3; ++i) {
