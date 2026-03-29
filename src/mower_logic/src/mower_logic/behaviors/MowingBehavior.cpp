@@ -56,6 +56,13 @@ std::string MowingBehavior::state_name() {
   return "MOWING";
 }
 
+std::string MowingBehavior::sub_state_name() {
+  if (sub_state == 1) {
+    return "STALL_RECOVERY";
+  }
+  return "";
+}
+
 Behavior* MowingBehavior::execute() {
   shared_state->active_semiautomatic_task = true;
 
@@ -92,6 +99,7 @@ Behavior* MowingBehavior::execute() {
 void MowingBehavior::enter() {
   skip_area = false;
   skip_path = false;
+  stallRecoveryFailed = false;
   paused = aborted = false;
 
   for (auto& a : actions) {
@@ -112,6 +120,7 @@ void MowingBehavior::reset() {
   currentMowingArea = 0;
   currentMowingPath = 0;
   currentMowingPathIndex = 0;
+  stallRecoveryFailed = false;
   // increase cumulative mowing angle offset increment
   currentMowingAngleIncrementSum = std::fmod(currentMowingAngleIncrementSum + getConfig().mow_angle_increment, 360);
   checkpoint();
@@ -281,6 +290,7 @@ bool MowingBehavior::handle_mower_stall_pause() {
         ROS_INFO_STREAM("MowingBehavior: Stall recovery succeeded at eRPM " << status.mower_motor_rpm);
         mower_stall_latched = false;
         mower_stall_recovery_in_progress = false;
+        stallRecoveryFailed = false;
         this->requestContinue(pauseType::PAUSE_MOW_STALL);
         return true;
       }
@@ -289,6 +299,7 @@ bool MowingBehavior::handle_mower_stall_pause() {
   }
 
   mower_stall_recovery_in_progress = false;
+  stallRecoveryFailed = true;
   ROS_ERROR_STREAM("MowingBehavior: Mower stall recovery failed; leaving mowing paused.");
   return false;
 }
@@ -378,10 +389,24 @@ bool MowingBehavior::execute_mowing_plan() {
   // loop through all mowingPaths to execute the plan fully.
   while (currentMowingPath < currentMowingPaths.size() && ros::ok() && !aborted) {
     auto& path = currentMowingPaths[currentMowingPath];
+    const uint8_t non_stall_pause_flags = requested_pause_flag & ~pauseType::PAUSE_MOW_STALL;
+
+    if ((requested_pause_flag & pauseType::PAUSE_MOW_STALL) && !non_stall_pause_flags && !stallRecoveryFailed) {
+      sub_state = 1;
+      mowerEnabled = false;
+      ROS_INFO_STREAM_THROTTLE(30, "MowingBehavior: MOWING (STALL_RECOVERY)");
+      if (!handle_mower_stall_pause()) {
+        paused = true;
+        update_actions();
+        continue;
+      }
+      sub_state = 0;
+    }
     ////////////////////////////////////////////////
     // PAUSE HANDLING
     ////////////////////////////////////////////////
     if (requested_pause_flag) {  // pause was requested
+      sub_state = 0;
       paused = true;
       mowerEnabled = false;
       u_int8_t last_requested_pause_flags = 0;
@@ -406,7 +431,7 @@ bool MowingBehavior::execute_mowing_plan() {
           }
         }
         if (requested_pause_flag & pauseType::PAUSE_MOW_STALL) {
-          pause_reason += "recovering from mower stall";
+          pause_reason += "waiting after mower stall";
           if (requested_pause_flag & pauseType::PAUSE_MANUAL) {
             pause_reason += " and ";
           }
@@ -415,13 +440,6 @@ bool MowingBehavior::execute_mowing_plan() {
           pause_reason += "waiting for CONTINUE";
         }
         ROS_INFO_STREAM_THROTTLE(30, "MowingBehavior: PAUSED (" << pause_reason << ")");
-        if (requested_pause_flag & pauseType::PAUSE_MOW_STALL) {
-          if (!handle_mower_stall_pause()) {
-            ros::Rate r(1.0);
-            r.sleep();
-            continue;
-          }
-        }
         ros::Rate r(1.0);
         r.sleep();
       }
@@ -439,6 +457,7 @@ bool MowingBehavior::execute_mowing_plan() {
       ROS_INFO_STREAM("MowingBehavior: CONTINUING");
       update_resume_index_for_current_pose(path.path);
       paused = false;
+      stallRecoveryFailed = false;
       update_actions();
     }
 
@@ -741,7 +760,7 @@ bool MowingBehavior::redirect_joystick() {
 }
 
 uint8_t MowingBehavior::get_sub_state() {
-  return 0;
+  return sub_state;
 }
 
 uint8_t MowingBehavior::get_state() {

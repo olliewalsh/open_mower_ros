@@ -30,6 +30,7 @@ class MowingBehavior : public Behavior {
 
   bool skip_area;
   bool skip_path;
+  bool stallRecoveryFailed = false;
   bool create_mowing_plan(int area_index);
   bool execute_mowing_plan();
   bool handle_mower_stall_pause();
@@ -54,6 +55,7 @@ class MowingBehavior : public Behavior {
   static MowingBehavior INSTANCE;
 
   std::string state_name() override;
+  std::string sub_state_name() override;
 
   Behavior* execute() override;
 
