@@ -16,6 +16,7 @@
 #define SRC_MOWINGBEHAVIOR_H
 
 #include "Behavior.h"
+#include "MowingReentryPlanner.h"
 #include "UndockingBehavior.h"
 #include "ftc_local_planner/PlannerGetProgress.h"
 #include "geometry_msgs/Polygon.h"
@@ -31,11 +32,6 @@ class MowingBehavior : public Behavior {
   bool skip_area;
   bool skip_path;
   bool create_mowing_plan(int area_index);
-  bool create_reentry_approach_pose(const slic3r_coverage_planner::Path& path, int path_index,
-                                    geometry_msgs::PoseStamped& approach_pose);
-  bool create_reentry_approach_path(const slic3r_coverage_planner::Path& path, int path_index,
-                                    nav_msgs::Path& approach_path);
-
   bool execute_mowing_plan();
 
   // Progress
@@ -51,6 +47,7 @@ class MowingBehavior : public Behavior {
   geometry_msgs::Polygon currentAreaOutline;
   std::vector<geometry_msgs::Polygon> currentAreaObstacles;
   bool pendingReentryApproach = false;
+  MowingReentryPlanner reentry_planner_;
 
  public:
   MowingBehavior();
