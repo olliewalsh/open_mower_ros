@@ -239,7 +239,12 @@ void set_limits_charge_current(SensorConfig& sensor_config) {
 }
 
 void set_limits_esc_temp(SensorConfig& sensor_config) {
-  sensor_config.si.max_value = paramNh->param(sensor_config.param_path + "/max_pcb_temp", 0);
+  if (sensor_config.param_path == "mower_xesc") {
+    sensor_config.si.max_value = mower_logic_config.mower_esc_hot_temperature;
+    sensor_config.si.min_value = mower_logic_config.mower_esc_cold_temperature;
+  } else {
+    sensor_config.si.max_value = paramNh->param(sensor_config.param_path + "/max_pcb_temp", 0);
+  }
 }
 
 void set_limits_mow_motor_current(SensorConfig& sensor_config) {
