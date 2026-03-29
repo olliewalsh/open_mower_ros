@@ -351,57 +351,70 @@ bool MowingBehavior::execute_mowing_plan() {
                                                 config.reentry_approach_distance, config.reentry_inset_distance);
       bool has_reentry_approach = config.use_reentry_approach && reentry_plan.valid;
       bool has_reentry_approach_path = has_reentry_approach;
-
-      mbf_msgs::MoveBaseGoal moveBaseGoal;
-      moveBaseGoal.target_pose =
+      geometry_msgs::PoseStamped first_point_target =
           has_reentry_approach ? reentry_plan.staging_pose : path.path.poses[currentMowingPathIndex];
-      moveBaseGoal.controller = "FTCPlanner";
-      mbfClient->sendGoal(moveBaseGoal);
 
-      actionlib::SimpleClientGoalState current_status(actionlib::SimpleClientGoalState::PENDING);
+      const auto current_pose = getPose();
+      double dx = first_point_target.pose.position.x - current_pose.pose.pose.position.x;
+      double dy = first_point_target.pose.position.y - current_pose.pose.pose.position.y;
+      bool skip_first_point_move_base = std::hypot(dx, dy) <= config.first_point_skip_distance;
+
+      actionlib::SimpleClientGoalState current_status(actionlib::SimpleClientGoalState::SUCCEEDED);
       ros::Rate r(10);
 
-      // wait for move-base approach to finish
-      while (ros::ok()) {
-        current_status = mbfClient->getState();
-        if (current_status.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
-            current_status.state_ == actionlib::SimpleClientGoalState::PENDING) {
-          // path is being executed, everything seems fine.
-          // check if we should pause or abort mowing
-          if (skip_area) {
-            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) SKIP AREA was requested.");
-            // remove all paths in current area and return true
-            mowerEnabled = false;
-            mbfClient->cancelAllGoals();
-            currentMowingPaths.clear();
-            skip_area = false;
-            return true;
+      if (!skip_first_point_move_base) {
+        mbf_msgs::MoveBaseGoal moveBaseGoal;
+        moveBaseGoal.target_pose = first_point_target;
+        moveBaseGoal.controller = "FTCPlanner";
+        mbfClient->sendGoal(moveBaseGoal);
+
+        // wait for move-base approach to finish
+        while (ros::ok()) {
+          current_status = mbfClient->getState();
+          if (current_status.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
+              current_status.state_ == actionlib::SimpleClientGoalState::PENDING) {
+            // path is being executed, everything seems fine.
+            // check if we should pause or abort mowing
+            if (skip_area) {
+              ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) SKIP AREA was requested.");
+              // remove all paths in current area and return true
+              mowerEnabled = false;
+              mbfClient->cancelAllGoals();
+              currentMowingPaths.clear();
+              skip_area = false;
+              return true;
+            }
+            if (skip_path) {
+              skip_path = false;
+              currentMowingPath++;
+              currentMowingPathIndex = 0;
+              return false;
+            }
+            if (aborted) {
+              ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) ABORT was requested - stopping path execution.");
+              mbfClient->cancelAllGoals();
+              mowerEnabled = false;
+              return false;
+            }
+            if (requested_pause_flag) {
+              ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) PAUSE was requested - stopping path execution.");
+              mbfClient->cancelAllGoals();
+              mowerEnabled = false;
+              return false;
+            }
+          } else {
+            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT)  Got status "
+                            << current_status.state_ << " from MBF/FTCPlanner -> Stopping path execution.");
+            // we're done, break out of the loop
+            break;
           }
-          if (skip_path) {
-            skip_path = false;
-            currentMowingPath++;
-            currentMowingPathIndex = 0;
-            return false;
-          }
-          if (aborted) {
-            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) ABORT was requested - stopping path execution.");
-            mbfClient->cancelAllGoals();
-            mowerEnabled = false;
-            return false;
-          }
-          if (requested_pause_flag) {
-            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) PAUSE was requested - stopping path execution.");
-            mbfClient->cancelAllGoals();
-            mowerEnabled = false;
-            return false;
-          }
-        } else {
-          ROS_INFO_STREAM("MowingBehavior: (FIRST POINT)  Got status "
-                          << current_status.state_ << " from MBF/FTCPlanner -> Stopping path execution.");
-          // we're done, break out of the loop
-          break;
+          r.sleep();
         }
-        r.sleep();
+      } else {
+        ROS_INFO_STREAM(
+            "MowingBehavior: (FIRST POINT) Skipping separate first-point MoveBase stage because target is already "
+            "within "
+            << config.first_point_skip_distance << " m.");
       }
 
       if (current_status.state_ == actionlib::SimpleClientGoalState::SUCCEEDED && has_reentry_approach_path) {
