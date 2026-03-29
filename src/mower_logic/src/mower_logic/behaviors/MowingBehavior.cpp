@@ -42,6 +42,8 @@ extern void setConfig(mower_logic::MowerLogicConfig);
 extern xbot_msgs::AbsolutePose getPose();
 extern mower_msgs::Status getStatus();
 extern bool setMowerEnabled(bool enabled);
+extern bool mower_stall_latched;
+extern bool mower_stall_recovery_in_progress;
 
 extern void registerActions(std::string prefix, const std::vector<xbot_msgs::ActionInfo>& actions);
 
@@ -251,12 +253,21 @@ bool MowingBehavior::handle_mower_stall_pause() {
     return false;
   }
 
+  int currentIndex = getCurrentMowPathIndex();
+  if (currentIndex >= 0) {
+    currentMowingPathIndex = currentIndex;
+  }
+  mowerEnabled = false;
+  mbfClientExePath->cancelAllGoals();
+  mower_stall_recovery_in_progress = true;
+
   for (int attempt = 1; attempt <= cfg.mower_stall_max_restart_attempts && !aborted; ++attempt) {
     ROS_WARN_STREAM("MowingBehavior: Stall recovery attempt " << attempt << " / "
                                                               << cfg.mower_stall_max_restart_attempts);
     setMowerEnabled(false);
     ros::Duration(cfg.mower_stall_restart_delay).sleep();
     if (aborted) {
+      mower_stall_recovery_in_progress = false;
       return false;
     }
 
@@ -268,6 +279,8 @@ bool MowingBehavior::handle_mower_stall_pause() {
       auto status = getStatus();
       if (status.mow_enabled && status.mower_motor_rpm >= cfg.mower_restart_rpm) {
         ROS_INFO_STREAM("MowingBehavior: Stall recovery succeeded at eRPM " << status.mower_motor_rpm);
+        mower_stall_latched = false;
+        mower_stall_recovery_in_progress = false;
         this->requestContinue(pauseType::PAUSE_MOW_STALL);
         return true;
       }
@@ -275,6 +288,7 @@ bool MowingBehavior::handle_mower_stall_pause() {
     }
   }
 
+  mower_stall_recovery_in_progress = false;
   ROS_ERROR_STREAM("MowingBehavior: Mower stall recovery failed; leaving mowing paused.");
   return false;
 }

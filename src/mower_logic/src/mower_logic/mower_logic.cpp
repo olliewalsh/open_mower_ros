@@ -103,6 +103,7 @@ ros::Time mower_rpm_low_since(0.0);
 ros::Time mower_enabled_since(0.0);
 bool mower_stall_latched = false;
 bool last_mow_enabled_state = false;
+bool mower_stall_recovery_in_progress = false;
 
 /**
  * Some thread safe methods to get a copy of the logic state
@@ -536,8 +537,10 @@ void checkSafety(const ros::TimerEvent& timer_event) {
         mower_enabled_since = ros::Time::now();
       } else {
         mower_rpm_low_since = ros::Time(0.0);
-        mower_stall_latched = false;
-        currentBehavior->requestContinue(pauseType::PAUSE_MOW_STALL);
+        if (!mower_stall_recovery_in_progress) {
+          mower_stall_latched = false;
+          currentBehavior->requestContinue(pauseType::PAUSE_MOW_STALL);
+        }
       }
     }
 
