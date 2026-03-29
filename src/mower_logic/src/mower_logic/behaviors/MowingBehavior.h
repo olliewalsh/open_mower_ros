@@ -16,7 +16,6 @@
 #define SRC_MOWINGBEHAVIOR_H
 
 #include "Behavior.h"
-#include "MowingReentryPlanner.h"
 #include "UndockingBehavior.h"
 #include "ftc_local_planner/PlannerGetProgress.h"
 #include "geometry_msgs/Polygon.h"
@@ -46,7 +45,6 @@ class MowingBehavior : public Behavior {
   double currentMowingAngleIncrementSum;
   geometry_msgs::Polygon currentAreaOutline;
   std::vector<geometry_msgs::Polygon> currentAreaObstacles;
-  MowingReentryPlanner reentry_planner_;
 
  public:
   MowingBehavior();

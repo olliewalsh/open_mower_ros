@@ -138,43 +138,6 @@ namespace ftc_local_planner
 
         std::vector<geometry_msgs::PoseStamped> pruned_plan = plan;
 
-        try
-        {
-            auto map_to_base = tf_buffer->lookupTransform("base_link", plan.front().header.frame_id, ros::Time(),
-                                                          ros::Duration(0.2));
-            size_t skip_count = 0;
-            const size_t max_skip = std::min<size_t>(5, plan.size() - 3);
-
-            while (skip_count < max_skip)
-            {
-                geometry_msgs::PoseStamped local_pose;
-                tf2::doTransform(pruned_plan[skip_count], local_pose, map_to_base);
-                double local_x = local_pose.pose.position.x;
-                double local_y = local_pose.pose.position.y;
-                double distance = std::hypot(local_x, local_y);
-                double forward_tolerance = config.initial_pose_prune_tolerance;
-                double distance_tolerance = std::max(config.initial_pose_prune_tolerance, forward_tolerance * 1.5);
-
-                if (local_x < forward_tolerance && distance < distance_tolerance)
-                {
-                    skip_count++;
-                    continue;
-                }
-                break;
-            }
-
-            if (skip_count > 0)
-            {
-                pruned_plan.erase(pruned_plan.begin(), pruned_plan.begin() + static_cast<long>(skip_count));
-                ROS_INFO_STREAM("FTCLocalPlannerROS: Skipped " << skip_count
-                                 << " initial path poses that were effectively behind/coincident with the robot.");
-            }
-        }
-        catch (const tf2::TransformException &ex)
-        {
-            ROS_WARN_STREAM("FTCLocalPlannerROS: Unable to prune initial path poses: " << ex.what());
-        }
-
         return pruned_plan;
     }
 
@@ -592,9 +555,7 @@ namespace ftc_local_planner
             double longitudinal_lag = std::max(0.0, lon_error);
             double lag_speed = std::max(current_movement_speed, config.follow_lag_min_speed);
             double follow_lag_time = longitudinal_lag / lag_speed;
-            double follow_lag_grace_period = std::max(0.5, config.max_follow_lag_time);
-
-            if (config.max_follow_lag_time > 0.0 && time_in_current_state() > follow_lag_grace_period &&
+            if (config.max_follow_lag_time > 0.0 &&
                 follow_lag_time > config.max_follow_lag_time)
             {
                 ROS_ERROR_STREAM("FTCLocalPlannerROS: Robot is lagging behind the control point. follow_lag_time (" << follow_lag_time

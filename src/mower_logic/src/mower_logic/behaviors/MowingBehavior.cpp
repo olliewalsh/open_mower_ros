@@ -39,11 +39,6 @@ extern actionlib::SimpleActionClient<mbf_msgs::ExePathAction>* mbfClientExePath;
 extern mower_logic::MowerLogicConfig getConfig();
 extern void setConfig(mower_logic::MowerLogicConfig);
 extern xbot_msgs::AbsolutePose getPose();
-extern nav_msgs::OccupancyGrid getLocalCostmap();
-extern bool hasLocalCostmap();
-extern nav_msgs::OccupancyGrid getGlobalCostmap();
-extern bool hasGlobalCostmap();
-extern std::vector<geometry_msgs::Point> getNavigationFootprint();
 
 extern void registerActions(std::string prefix, const std::vector<xbot_msgs::ActionInfo>& actions);
 
@@ -345,16 +340,8 @@ bool MowingBehavior::execute_mowing_plan() {
         sleep(1);
       }
 
-      auto reentry_plan = reentry_planner_.plan(path, currentMowingPathIndex, currentAreaOutline, currentAreaObstacles,
-                                                getPose(), getLocalCostmap(), hasLocalCostmap(), getGlobalCostmap(),
-                                                hasGlobalCostmap(), getNavigationFootprint(),
-                                                config.reentry_approach_distance, config.reentry_inset_distance);
-      bool has_reentry_approach = config.use_reentry_approach && reentry_plan.valid;
-      bool has_reentry_approach_path = has_reentry_approach;
-      geometry_msgs::PoseStamped first_point_target =
-          has_reentry_approach ? reentry_plan.staging_pose : path.path.poses[currentMowingPathIndex];
-
       const auto current_pose = getPose();
+      const auto& first_point_target = path.path.poses[currentMowingPathIndex];
       double dx = first_point_target.pose.position.x - current_pose.pose.pose.position.x;
       double dy = first_point_target.pose.position.y - current_pose.pose.pose.position.y;
       bool skip_first_point_move_base = std::hypot(dx, dy) <= config.first_point_skip_distance;
@@ -365,7 +352,7 @@ bool MowingBehavior::execute_mowing_plan() {
       if (!skip_first_point_move_base) {
         mbf_msgs::MoveBaseGoal moveBaseGoal;
         moveBaseGoal.target_pose = first_point_target;
-        moveBaseGoal.controller = "FTCPlanner";
+        moveBaseGoal.controller = "TEBPlanner";
         mbfClient->sendGoal(moveBaseGoal);
 
         // wait for move-base approach to finish
@@ -404,7 +391,7 @@ bool MowingBehavior::execute_mowing_plan() {
             }
           } else {
             ROS_INFO_STREAM("MowingBehavior: (FIRST POINT)  Got status "
-                            << current_status.state_ << " from MBF/FTCPlanner -> Stopping path execution.");
+                            << current_status.state_ << " from MBF/TEBPlanner -> Stopping path execution.");
             // we're done, break out of the loop
             break;
           }
@@ -415,54 +402,6 @@ bool MowingBehavior::execute_mowing_plan() {
             "MowingBehavior: (FIRST POINT) Skipping separate first-point MoveBase stage because target is already "
             "within "
             << config.first_point_skip_distance << " m.");
-      }
-
-      if (current_status.state_ == actionlib::SimpleClientGoalState::SUCCEEDED && has_reentry_approach_path) {
-        mbf_msgs::ExePathGoal approachGoal;
-        approachGoal.path = reentry_plan.lead_in_path;
-        approachGoal.angle_tolerance = 5.0 * (M_PI / 180.0);
-        approachGoal.dist_tolerance = 0.2;
-        approachGoal.tolerance_from_action = true;
-        approachGoal.controller = "FTCPlanner";
-        mbfClientExePath->sendGoal(approachGoal);
-
-        while (ros::ok()) {
-          current_status = mbfClientExePath->getState();
-          if (current_status.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
-              current_status.state_ == actionlib::SimpleClientGoalState::PENDING) {
-            if (skip_area) {
-              ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) SKIP AREA was requested.");
-              mowerEnabled = false;
-              mbfClientExePath->cancelAllGoals();
-              currentMowingPaths.clear();
-              skip_area = false;
-              return true;
-            }
-            if (skip_path) {
-              skip_path = false;
-              currentMowingPath++;
-              currentMowingPathIndex = 0;
-              return false;
-            }
-            if (aborted) {
-              ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) ABORT was requested - stopping path execution.");
-              mbfClientExePath->cancelAllGoals();
-              mowerEnabled = false;
-              return false;
-            }
-            if (requested_pause_flag) {
-              ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) PAUSE was requested - stopping path execution.");
-              mbfClientExePath->cancelAllGoals();
-              mowerEnabled = false;
-              return false;
-            }
-          } else {
-            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT)  Got status "
-                            << current_status.state_ << " from MBF/FTCPlanner -> Stopping path execution.");
-            break;
-          }
-          r.sleep();
-        }
       }
 
       first_point_attempt_counter++;

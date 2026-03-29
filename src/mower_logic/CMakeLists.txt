@@ -178,8 +178,6 @@ add_executable(mower_logic
         src/mower_logic/behaviors/IdleBehavior.cpp
         src/mower_logic/behaviors/MowingBehavior.h
         src/mower_logic/behaviors/MowingBehavior.cpp
-        src/mower_logic/behaviors/MowingReentryPlanner.h
-        src/mower_logic/behaviors/MowingReentryPlanner.cpp
         src/mower_logic/behaviors/PerimeterDocking.h
         src/mower_logic/behaviors/PerimeterDocking.cpp
         src/mower_logic/behaviors/AreaRecordingBehavior.h

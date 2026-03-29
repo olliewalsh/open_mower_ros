@@ -5,11 +5,13 @@ planners:
 controllers:
   - name: FTCPlanner
     type: ftc_local_planner/FTCPlanner
+  - name: TEBPlanner
+    type: teb_local_planner/TebLocalPlannerROS
   - name: DockingFTCPlanner
     type: ftc_local_planner/FTCPlanner
 
 
-controller_frequency: 1.0
+controller_frequency: 5.0
 controller_patience: 30.0
 
 planner_frequency: 1.0

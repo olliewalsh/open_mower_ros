@@ -31,7 +31,6 @@ FTCPlanner:
   max_cmd_vel_speed: 0.5
   max_cmd_vel_acceleration: 0.15
   max_follow_distance: 0.35
-  initial_pose_prune_tolerance: 0.05
   max_follow_lag_time: 0.7
   follow_lag_min_speed: 0.05
   max_angular_lag_time: 2.0
