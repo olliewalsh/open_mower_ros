@@ -46,7 +46,6 @@ class MowingBehavior : public Behavior {
   double currentMowingAngleIncrementSum;
   geometry_msgs::Polygon currentAreaOutline;
   std::vector<geometry_msgs::Polygon> currentAreaObstacles;
-  bool pendingReentryApproach = false;
   MowingReentryPlanner reentry_planner_;
 
  public:

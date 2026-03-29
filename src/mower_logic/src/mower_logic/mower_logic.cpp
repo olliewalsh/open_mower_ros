@@ -21,6 +21,7 @@
 #include <mower_msgs/ESCStatus.h>
 #include <mower_msgs/Emergency.h>
 #include <mower_msgs/Power.h>
+#include <nav_msgs/OccupancyGrid.h>
 #include <tf2/LinearMath/Transform.h>
 
 #include <atomic>
@@ -75,6 +76,8 @@ StateSubscriber<mower_msgs::Power> power_state_subscriber{"/ll/power"};
 StateSubscriber<mower_msgs::ESCStatus> left_esc_status_state_subscriber{"/ll/diff_drive/left_esc_status"};
 StateSubscriber<mower_msgs::ESCStatus> right_esc_status_state_subscriber{"/ll/diff_drive/right_esc_status"};
 StateSubscriber<xbot_msgs::AbsolutePose> pose_state_subscriber{"/xbot_positioning/xb_pose"};
+StateSubscriber<nav_msgs::OccupancyGrid> local_costmap_state_subscriber{"/move_base_flex/local_costmap/costmap"};
+StateSubscriber<nav_msgs::OccupancyGrid> global_costmap_state_subscriber{"/move_base_flex/global_costmap/costmap"};
 ros::Time joy_vel_time(0.0);
 
 ros::Time last_good_gps(0.0);
@@ -90,6 +93,7 @@ Behavior* currentBehavior = &IdleBehavior::INSTANCE;
 std::vector<xbot_msgs::ActionInfo> rootActions;
 ros::Time last_v_battery_check;
 double max_v_battery_seen = 0.0;
+std::vector<geometry_msgs::Point> navigation_footprint;
 
 ros::Time last_rain_check;
 bool rain_detected = true;
@@ -124,6 +128,76 @@ void setConfig(mower_logic::MowerLogicConfig c) {
   reconfigServer->updateConfig(c);
 }
 
+bool loadNavigationFootprint(ros::NodeHandle* nh, std::vector<geometry_msgs::Point>& footprint) {
+  footprint.clear();
+
+  auto xmlRpcToDouble = [](XmlRpc::XmlRpcValue& value, double& out) {
+    if (value.getType() == XmlRpc::XmlRpcValue::TypeDouble) {
+      out = static_cast<double>(value);
+      return true;
+    }
+    if (value.getType() == XmlRpc::XmlRpcValue::TypeInt) {
+      out = static_cast<int>(value);
+      return true;
+    }
+    return false;
+  };
+
+  XmlRpc::XmlRpcValue footprint_param;
+  const std::vector<std::string> footprint_params = {
+      "/move_base_flex/local_costmap/footprint", "/local_costmap/footprint", "/move_base_flex/global_costmap/footprint",
+      "/global_costmap/footprint"};
+  for (const auto& param_name : footprint_params) {
+    if (!nh->getParam(param_name, footprint_param)) {
+      continue;
+    }
+    if (footprint_param.getType() != XmlRpc::XmlRpcValue::TypeArray) {
+      continue;
+    }
+    for (int i = 0; i < footprint_param.size(); ++i) {
+      if (footprint_param[i].getType() != XmlRpc::XmlRpcValue::TypeArray || footprint_param[i].size() != 2) {
+        footprint.clear();
+        break;
+      }
+      double x = 0.0;
+      double y = 0.0;
+      if (!xmlRpcToDouble(footprint_param[i][0], x) || !xmlRpcToDouble(footprint_param[i][1], y)) {
+        footprint.clear();
+        break;
+      }
+      geometry_msgs::Point point;
+      point.x = x;
+      point.y = y;
+      point.z = 0.0;
+      footprint.push_back(point);
+    }
+    if (!footprint.empty()) {
+      return true;
+    }
+  }
+
+  double robot_radius = 0.0;
+  const std::vector<std::string> radius_params = {
+      "/move_base_flex/local_costmap/robot_radius", "/local_costmap/robot_radius",
+      "/move_base_flex/global_costmap/robot_radius", "/global_costmap/robot_radius"};
+  for (const auto& param_name : radius_params) {
+    if (nh->getParam(param_name, robot_radius) && robot_radius > 0.0) {
+      constexpr int kSamples = 16;
+      for (int i = 0; i < kSamples; ++i) {
+        double angle = (2.0 * M_PI * static_cast<double>(i)) / static_cast<double>(kSamples);
+        geometry_msgs::Point point;
+        point.x = robot_radius * std::cos(angle);
+        point.y = robot_radius * std::sin(angle);
+        point.z = 0.0;
+        footprint.push_back(point);
+      }
+      return true;
+    }
+  }
+
+  return false;
+}
+
 mower_msgs::Status getStatus() {
   return status_state_subscriber.getMessage();
 }
@@ -134,6 +208,27 @@ mower_msgs::Power getPower() {
 
 xbot_msgs::AbsolutePose getPose() {
   return pose_state_subscriber.getMessage();
+}
+
+nav_msgs::OccupancyGrid getLocalCostmap() {
+  return local_costmap_state_subscriber.getMessage();
+}
+
+bool hasLocalCostmap() {
+  return local_costmap_state_subscriber.hasMessage();
+}
+
+nav_msgs::OccupancyGrid getGlobalCostmap() {
+  return global_costmap_state_subscriber.getMessage();
+}
+
+bool hasGlobalCostmap() {
+  return global_costmap_state_subscriber.hasMessage();
+}
+
+std::vector<geometry_msgs::Point> getNavigationFootprint() {
+  std::lock_guard<std::recursive_mutex> lk{mower_logic_mutex};
+  return navigation_footprint;
 }
 
 void setEmergencyMode(bool emergency);
@@ -695,6 +790,14 @@ int main(int argc, char** argv) {
   left_esc_status_state_subscriber.Start(n);
   right_esc_status_state_subscriber.Start(n);
   pose_state_subscriber.Start(n);
+  local_costmap_state_subscriber.Start(n);
+  global_costmap_state_subscriber.Start(n);
+
+  if (loadNavigationFootprint(n, navigation_footprint)) {
+    ROS_INFO_STREAM("Loaded navigation footprint with " << navigation_footprint.size() << " points.");
+  } else {
+    ROS_WARN_STREAM("No navigation footprint configured. First-pose lead-in planning will use a point footprint.");
+  }
 
   ros::Subscriber joy_cmd = n->subscribe("/joy_vel", 0, joyVelReceived, ros::TransportHints().tcpNoDelay(true));
   ros::Subscriber action = n->subscribe("xbot/action", 0, actionReceived, ros::TransportHints().tcpNoDelay(true));

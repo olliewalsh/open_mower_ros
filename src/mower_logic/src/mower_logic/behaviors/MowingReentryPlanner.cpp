@@ -121,17 +121,223 @@ double MowingReentryPlanner::computeSegmentClearance(const geometry_msgs::Point&
   return min_clearance;
 }
 
-MowingReentryPlanner::Plan MowingReentryPlanner::plan(const slic3r_coverage_planner::Path& path, int path_index,
-                                                      const geometry_msgs::Polygon& area_outline,
-                                                      const std::vector<geometry_msgs::Polygon>& area_obstacles,
-                                                      const xbot_msgs::AbsolutePose& current_pose,
-                                                      double approach_distance, double inset_distance) const {
+bool MowingReentryPlanner::worldToMap(const nav_msgs::OccupancyGrid& grid, const geometry_msgs::Point& point, int& mx,
+                                      int& my) {
+  double origin_x = grid.info.origin.position.x;
+  double origin_y = grid.info.origin.position.y;
+  double resolution = grid.info.resolution;
+  if (resolution <= 0.0) {
+    return false;
+  }
+
+  double local_x = point.x - origin_x;
+  double local_y = point.y - origin_y;
+  if (local_x < 0.0 || local_y < 0.0) {
+    return false;
+  }
+
+  mx = static_cast<int>(std::floor(local_x / resolution));
+  my = static_cast<int>(std::floor(local_y / resolution));
+  return mx >= 0 && my >= 0 && mx < static_cast<int>(grid.info.width) && my < static_cast<int>(grid.info.height);
+}
+
+bool MowingReentryPlanner::isBlockingCost(int8_t cost) {
+  return cost >= 50;
+}
+
+const nav_msgs::OccupancyGrid* MowingReentryPlanner::getCostmapForPoint(const geometry_msgs::Point& point,
+                                                                        const nav_msgs::OccupancyGrid& local_costmap,
+                                                                        bool has_local_costmap,
+                                                                        const nav_msgs::OccupancyGrid& global_costmap,
+                                                                        bool has_global_costmap) {
+  int mx;
+  int my;
+  if (has_local_costmap && worldToMap(local_costmap, point, mx, my)) {
+    return &local_costmap;
+  }
+  if (has_global_costmap && worldToMap(global_costmap, point, mx, my)) {
+    return &global_costmap;
+  }
+  return nullptr;
+}
+
+std::vector<geometry_msgs::Point> MowingReentryPlanner::transformFootprint(
+    const geometry_msgs::PoseStamped& pose, const std::vector<geometry_msgs::Point>& footprint) {
+  std::vector<geometry_msgs::Point> points;
+  if (footprint.empty()) {
+    points.push_back(pose.pose.position);
+    return points;
+  }
+
+  tf2::Quaternion quat;
+  tf2::fromMsg(pose.pose.orientation, quat);
+  double roll;
+  double pitch;
+  double yaw;
+  tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
+  double cos_yaw = std::cos(yaw);
+  double sin_yaw = std::sin(yaw);
+
+  points.reserve(footprint.size());
+  for (const auto& fp : footprint) {
+    geometry_msgs::Point world;
+    world.x = pose.pose.position.x + fp.x * cos_yaw - fp.y * sin_yaw;
+    world.y = pose.pose.position.y + fp.x * sin_yaw + fp.y * cos_yaw;
+    points.push_back(world);
+  }
+  return points;
+}
+
+std::vector<geometry_msgs::Point> MowingReentryPlanner::sampleFootprint(
+    const geometry_msgs::PoseStamped& pose, const std::vector<geometry_msgs::Point>& footprint) {
+  std::vector<geometry_msgs::Point> vertices = transformFootprint(pose, footprint);
+  if (vertices.empty()) {
+    vertices.push_back(pose.pose.position);
+    return vertices;
+  }
+
+  std::vector<geometry_msgs::Point> samples = vertices;
+  if (vertices.size() > 1) {
+    for (size_t i = 0; i < vertices.size(); ++i) {
+      const auto& start = vertices[i];
+      const auto& end = vertices[(i + 1) % vertices.size()];
+      double dx = end.x - start.x;
+      double dy = end.y - start.y;
+      double length = std::hypot(dx, dy);
+      int edge_samples = std::max(1, static_cast<int>(std::ceil(length / 0.05)));
+      for (int j = 1; j < edge_samples; ++j) {
+        double t = static_cast<double>(j) / static_cast<double>(edge_samples);
+        geometry_msgs::Point sample;
+        sample.x = start.x + dx * t;
+        sample.y = start.y + dy * t;
+        samples.push_back(sample);
+      }
+    }
+  }
+  samples.push_back(pose.pose.position);
+  return samples;
+}
+
+double MowingReentryPlanner::distanceToCostmapObstacle(const geometry_msgs::Point& point,
+                                                       const nav_msgs::OccupancyGrid& grid, double max_distance) {
+  int mx;
+  int my;
+  if (!worldToMap(grid, point, mx, my)) {
+    return 0.0;
+  }
+
+  int index = my * static_cast<int>(grid.info.width) + mx;
+  if (index < 0 || index >= static_cast<int>(grid.data.size())) {
+    return 0.0;
+  }
+  if (isBlockingCost(grid.data[index])) {
+    return 0.0;
+  }
+
+  int max_radius_cells = std::max(1, static_cast<int>(std::ceil(max_distance / grid.info.resolution)));
+  double min_distance = max_distance;
+  for (int dy = -max_radius_cells; dy <= max_radius_cells; ++dy) {
+    for (int dx = -max_radius_cells; dx <= max_radius_cells; ++dx) {
+      int cx = mx + dx;
+      int cy = my + dy;
+      if (cx < 0 || cy < 0 || cx >= static_cast<int>(grid.info.width) || cy >= static_cast<int>(grid.info.height)) {
+        continue;
+      }
+      int cell_index = cy * static_cast<int>(grid.info.width) + cx;
+      if (!isBlockingCost(grid.data[cell_index])) {
+        continue;
+      }
+      double distance = std::hypot(dx * grid.info.resolution, dy * grid.info.resolution);
+      min_distance = std::min(min_distance, distance);
+    }
+  }
+  return min_distance;
+}
+
+bool MowingReentryPlanner::isPoseFootprintClear(const geometry_msgs::PoseStamped& pose,
+                                                const geometry_msgs::Polygon& area,
+                                                const std::vector<geometry_msgs::Polygon>& obstacles,
+                                                const nav_msgs::OccupancyGrid& local_costmap, bool has_local_costmap,
+                                                const nav_msgs::OccupancyGrid& global_costmap, bool has_global_costmap,
+                                                const std::vector<geometry_msgs::Point>& footprint) {
+  for (const auto& sample : sampleFootprint(pose, footprint)) {
+    if (!isPointInFreeMowingSpace(sample, area, obstacles)) {
+      return false;
+    }
+    const nav_msgs::OccupancyGrid* grid =
+        getCostmapForPoint(sample, local_costmap, has_local_costmap, global_costmap, has_global_costmap);
+    if (grid != nullptr) {
+      int mx;
+      int my;
+      if (!worldToMap(*grid, sample, mx, my)) {
+        return false;
+      }
+      int idx = my * static_cast<int>(grid->info.width) + mx;
+      if (isBlockingCost(grid->data[idx])) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+double MowingReentryPlanner::computePoseClearance(const geometry_msgs::PoseStamped& pose,
+                                                  const geometry_msgs::Polygon& area,
+                                                  const std::vector<geometry_msgs::Polygon>& obstacles,
+                                                  const nav_msgs::OccupancyGrid& local_costmap, bool has_local_costmap,
+                                                  const nav_msgs::OccupancyGrid& global_costmap,
+                                                  bool has_global_costmap,
+                                                  const std::vector<geometry_msgs::Point>& footprint) {
+  double min_clearance = std::numeric_limits<double>::infinity();
+  for (const auto& sample : sampleFootprint(pose, footprint)) {
+    if (!isPointInFreeMowingSpace(sample, area, obstacles)) {
+      return 0.0;
+    }
+    min_clearance = std::min(min_clearance, distanceToPolygonEdges(sample, area));
+    for (const auto& obstacle : obstacles) {
+      min_clearance = std::min(min_clearance, distanceToPolygonEdges(sample, obstacle));
+    }
+    const nav_msgs::OccupancyGrid* grid =
+        getCostmapForPoint(sample, local_costmap, has_local_costmap, global_costmap, has_global_costmap);
+    if (grid != nullptr) {
+      min_clearance = std::min(min_clearance, distanceToCostmapObstacle(sample, *grid, 0.6));
+    }
+  }
+  return min_clearance;
+}
+
+bool MowingReentryPlanner::isLeadInNeeded(const geometry_msgs::PoseStamped& target_pose,
+                                          const geometry_msgs::Polygon& area,
+                                          const std::vector<geometry_msgs::Polygon>& obstacles,
+                                          const nav_msgs::OccupancyGrid& local_costmap, bool has_local_costmap,
+                                          const nav_msgs::OccupancyGrid& global_costmap, bool has_global_costmap,
+                                          const std::vector<geometry_msgs::Point>& footprint,
+                                          double clearance_threshold) {
+  if (!isPoseFootprintClear(target_pose, area, obstacles, local_costmap, has_local_costmap, global_costmap,
+                            has_global_costmap, footprint)) {
+    return true;
+  }
+  return computePoseClearance(target_pose, area, obstacles, local_costmap, has_local_costmap, global_costmap,
+                              has_global_costmap, footprint) < clearance_threshold;
+}
+
+MowingReentryPlanner::Plan MowingReentryPlanner::plan(
+    const slic3r_coverage_planner::Path& path, int path_index, const geometry_msgs::Polygon& area_outline,
+    const std::vector<geometry_msgs::Polygon>& area_obstacles, const xbot_msgs::AbsolutePose& current_pose,
+    const nav_msgs::OccupancyGrid& local_costmap, bool has_local_costmap, const nav_msgs::OccupancyGrid& global_costmap,
+    bool has_global_costmap, const std::vector<geometry_msgs::Point>& footprint, double approach_distance,
+    double inset_distance) const {
   Plan result;
   if (path_index < 0 || path_index >= path.path.poses.size() || approach_distance <= 0.0) {
     return result;
   }
 
   const auto& reentry_pose = path.path.poses[path_index];
+  if (!isLeadInNeeded(reentry_pose, area_outline, area_obstacles, local_costmap, has_local_costmap, global_costmap,
+                      has_global_costmap, footprint, std::max(0.15, inset_distance * 0.6))) {
+    return result;
+  }
+
   tf2::Quaternion reentry_quat;
   tf2::fromMsg(reentry_pose.pose.orientation, reentry_quat);
   double unused_roll;
@@ -147,28 +353,64 @@ MowingReentryPlanner::Plan MowingReentryPlanner::plan(const slic3r_coverage_plan
 
   struct Candidate {
     geometry_msgs::PoseStamped pose;
-    double min_clearance = 0.0;
+    double score = 0.0;
     double distance_to_robot = std::numeric_limits<double>::infinity();
   };
   std::vector<Candidate> valid_candidates;
 
-  for (double side_sign : {1.0, -1.0}) {
-    geometry_msgs::PoseStamped candidate = reentry_pose;
-    candidate.pose.position.x -= tangent_x * approach_distance;
-    candidate.pose.position.y -= tangent_y * approach_distance;
-    candidate.pose.position.x += normal_x * side_sign * inset_distance;
-    candidate.pose.position.y += normal_y * side_sign * inset_distance;
+  double distance_step = 0.1;
+  double max_search_distance = std::max(approach_distance + 0.3, 0.4);
+  double lateral_step = 0.1;
+  int lateral_count = std::max(1, static_cast<int>(std::ceil(std::max(inset_distance, 0.1) / lateral_step)));
 
-    if (!isSegmentInFreeMowingSpace(candidate.pose.position, reentry_pose.pose.position, area_outline,
-                                    area_obstacles)) {
-      continue;
+  for (double distance = distance_step; distance <= max_search_distance + 1e-6; distance += distance_step) {
+    for (int lateral_index = -lateral_count; lateral_index <= lateral_count; ++lateral_index) {
+      double lateral_offset = lateral_index * lateral_step;
+      if (std::abs(lateral_offset) > inset_distance + 0.15) {
+        continue;
+      }
+
+      geometry_msgs::PoseStamped candidate = reentry_pose;
+      candidate.pose.position.x -= tangent_x * distance;
+      candidate.pose.position.y -= tangent_y * distance;
+      candidate.pose.position.x += normal_x * lateral_offset;
+      candidate.pose.position.y += normal_y * lateral_offset;
+
+      if (!isPoseFootprintClear(candidate, area_outline, area_obstacles, local_costmap, has_local_costmap,
+                                global_costmap, has_global_costmap, footprint)) {
+        continue;
+      }
+
+      bool segment_clear = true;
+      double min_segment_clearance = std::numeric_limits<double>::infinity();
+      int segment_samples = std::max(2, static_cast<int>(std::ceil(distance / 0.05)) + 1);
+      for (int i = 0; i < segment_samples; ++i) {
+        double t = static_cast<double>(i) / static_cast<double>(segment_samples - 1);
+        geometry_msgs::PoseStamped sample_pose = reentry_pose;
+        sample_pose.pose.position.x =
+            candidate.pose.position.x + (reentry_pose.pose.position.x - candidate.pose.position.x) * t;
+        sample_pose.pose.position.y =
+            candidate.pose.position.y + (reentry_pose.pose.position.y - candidate.pose.position.y) * t;
+        if (!isPoseFootprintClear(sample_pose, area_outline, area_obstacles, local_costmap, has_local_costmap,
+                                  global_costmap, has_global_costmap, footprint)) {
+          segment_clear = false;
+          break;
+        }
+        min_segment_clearance =
+            std::min(min_segment_clearance,
+                     computePoseClearance(sample_pose, area_outline, area_obstacles, local_costmap, has_local_costmap,
+                                          global_costmap, has_global_costmap, footprint));
+      }
+      if (!segment_clear) {
+        continue;
+      }
+
+      double dx = candidate.pose.position.x - robot_point.x;
+      double dy = candidate.pose.position.y - robot_point.y;
+      double distance_to_robot = std::hypot(dx, dy);
+      double score = min_segment_clearance + 0.2 * distance;
+      valid_candidates.push_back({candidate, score, distance_to_robot});
     }
-
-    double dx = candidate.pose.position.x - robot_point.x;
-    double dy = candidate.pose.position.y - robot_point.y;
-    double min_clearance =
-        computeSegmentClearance(candidate.pose.position, reentry_pose.pose.position, area_outline, area_obstacles);
-    valid_candidates.push_back({candidate, min_clearance, std::hypot(dx, dy)});
   }
 
   if (valid_candidates.empty()) {
@@ -177,8 +419,8 @@ MowingReentryPlanner::Plan MowingReentryPlanner::plan(const slic3r_coverage_plan
 
   auto best =
       std::min_element(valid_candidates.begin(), valid_candidates.end(), [](const Candidate& a, const Candidate& b) {
-        if (std::abs(a.min_clearance - b.min_clearance) > 1e-3) {
-          return a.min_clearance > b.min_clearance;
+        if (std::abs(a.score - b.score) > 1e-3) {
+          return a.score > b.score;
         }
         return a.distance_to_robot < b.distance_to_robot;
       });

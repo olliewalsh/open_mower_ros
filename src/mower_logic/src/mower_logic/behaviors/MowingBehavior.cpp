@@ -39,6 +39,11 @@ extern actionlib::SimpleActionClient<mbf_msgs::ExePathAction>* mbfClientExePath;
 extern mower_logic::MowerLogicConfig getConfig();
 extern void setConfig(mower_logic::MowerLogicConfig);
 extern xbot_msgs::AbsolutePose getPose();
+extern nav_msgs::OccupancyGrid getLocalCostmap();
+extern bool hasLocalCostmap();
+extern nav_msgs::OccupancyGrid getGlobalCostmap();
+extern bool hasGlobalCostmap();
+extern std::vector<geometry_msgs::Point> getNavigationFootprint();
 
 extern void registerActions(std::string prefix, const std::vector<xbot_msgs::ActionInfo>& actions);
 
@@ -141,7 +146,6 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
   ROS_INFO_STREAM("MowingBehavior: Creating mowing plan for area: " << area_index);
   // Delete old plan and progress.
   currentMowingPaths.clear();
-  pendingReentryApproach = false;
 
   // get the mowing area
   mower_map::GetMowingAreaSrv mapSrv;
@@ -220,7 +224,6 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
   if (mowingPlanDigest == currentMowingPlanDigest) {
     ROS_INFO_STREAM("MowingBehavior: Advancing to checkpoint, path: " << currentMowingPath
                                                                       << " index: " << currentMowingPathIndex);
-    pendingReentryApproach = currentMowingPathIndex > 0;
   } else {
     ROS_INFO_STREAM("MowingBehavior: Ignoring checkpoint for plan ("
                     << currentMowingPlanDigest << ") current mowing plan is (" << mowingPlanDigest << ")");
@@ -342,10 +345,11 @@ bool MowingBehavior::execute_mowing_plan() {
         sleep(1);
       }
 
-      auto reentry_plan =
-          reentry_planner_.plan(path, currentMowingPathIndex, currentAreaOutline, currentAreaObstacles, getPose(),
-                                config.reentry_approach_distance, config.reentry_inset_distance);
-      bool has_reentry_approach = pendingReentryApproach && currentMowingPathIndex > 0 && reentry_plan.valid;
+      auto reentry_plan = reentry_planner_.plan(path, currentMowingPathIndex, currentAreaOutline, currentAreaObstacles,
+                                                getPose(), getLocalCostmap(), hasLocalCostmap(), getGlobalCostmap(),
+                                                hasGlobalCostmap(), getNavigationFootprint(),
+                                                config.reentry_approach_distance, config.reentry_inset_distance);
+      bool has_reentry_approach = config.use_reentry_approach && reentry_plan.valid;
       bool has_reentry_approach_path = has_reentry_approach;
 
       mbf_msgs::MoveBaseGoal moveBaseGoal;
@@ -493,7 +497,6 @@ bool MowingBehavior::execute_mowing_plan() {
       // we have reached the start pose of the mow area, reset error handling values
       first_point_attempt_counter = 0;
       first_point_trim_counter = 0;
-      pendingReentryApproach = false;
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////
