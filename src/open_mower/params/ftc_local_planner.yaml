@@ -41,11 +41,8 @@ FTCPlanner:
   max_goal_distance_error: 0.2
   restore_defaults: false
   speed_angular: 50.0
-  speed_fast: 0.38
-  speed_fast_threshold: 1.5
-  speed_fast_threshold_angle: 10.0
   speed_slow: 0
-  use_actual_twist_for_cp_progress: false
+  # use_actual_twist_for_cp_progress: false
   cp_progress_min_speed: 0.2
   cp_progress_twist_alpha: 0.2
   cp_progress_linear_margin: 0.05
@@ -54,7 +51,6 @@ FTCPlanner:
   follow_distance: 0.02
   velocity_lookahead_scale: 0.95
   speed_limit_min: 0.1
-  max_mow_motor_current: 0.0
   min_mow_motor_rpm: 10000
   initial_path_trim: 0.08
   kp_mow_rpm_lim: 0.25
