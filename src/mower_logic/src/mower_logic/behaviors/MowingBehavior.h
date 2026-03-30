@@ -35,6 +35,7 @@ class MowingBehavior : public Behavior {
   bool execute_mowing_plan();
   bool handle_mower_stall_pause();
   bool reverse_for_mower_stall_recovery(const nav_msgs::Path& path);
+  void advance_resume_index_by_distance(const nav_msgs::Path& path, double distance);
   void update_resume_index_for_current_pose(const nav_msgs::Path& path);
 
   // Progress

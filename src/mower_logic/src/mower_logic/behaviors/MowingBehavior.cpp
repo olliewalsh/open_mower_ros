@@ -387,9 +387,50 @@ bool MowingBehavior::handle_mower_stall_pause() {
   }
 
   mower_stall_recovery_in_progress = false;
-  stallRecoveryFailed = true;
-  ROS_ERROR_STREAM("MowingBehavior: Mower stall recovery failed; leaving mowing paused.");
-  return false;
+  if (currentMowingPath < currentMowingPaths.size()) {
+    const double skip_distance = std::max(cfg.mower_stall_skip_distance, 0.0);
+    if (skip_distance > 0.0) {
+      ROS_ERROR_STREAM("MowingBehavior: Mower stall recovery failed; skipping ahead " << skip_distance
+                                                                                      << " m on the mowing path.");
+      advance_resume_index_by_distance(currentMowingPaths[currentMowingPath].path, skip_distance);
+    } else {
+      ROS_ERROR_STREAM("MowingBehavior: Mower stall recovery failed; skipping ahead to the next mowing pose.");
+      advance_resume_index_by_distance(currentMowingPaths[currentMowingPath].path, 0.001);
+    }
+    mower_stall_latched = false;
+    stallRecoveryFailed = false;
+    this->requestContinue(pauseType::PAUSE_MOW_STALL);
+    return true;
+  }
+
+  ROS_ERROR_STREAM("MowingBehavior: Mower stall recovery failed with no active mowing path; skipping current path.");
+  mower_stall_latched = false;
+  stallRecoveryFailed = false;
+  currentMowingPath++;
+  currentMowingPathIndex = 0;
+  this->requestContinue(pauseType::PAUSE_MOW_STALL);
+  return true;
+}
+
+void MowingBehavior::advance_resume_index_by_distance(const nav_msgs::Path& path, double distance) {
+  if (currentMowingPathIndex >= path.poses.size()) {
+    return;
+  }
+
+  size_t resume_index = static_cast<size_t>(currentMowingPathIndex);
+  double accumulated_distance = 0.0;
+  while (resume_index + 1 < path.poses.size() && accumulated_distance < distance) {
+    const auto& a = path.poses[resume_index].pose.position;
+    const auto& b = path.poses[resume_index + 1].pose.position;
+    accumulated_distance += std::hypot(b.x - a.x, b.y - a.y);
+    ++resume_index;
+  }
+
+  if (static_cast<int>(resume_index) != currentMowingPathIndex) {
+    ROS_WARN_STREAM("MowingBehavior: Advancing resume index from " << currentMowingPathIndex << " to " << resume_index
+                                                                   << " after mower stall recovery failure.");
+    currentMowingPathIndex = static_cast<int>(resume_index);
+  }
 }
 
 void MowingBehavior::update_resume_index_for_current_pose(const nav_msgs::Path& path) {
