@@ -21,7 +21,7 @@
   </node>
 
   <node name="move_base_legacy_relay" pkg="mbf_costmap_nav" type="move_base_legacy_relay.py" respawn="true" respawn_delay="10">
-    <param name="base_local_planner" value="DWAPlanner" />
+    <param name="base_local_planner" value="TEBPlanner" />
     <param name="base_global_planner" value="GlobalPlanner" />
   </node>
 
