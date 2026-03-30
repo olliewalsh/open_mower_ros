@@ -256,6 +256,87 @@ int getCurrentMowPathIndex() {
   return (currentIndex);
 }
 
+bool MowingBehavior::reverse_for_mower_stall_recovery(const nav_msgs::Path& path) {
+  const auto cfg = getConfig();
+  if (cfg.mower_stall_reverse_distance <= 0.0) {
+    return true;
+  }
+
+  if (path.poses.empty()) {
+    return false;
+  }
+
+  int target_index = std::min<int>(currentMowingPathIndex, static_cast<int>(path.poses.size()) - 1);
+  double remaining_backtrack = cfg.mower_stall_reverse_distance;
+  geometry_msgs::PoseStamped reverse_target = path.poses[target_index];
+
+  while (target_index > 0 && remaining_backtrack > 0.0) {
+    const auto& a_pose = path.poses[target_index].pose;
+    const auto& b_pose = path.poses[target_index - 1].pose;
+    const auto& a = a_pose.position;
+    const auto& b = b_pose.position;
+    const double segment_length = std::hypot(a.x - b.x, a.y - b.y);
+    if (segment_length <= 1e-6) {
+      --target_index;
+      reverse_target = path.poses[target_index];
+      continue;
+    }
+
+    if (remaining_backtrack <= segment_length) {
+      const double ratio = remaining_backtrack / segment_length;
+      reverse_target = path.poses[target_index];
+      reverse_target.pose.position.x = a.x + (b.x - a.x) * ratio;
+      reverse_target.pose.position.y = a.y + (b.y - a.y) * ratio;
+      reverse_target.pose.position.z = a.z + (b.z - a.z) * ratio;
+      reverse_target.pose.orientation = b_pose.orientation;
+      remaining_backtrack = 0.0;
+      break;
+    }
+
+    remaining_backtrack -= segment_length;
+    --target_index;
+    reverse_target = path.poses[target_index];
+  }
+
+  mbf_msgs::MoveBaseGoal reverse_goal;
+  reverse_goal.target_pose = reverse_target;
+  reverse_goal.target_pose.header.stamp = ros::Time::now();
+  reverse_goal.controller = "TEBPlanner";
+
+  ROS_INFO_STREAM("MowingBehavior: Backtracking along mowing path by about " << cfg.mower_stall_reverse_distance
+                                                                             << " m to index " << target_index
+                                                                             << " before mower restart attempt.");
+  ros::Time reverse_started = ros::Time::now();
+  ros::Rate poll_rate(10.0);
+  mbfClient->sendGoal(reverse_goal);
+  actionlib::SimpleClientGoalState reverse_state(actionlib::SimpleClientGoalState::PENDING);
+  while (ros::ok()) {
+    reverse_state = mbfClient->getState();
+    if (aborted) {
+      mbfClient->cancelAllGoals();
+      return false;
+    }
+    if (reverse_state.isDone()) {
+      break;
+    }
+    if ((ros::Time::now() - reverse_started) >= ros::Duration(cfg.mower_stall_reverse_timeout)) {
+      ROS_WARN_STREAM("MowingBehavior: Reverse recovery move timed out after " << cfg.mower_stall_reverse_timeout
+                                                                               << " s.");
+      mbfClient->cancelAllGoals();
+      return false;
+    }
+    poll_rate.sleep();
+  }
+
+  if (reverse_state.state_ != actionlib::SimpleClientGoalState::SUCCEEDED) {
+    ROS_WARN_STREAM("MowingBehavior: Reverse recovery move finished with status " << reverse_state.state_
+                                                                                  << " before mower restart.");
+    return false;
+  }
+
+  return true;
+}
+
 bool MowingBehavior::handle_mower_stall_pause() {
   const auto cfg = getConfig();
   if (cfg.mower_stall_max_restart_attempts <= 0) {
@@ -278,6 +359,13 @@ bool MowingBehavior::handle_mower_stall_pause() {
     if (aborted) {
       mower_stall_recovery_in_progress = false;
       return false;
+    }
+
+    if (!reverse_for_mower_stall_recovery(currentMowingPaths[currentMowingPath].path)) {
+      if (aborted) {
+        mower_stall_recovery_in_progress = false;
+        return false;
+      }
     }
 
     setMowerEnabled(true);
