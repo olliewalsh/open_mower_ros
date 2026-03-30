@@ -9,6 +9,7 @@
     <rosparam file="$(find open_mower)/params/local_costmap_params.yaml" command="load" />
     <rosparam file="$(find open_mower)/params/global_costmap_params.yaml" command="load" />
     <rosparam file="$(find open_mower)/params/move_base_flex.yaml" command="load"/>
+    <rosparam file="$(find open_mower)/params/dwa_local_planner.yaml" command="load" />
     <rosparam file="$(find open_mower)/params/teb_local_planner.yaml" command="load" />
     <rosparam if="$(eval env('MOWER')=='Sabo')" file="$(find open_mower)/params/hardware_specific/Sabo/teb_local_planner.yaml" command="load" />
     <rosparam file="$(find open_mower)/params/ftc_local_planner.yaml" command="load" />
@@ -17,7 +18,7 @@
   </node>
 
   <node name="move_base_legacy_relay" pkg="mbf_costmap_nav" type="move_base_legacy_relay.py" respawn="true" respawn_delay="10">
-    <param name="base_local_planner" value="TEBPlanner" />
+    <param name="base_local_planner" value="DWAPlanner" />
     <param name="base_global_planner" value="GlobalPlanner" />
   </node>
 

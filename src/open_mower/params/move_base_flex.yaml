@@ -5,6 +5,8 @@ planners:
 controllers:
   - name: FTCPlanner
     type: ftc_local_planner/FTCPlanner
+  - name: DWAPlanner
+    type: dwa_local_planner/DWAPlannerROS
   - name: TEBPlanner
     type: teb_local_planner/TebLocalPlannerROS
   - name: DockingFTCPlanner
