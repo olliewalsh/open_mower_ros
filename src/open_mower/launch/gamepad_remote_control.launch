@@ -7,5 +7,7 @@
     <include file="$(find open_mower)/launch/include/_localization.launch"/>
     <include file="$(find open_mower)/launch/include/_teleop.launch"/>
 
-    <node pkg="mower_map" type="mower_map_service" name="map_service" output="screen"/>
+    <node pkg="mower_map" type="mower_map_service" name="map_service" output="screen">
+        <rosparam unless="$(eval env('MOWER')=='CUSTOM')" file="$(find open_mower)/params/hardware_specific/$(env MOWER)/costmap_params.yaml"/>
+    </node>
 </launch>
