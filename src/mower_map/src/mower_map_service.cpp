@@ -41,6 +41,7 @@
 // JSON for map storage
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <random>
 #include <string>
@@ -367,6 +368,63 @@ void applyArea(grid_map::GridMap& map, grid_map::Matrix& data, const MapArea& ar
   sweepFootprintAlongOutline(map, data, area.outline, value);
 }
 
+double distancePointToSegment(const Point& point, const Point& start, const Point& end) {
+  const double dx = end.x - start.x;
+  const double dy = end.y - start.y;
+  const double length_sq = dx * dx + dy * dy;
+  if (length_sq <= 1e-12) {
+    return std::hypot(point.x - start.x, point.y - start.y);
+  }
+
+  double t = ((point.x - start.x) * dx + (point.y - start.y) * dy) / length_sq;
+  t = std::max(0.0, std::min(1.0, t));
+  const double proj_x = start.x + t * dx;
+  const double proj_y = start.y + t * dy;
+  return std::hypot(point.x - proj_x, point.y - proj_y);
+}
+
+double minDistanceToOutline(const Point& point, const Polygon& outline) {
+  if (outline.size() < 2) {
+    return std::numeric_limits<double>::infinity();
+  }
+
+  double min_distance = std::numeric_limits<double>::infinity();
+  for (size_t i = 0; i < outline.size(); ++i) {
+    const Point& start = outline[i];
+    const Point& end = outline[(i + 1) % outline.size()];
+    min_distance = std::min(min_distance, distancePointToSegment(point, start, end));
+  }
+  return min_distance;
+}
+
+void preserveObstacleCore(grid_map::GridMap& map, grid_map::Matrix& data, const Polygon& outline) {
+  grid_map::Polygon poly = internalPolygonToGridMap(outline);
+  const double core_margin = std::max(map.getResolution(), sweep_sample_resolution);
+  bool restored_core = false;
+  grid_map::Index best_index;
+  double best_distance = -1.0;
+
+  for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
+    const grid_map::Index index(*iterator);
+    grid_map::Position pos;
+    map.getPosition(index, pos);
+    Point sample{pos.x(), pos.y()};
+    const double distance = minDistanceToOutline(sample, outline);
+    if (distance > best_distance) {
+      best_distance = distance;
+      best_index = index;
+    }
+    if (distance > core_margin) {
+      data(index[0], index[1]) = 1.0;
+      restored_core = true;
+    }
+  }
+
+  if (!restored_core && best_distance >= 0.0) {
+    data(best_index[0], best_index[1]) = 1.0;
+  }
+}
+
 void applyDockingStation(grid_map::GridMap& map, grid_map::Matrix& data, const DockingStation& docking_station) {
   if (!docking_station.active) {
     return;
@@ -622,6 +680,7 @@ void buildMap() {
         data(index[0], index[1]) = 1.0;
       }
       sweepFootprintAlongOutline(map, data, area.outline, 0.0);
+      preserveObstacleCore(map, data, area.outline);
     }
   }
 
