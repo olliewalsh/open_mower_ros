@@ -356,6 +356,7 @@ bool MowingBehavior::handle_mower_stall_pause() {
   for (int attempt = 1; attempt <= cfg.mower_stall_max_restart_attempts && !aborted; ++attempt) {
     ROS_WARN_STREAM("MowingBehavior: Stall recovery attempt " << attempt << " / "
                                                               << cfg.mower_stall_max_restart_attempts);
+    mowerEnabled = false;
     setMowerEnabled(false);
     ros::Duration(cfg.mower_stall_restart_delay).sleep();
     if (aborted) {
@@ -370,6 +371,7 @@ bool MowingBehavior::handle_mower_stall_pause() {
       }
     }
 
+    mowerEnabled = true;
     setMowerEnabled(true);
     ros::Time restart_started = ros::Time::now();
     ros::Rate poll_rate(5.0);
@@ -386,8 +388,11 @@ bool MowingBehavior::handle_mower_stall_pause() {
       }
       poll_rate.sleep();
     }
+
+    mowerEnabled = false;
   }
 
+  mowerEnabled = false;
   mower_stall_recovery_in_progress = false;
   if (currentMowingPath < currentMowingPaths.size()) {
     const double skip_distance = std::max(cfg.mower_stall_skip_distance, 0.0);
