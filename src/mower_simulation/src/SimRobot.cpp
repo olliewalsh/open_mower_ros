@@ -204,6 +204,12 @@ void SimRobot::PublishPosition() {
   odometry.pose.pose.position.y = pos_y_;
   tf2::Quaternion q_mag(0.0, 0.0, pos_heading_);
   odometry.pose.pose.orientation = tf2::toMsg(q_mag);
+  odometry.twist.twist.linear.x = vx_;
+  odometry.twist.twist.linear.y = 0.0;
+  odometry.twist.twist.linear.z = 0.0;
+  odometry.twist.twist.angular.x = 0.0;
+  odometry.twist.twist.angular.y = 0.0;
+  odometry.twist.twist.angular.z = vr_;
 
   odom_trans.header = odometry.header;
   odom_trans.child_frame_id = odometry.child_frame_id;
