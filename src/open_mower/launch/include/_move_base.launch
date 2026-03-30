@@ -1,7 +1,10 @@
 <launch>
+  <arg name="sim" default="false"/>
 
   <node name="move_base_flex" pkg="mbf_costmap_nav" type="mbf_costmap_nav" output="screen" respawn="true" respawn_delay="10">
     <remap from="cmd_vel" to="/nav_vel"/>
+    <remap unless="$(arg sim)" from="odom" to="/xbot_positioning/odom_out"/>
+    <remap if="$(arg sim)" from="odom" to="/mower_simulation/odom_out"/>
     <rosparam file="$(find open_mower)/params/costmap_common_params.yaml" command="load" ns="global_costmap" />
     <rosparam file="$(find open_mower)/params/costmap_common_params.yaml" command="load" ns="local_costmap" />
     <rosparam if="$(eval env('MOWER')=='Sabo')" file="$(find open_mower)/params/hardware_specific/Sabo/costmap_params.yaml" command="load" ns="global_costmap" />

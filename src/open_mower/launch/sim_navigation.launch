@@ -4,7 +4,9 @@
 <launch>
     <include file="$(find open_mower)/launch/include/_params.launch"/>
     <include file="$(find mower_simulation)/launch/_mower_simulation.launch"/>
-    <include file="$(find open_mower)/launch/include/_move_base.launch"/>
+    <include file="$(find open_mower)/launch/include/_move_base.launch">
+        <arg name="sim" value="true"/>
+    </include>
     <include file="$(find open_mower)/launch/include/_teleop.launch"/>
 
     <node name="rviz" pkg="rviz" type="rviz" args="-d $(find open_mower)/rviz/sim_navigation_test.rviz"
