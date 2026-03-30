@@ -442,6 +442,16 @@ void preserveObstacleCore(grid_map::GridMap& map, grid_map::Matrix& data, const 
   }
 }
 
+void reapplyOccupiedMask(grid_map::Matrix& data, const grid_map::Matrix& occupied_mask) {
+  for (grid_map::Index index(0, 0); index[0] < data.rows(); ++index[0]) {
+    for (index[1] = 0; index[1] < data.cols(); ++index[1]) {
+      if (occupied_mask(index[0], index[1]) > 0.5) {
+        data(index[0], index[1]) = 1.0;
+      }
+    }
+  }
+}
+
 void applyDockingStation(grid_map::GridMap& map, grid_map::Matrix& data, const DockingStation& docking_station) {
   if (!docking_station.active) {
     return;
@@ -687,7 +697,7 @@ void buildMap() {
       applyArea(map, data, area, 0.0);
     }
   }
-  const grid_map::Matrix free_space_mask = data;
+  const grid_map::Matrix occupied_space_mask = data;
 
   for (const auto& area : map_data.areas) {
     if (!area.active) continue;
@@ -697,10 +707,12 @@ void buildMap() {
         const grid_map::Index index(*iterator);
         data(index[0], index[1]) = 1.0;
       }
-      sweepFootprintAlongOutline(map, data, area.outline, 0.0, &free_space_mask);
+      sweepFootprintAlongOutline(map, data, area.outline, 0.0);
       preserveObstacleCore(map, data, area.outline);
     }
   }
+
+  reapplyOccupiedMask(data, occupied_space_mask);
 
   for (const auto& docking_station : map_data.docking_stations) {
     applyDockingStation(map, data, docking_station);
