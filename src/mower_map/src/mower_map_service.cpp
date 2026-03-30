@@ -329,7 +329,24 @@ void stampFootprint(grid_map::GridMap& map, grid_map::Matrix& data, double x, do
   }
 }
 
-void sweepFootprintAlongOutline(grid_map::GridMap& map, grid_map::Matrix& data, const Polygon& outline, double value) {
+void stampFootprintMasked(grid_map::GridMap& map, grid_map::Matrix& data, const grid_map::Matrix* mask, double x,
+                          double y, double heading, double value) {
+  if (!has_sweep_footprint) {
+    return;
+  }
+
+  grid_map::Polygon poly = makeSweptFootprintPolygon(x, y, heading);
+  for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
+    const grid_map::Index index(*iterator);
+    if (mask != nullptr && value <= 0.0 && (*mask)(index[0], index[1]) > 0.5) {
+      continue;
+    }
+    data(index[0], index[1]) = value;
+  }
+}
+
+void sweepFootprintAlongOutline(grid_map::GridMap& map, grid_map::Matrix& data, const Polygon& outline, double value,
+                                const grid_map::Matrix* mask = nullptr) {
   if (!has_sweep_footprint || outline.size() < 2) {
     return;
   }
@@ -353,7 +370,7 @@ void sweepFootprintAlongOutline(grid_map::GridMap& map, grid_map::Matrix& data, 
       double ratio = static_cast<double>(step) / static_cast<double>(steps);
       double x = start.x + dx * ratio;
       double y = start.y + dy * ratio;
-      stampFootprint(map, data, x, y, heading, value);
+      stampFootprintMasked(map, data, mask, x, y, heading, value);
     }
   }
 }
@@ -670,6 +687,7 @@ void buildMap() {
       applyArea(map, data, area, 0.0);
     }
   }
+  const grid_map::Matrix free_space_mask = data;
 
   for (const auto& area : map_data.areas) {
     if (!area.active) continue;
@@ -679,7 +697,7 @@ void buildMap() {
         const grid_map::Index index(*iterator);
         data(index[0], index[1]) = 1.0;
       }
-      sweepFootprintAlongOutline(map, data, area.outline, 0.0);
+      sweepFootprintAlongOutline(map, data, area.outline, 0.0, &free_space_mask);
       preserveObstacleCore(map, data, area.outline);
     }
   }
