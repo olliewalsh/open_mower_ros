@@ -1,0 +1,6 @@
+HybridApproachPlanner:
+  far_controller_name: FTCPlanner
+  far_controller_type: ftc_local_planner/FTCPlanner
+  near_controller_name: TEBPlanner
+  near_controller_type: teb_local_planner/TebLocalPlannerROS
+  switch_costmap_margin: 0.25

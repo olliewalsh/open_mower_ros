@@ -15,13 +15,19 @@
     <rosparam file="$(find open_mower)/params/dwa_local_planner.yaml" command="load" />
     <rosparam file="$(find open_mower)/params/teb_local_planner.yaml" command="load" />
     <rosparam if="$(eval env('MOWER')=='Sabo')" file="$(find open_mower)/params/hardware_specific/Sabo/teb_local_planner.yaml" command="load" />
+    <param if="$(arg sim)" name="TEBPlanner/odom_topic" value="/mower_simulation/odom_out" />
     <rosparam file="$(find open_mower)/params/ftc_local_planner.yaml" command="load" />
+    <rosparam file="$(find open_mower)/params/hybrid_approach_planner.yaml" command="load" />
+    <rosparam file="$(find open_mower)/params/ftc_local_planner.yaml" command="load" ns="HybridApproachPlanner" />
+    <rosparam file="$(find open_mower)/params/teb_local_planner.yaml" command="load" ns="HybridApproachPlanner" />
+    <rosparam if="$(eval env('MOWER')=='Sabo')" file="$(find open_mower)/params/hardware_specific/Sabo/teb_local_planner.yaml" command="load" ns="HybridApproachPlanner" />
+    <param if="$(arg sim)" name="HybridApproachPlanner/TEBPlanner/odom_topic" value="/mower_simulation/odom_out" />
     <rosparam file="$(find open_mower)/params/docking_ftc_local_planner.yaml" command="load" />
     <rosparam file="$(find open_mower)/params/global_planner_params.yaml" command="load" />
   </node>
 
   <node name="move_base_legacy_relay" pkg="mbf_costmap_nav" type="move_base_legacy_relay.py" respawn="true" respawn_delay="10">
-    <param name="base_local_planner" value="TEBPlanner" />
+    <param name="base_local_planner" value="HybridApproachPlanner" />
     <param name="base_global_planner" value="GlobalPlanner" />
   </node>
 

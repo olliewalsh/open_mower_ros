@@ -38,6 +38,7 @@
     <run_depend>mbf_costmap_core</run_depend>
     <run_depend>message_runtime</run_depend>
     <run_depend>std_msgs</run_depend>
+    <run_depend>teb_local_planner</run_depend>
     <run_depend>tf2_eigen</run_depend>
 
     <export>

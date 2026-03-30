@@ -3,6 +3,8 @@ planners:
     type: global_planner/GlobalPlanner
 
 controllers:
+  - name: HybridApproachPlanner
+    type: ftc_local_planner/HybridApproachPlanner
   - name: FTCPlanner
     type: ftc_local_planner/FTCPlanner
   - name: DWAPlanner

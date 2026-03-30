@@ -4,4 +4,9 @@
       A implementation of a local planner using a FTC algorithmus.
     </description>
   </class>
+  <class name="ftc_local_planner/HybridApproachPlanner" type="ftc_local_planner::HybridApproachPlanner" base_class_type="mbf_costmap_core::CostmapController">
+    <description>
+      A hybrid MBF controller that follows the global path with FTC until the goal is inside the local costmap window, then hands off to TEB.
+    </description>
+  </class>
 </library>
