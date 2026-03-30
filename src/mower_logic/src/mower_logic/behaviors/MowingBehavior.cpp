@@ -303,7 +303,7 @@ bool MowingBehavior::reverse_for_mower_stall_recovery(const nav_msgs::Path& path
   mbf_msgs::MoveBaseGoal reverse_goal;
   reverse_goal.target_pose = reverse_target;
   reverse_goal.target_pose.header.stamp = ros::Time::now();
-  reverse_goal.controller = "DWAPlanner";
+  reverse_goal.controller = cfg.stall_recovery_controller;
 
   ROS_INFO_STREAM("MowingBehavior: Backtracking along mowing path by about " << cfg.mower_stall_reverse_distance
                                                                              << " m to index " << target_index
@@ -690,7 +690,7 @@ bool MowingBehavior::execute_mowing_plan() {
       if (!skip_first_point_move_base) {
         mbf_msgs::MoveBaseGoal moveBaseGoal;
         moveBaseGoal.target_pose = first_point_target;
-        moveBaseGoal.controller = "DWAPlanner";
+        moveBaseGoal.controller = config.navigation_controller;
         mbfClient->sendGoal(moveBaseGoal);
 
         // wait for move-base approach to finish
@@ -728,8 +728,9 @@ bool MowingBehavior::execute_mowing_plan() {
               return false;
             }
           } else {
-            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT)  Got status "
-                            << current_status.state_ << " from MBF/DWAPlanner -> Stopping path execution.");
+            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT)  Got status " << current_status.state_ << " from MBF/"
+                                                                         << config.navigation_controller
+                                                                         << " -> Stopping path execution.");
             // we're done, break out of the loop
             break;
           }
