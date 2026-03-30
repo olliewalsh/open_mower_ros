@@ -40,12 +40,14 @@ class HybridApproachPlanner : public mbf_costmap_core::CostmapController
     bool ensure_initialized() const;
     bool goal_is_within_local_costmap() const;
     bool near_controller_failed(uint32_t result) const;
+    double global_plan_length() const;
     void switch_to_near_controller();
     void switch_to_far_controller(const std::string &reason, bool start_cooldown);
 
     bool initialized_;
     bool using_near_controller_;
     double switch_costmap_margin_;
+    double min_plan_length_for_near_controller_;
     int near_failure_count_;
     int near_failure_limit_;
     double near_retry_cooldown_;

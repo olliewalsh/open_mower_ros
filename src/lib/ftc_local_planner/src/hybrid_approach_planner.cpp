@@ -16,6 +16,7 @@ HybridApproachPlanner::HybridApproachPlanner()
     : initialized_(false),
       using_near_controller_(false),
       switch_costmap_margin_(0.25),
+      min_plan_length_for_near_controller_(1.0),
       near_failure_count_(0),
       near_failure_limit_(3),
       near_retry_cooldown_(2.0),
@@ -38,6 +39,7 @@ void HybridApproachPlanner::initialize(std::string name, tf2_ros::Buffer *tf, co
 
     ros::NodeHandle private_nh("~/" + planner_name_);
     private_nh.param("switch_costmap_margin", switch_costmap_margin_, 0.25);
+    private_nh.param("min_plan_length_for_near_controller", min_plan_length_for_near_controller_, 1.0);
     private_nh.param("near_failure_limit", near_failure_limit_, 3);
     private_nh.param("near_retry_cooldown", near_retry_cooldown_, 2.0);
     private_nh.param("far_controller_name", far_controller_name_, std::string("FTCPlanner"));
@@ -94,7 +96,10 @@ uint32_t HybridApproachPlanner::computeVelocityCommands(const geometry_msgs::Pos
         return 102;
     }
 
-    if (!using_near_controller_ && ros::Time::now() >= near_retry_allowed_at_ && goal_is_within_local_costmap())
+    if (!using_near_controller_ &&
+        ros::Time::now() >= near_retry_allowed_at_ &&
+        global_plan_length() >= min_plan_length_for_near_controller_ &&
+        goal_is_within_local_costmap())
     {
         switch_to_near_controller();
     }
@@ -202,6 +207,23 @@ bool HybridApproachPlanner::goal_is_within_local_costmap() const
 bool HybridApproachPlanner::near_controller_failed(uint32_t result) const
 {
     return result != 0;
+}
+
+double HybridApproachPlanner::global_plan_length() const
+{
+    if (global_plan_.size() < 2)
+    {
+        return 0.0;
+    }
+
+    double length = 0.0;
+    for (size_t i = 1; i < global_plan_.size(); ++i)
+    {
+        const auto &a = global_plan_[i - 1].pose.position;
+        const auto &b = global_plan_[i].pose.position;
+        length += std::hypot(b.x - a.x, b.y - a.y);
+    }
+    return length;
 }
 
 void HybridApproachPlanner::switch_to_near_controller()
