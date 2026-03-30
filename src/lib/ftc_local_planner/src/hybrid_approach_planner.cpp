@@ -16,6 +16,9 @@ HybridApproachPlanner::HybridApproachPlanner()
     : initialized_(false),
       using_near_controller_(false),
       switch_costmap_margin_(0.25),
+      near_failure_count_(0),
+      near_failure_limit_(3),
+      near_retry_cooldown_(2.0),
       tf_buffer_(nullptr),
       costmap_ros_(nullptr),
       controller_loader_("mbf_costmap_core", "mbf_costmap_core::CostmapController")
@@ -35,6 +38,8 @@ void HybridApproachPlanner::initialize(std::string name, tf2_ros::Buffer *tf, co
 
     ros::NodeHandle private_nh("~/" + planner_name_);
     private_nh.param("switch_costmap_margin", switch_costmap_margin_, 0.25);
+    private_nh.param("near_failure_limit", near_failure_limit_, 3);
+    private_nh.param("near_retry_cooldown", near_retry_cooldown_, 2.0);
     private_nh.param("far_controller_name", far_controller_name_, std::string("FTCPlanner"));
     private_nh.param("near_controller_name", near_controller_name_, std::string("TEBPlanner"));
     private_nh.param("far_controller_type", far_controller_type_, std::string("ftc_local_planner/FTCPlanner"));
@@ -70,6 +75,8 @@ bool HybridApproachPlanner::setPlan(const std::vector<geometry_msgs::PoseStamped
 
     global_plan_ = plan;
     using_near_controller_ = false;
+    near_failure_count_ = 0;
+    near_retry_allowed_at_ = ros::Time(0);
 
     const bool far_ok = far_controller_->setPlan(plan);
     const bool near_ok = near_controller_->setPlan(plan);
@@ -87,15 +94,30 @@ uint32_t HybridApproachPlanner::computeVelocityCommands(const geometry_msgs::Pos
         return 102;
     }
 
-    if (!using_near_controller_ && goal_is_within_local_costmap())
+    if (!using_near_controller_ && ros::Time::now() >= near_retry_allowed_at_ && goal_is_within_local_costmap())
     {
-        using_near_controller_ = true;
-        near_controller_->setPlan(global_plan_);
-        ROS_INFO_STREAM("HybridApproachPlanner: Switching to near controller " << near_controller_name_
-                        << " because the goal is now within the local costmap window.");
+        switch_to_near_controller();
     }
 
-    return active_controller()->computeVelocityCommands(pose, velocity, cmd_vel, message);
+    const uint32_t result = active_controller()->computeVelocityCommands(pose, velocity, cmd_vel, message);
+
+    if (using_near_controller_ && near_controller_failed(result))
+    {
+        near_failure_count_++;
+        ROS_WARN_STREAM_THROTTLE(1.0, "HybridApproachPlanner: Near controller " << near_controller_name_
+                                 << " returned " << result << " (" << near_failure_count_ << "/"
+                                 << near_failure_limit_ << ").");
+        if (near_failure_count_ >= near_failure_limit_)
+        {
+            switch_to_far_controller("near controller repeatedly failed near the goal", true);
+        }
+    }
+    else if (using_near_controller_ && result == 0)
+    {
+        near_failure_count_ = 0;
+    }
+
+    return result;
 }
 
 bool HybridApproachPlanner::isGoalReached(double dist_tolerance, double angle_tolerance)
@@ -175,6 +197,33 @@ bool HybridApproachPlanner::goal_is_within_local_costmap() const
            goal_x <= max_x - margin &&
            goal_y >= origin_y + margin &&
            goal_y <= max_y - margin;
+}
+
+bool HybridApproachPlanner::near_controller_failed(uint32_t result) const
+{
+    return result != 0;
+}
+
+void HybridApproachPlanner::switch_to_near_controller()
+{
+    using_near_controller_ = true;
+    near_failure_count_ = 0;
+    near_controller_->setPlan(global_plan_);
+    ROS_INFO_STREAM("HybridApproachPlanner: Switching to near controller " << near_controller_name_
+                    << " because the goal is now within the local costmap window.");
+}
+
+void HybridApproachPlanner::switch_to_far_controller(const std::string &reason, bool start_cooldown)
+{
+    using_near_controller_ = false;
+    near_failure_count_ = 0;
+    far_controller_->setPlan(global_plan_);
+    if (start_cooldown)
+    {
+        near_retry_allowed_at_ = ros::Time::now() + ros::Duration(std::max(0.0, near_retry_cooldown_));
+    }
+    ROS_WARN_STREAM("HybridApproachPlanner: Switching back to far controller " << far_controller_name_
+                    << " because " << reason << ".");
 }
 
 }  // namespace ftc_local_planner

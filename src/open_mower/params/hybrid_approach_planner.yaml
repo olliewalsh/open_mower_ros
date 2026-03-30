@@ -4,3 +4,5 @@ HybridApproachPlanner:
   near_controller_name: TEBPlanner
   near_controller_type: teb_local_planner/TebLocalPlannerROS
   switch_costmap_margin: 0.25
+  near_failure_limit: 3
+  near_retry_cooldown: 2.0

@@ -39,10 +39,17 @@ class HybridApproachPlanner : public mbf_costmap_core::CostmapController
     ControllerPtr active_controller() const;
     bool ensure_initialized() const;
     bool goal_is_within_local_costmap() const;
+    bool near_controller_failed(uint32_t result) const;
+    void switch_to_near_controller();
+    void switch_to_far_controller(const std::string &reason, bool start_cooldown);
 
     bool initialized_;
     bool using_near_controller_;
     double switch_costmap_margin_;
+    int near_failure_count_;
+    int near_failure_limit_;
+    double near_retry_cooldown_;
+    ros::Time near_retry_allowed_at_;
 
     std::string planner_name_;
     std::string far_controller_name_;
