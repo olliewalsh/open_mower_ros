@@ -100,6 +100,7 @@ void MowingBehavior::enter() {
   skip_area = false;
   skip_path = false;
   stallRecoveryFailed = false;
+  activeExePathStartIndex = 0;
   paused = aborted = false;
 
   for (auto& a : actions) {
@@ -120,6 +121,7 @@ void MowingBehavior::reset() {
   currentMowingArea = 0;
   currentMowingPath = 0;
   currentMowingPathIndex = 0;
+  activeExePathStartIndex = 0;
   stallRecoveryFailed = false;
   // increase cumulative mowing angle offset increment
   currentMowingAngleIncrementSum = std::fmod(currentMowingAngleIncrementSum + getConfig().mow_angle_increment, 360);
@@ -345,7 +347,7 @@ bool MowingBehavior::handle_mower_stall_pause() {
 
   int currentIndex = getCurrentMowPathIndex();
   if (currentIndex >= 0) {
-    currentMowingPathIndex = currentIndex;
+    currentMowingPathIndex = activeExePathStartIndex + currentIndex;
   }
   mowerEnabled = false;
   mbfClientExePath->cancelAllGoals();
@@ -417,12 +419,28 @@ void MowingBehavior::advance_resume_index_by_distance(const nav_msgs::Path& path
     return;
   }
 
+  if (distance > 0.0 && currentMowingPath < currentMowingPaths.size()) {
+    const int original_index = currentMowingPathIndex;
+    insert_resume_pose_at_distance(currentMowingPaths[currentMowingPath].path, distance);
+    if (currentMowingPathIndex != original_index) {
+      return;
+    }
+  }
+
   size_t resume_index = static_cast<size_t>(currentMowingPathIndex);
   double accumulated_distance = 0.0;
   while (resume_index + 1 < path.poses.size() && accumulated_distance < distance) {
     const auto& a = path.poses[resume_index].pose.position;
     const auto& b = path.poses[resume_index + 1].pose.position;
-    accumulated_distance += std::hypot(b.x - a.x, b.y - a.y);
+    const double segment_length = std::hypot(b.x - a.x, b.y - a.y);
+    if (segment_length <= 1e-6) {
+      ++resume_index;
+      continue;
+    }
+    if (accumulated_distance + segment_length >= distance) {
+      break;
+    }
+    accumulated_distance += segment_length;
     ++resume_index;
   }
 
@@ -430,6 +448,49 @@ void MowingBehavior::advance_resume_index_by_distance(const nav_msgs::Path& path
     ROS_WARN_STREAM("MowingBehavior: Advancing resume index from " << currentMowingPathIndex << " to " << resume_index
                                                                    << " after mower stall recovery failure.");
     currentMowingPathIndex = static_cast<int>(resume_index);
+  }
+}
+
+void MowingBehavior::insert_resume_pose_at_distance(nav_msgs::Path& path, double distance) {
+  if (currentMowingPathIndex >= path.poses.size()) {
+    return;
+  }
+
+  size_t segment_index = static_cast<size_t>(currentMowingPathIndex);
+  double accumulated_distance = 0.0;
+  while (segment_index + 1 < path.poses.size()) {
+    const auto& a_pose = path.poses[segment_index].pose;
+    const auto& b_pose = path.poses[segment_index + 1].pose;
+    const auto& a = a_pose.position;
+    const auto& b = b_pose.position;
+    const double segment_length = std::hypot(b.x - a.x, b.y - a.y);
+    if (segment_length <= 1e-6) {
+      ++segment_index;
+      continue;
+    }
+
+    if (accumulated_distance + segment_length >= distance) {
+      const double remaining = distance - accumulated_distance;
+      if (remaining <= 1e-6 || remaining >= segment_length - 1e-6) {
+        return;
+      }
+
+      geometry_msgs::PoseStamped interpolated_pose = path.poses[segment_index];
+      const double ratio = remaining / segment_length;
+      interpolated_pose.pose.position.x = a.x + (b.x - a.x) * ratio;
+      interpolated_pose.pose.position.y = a.y + (b.y - a.y) * ratio;
+      interpolated_pose.pose.position.z = a.z + (b.z - a.z) * ratio;
+      interpolated_pose.pose.orientation = b_pose.orientation;
+
+      path.poses.insert(path.poses.begin() + segment_index + 1, interpolated_pose);
+      currentMowingPathIndex = static_cast<int>(segment_index + 1);
+      ROS_WARN_STREAM("MowingBehavior: Inserted interpolated resume pose at index "
+                      << currentMowingPathIndex << " after mower stall recovery failure.");
+      return;
+    }
+
+    accumulated_distance += segment_length;
+    ++segment_index;
   }
 }
 
@@ -597,6 +658,7 @@ bool MowingBehavior::execute_mowing_plan() {
       ROS_INFO_STREAM("MowingBehavior: Skipping empty path.");
       currentMowingPath++;
       currentMowingPathIndex = 0;
+      activeExePathStartIndex = 0;
       continue;
     }
 
@@ -740,6 +802,7 @@ bool MowingBehavior::execute_mowing_plan() {
       exePath.poses.insert(exePath.poses.end(), path.path.poses.begin() + currentMowingPathIndex,
                            path.path.poses.end());
       int exePathStartIndex = currentMowingPathIndex;
+      activeExePathStartIndex = exePathStartIndex;
       exePathGoal.path = exePath;
       exePathGoal.angle_tolerance = 5.0 * (M_PI / 180.0);
       exePathGoal.dist_tolerance = 0.2;
@@ -799,6 +862,7 @@ bool MowingBehavior::execute_mowing_plan() {
         } else {
           ROS_INFO_STREAM("MowingBehavior: (MOW)  Got status " << current_status.state_
                                                                << " from MBF/FTCPlanner -> Stopping path execution.");
+          activeExePathStartIndex = 0;
           // we're done, break out of the loop
           break;
         }
@@ -821,6 +885,7 @@ bool MowingBehavior::execute_mowing_plan() {
           ROS_INFO_STREAM("MowingBehavior: (MOW) Mow path finished, skipping to next mow path.");
           currentMowingPath++;
           currentMowingPathIndex = 0;
+          activeExePathStartIndex = 0;
           // continue with next segment
         } else {
           // we didnt drive all points in the mow path, so we go into pause mode
