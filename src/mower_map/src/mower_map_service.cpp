@@ -414,15 +414,18 @@ double minDistanceToOutline(const Point& point, const Polygon& outline) {
   return min_distance;
 }
 
-void preserveObstacleCore(grid_map::GridMap& map, grid_map::Matrix& data, const Polygon& outline) {
+void ensureObstacleOccupancy(grid_map::GridMap& map, grid_map::Matrix& data, const Polygon& outline) {
   grid_map::Polygon poly = internalPolygonToGridMap(outline);
-  const double core_margin = std::max(map.getResolution(), sweep_sample_resolution);
-  bool restored_core = false;
+  bool has_occupied_cell = false;
   grid_map::Index best_index;
   double best_distance = -1.0;
 
   for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
     const grid_map::Index index(*iterator);
+    if (data(index[0], index[1]) > 0.5) {
+      has_occupied_cell = true;
+      break;
+    }
     grid_map::Position pos;
     map.getPosition(index, pos);
     Point sample{pos.x(), pos.y()};
@@ -431,13 +434,9 @@ void preserveObstacleCore(grid_map::GridMap& map, grid_map::Matrix& data, const 
       best_distance = distance;
       best_index = index;
     }
-    if (distance > core_margin) {
-      data(index[0], index[1]) = 1.0;
-      restored_core = true;
-    }
   }
 
-  if (!restored_core && best_distance >= 0.0) {
+  if (!has_occupied_cell && best_distance >= 0.0) {
     data(best_index[0], best_index[1]) = 1.0;
   }
 }
@@ -708,7 +707,7 @@ void buildMap() {
         data(index[0], index[1]) = 1.0;
       }
       sweepFootprintAlongOutline(map, data, area.outline, 0.0);
-      preserveObstacleCore(map, data, area.outline);
+      ensureObstacleOccupancy(map, data, area.outline);
     }
   }
 
