@@ -741,13 +741,6 @@ void buildMap() {
     }
   }
 
-  cv::Mat cv_map;
-  grid_map::GridMapCvConverter::toImage<unsigned char, 1>(map, "navigation_area", CV_8UC1, cv_map);
-
-  cv::blur(cv_map, cv_map, cv::Size(5, 5));
-
-  grid_map::GridMapCvConverter::addLayerFromImage<unsigned char, 1>(cv_map, "navigation_area", map);
-
   nav_msgs::OccupancyGrid msg;
   grid_map::GridMapRosConverter::toOccupancyGrid(map, "navigation_area", 0.0, 1.0, msg);
   map_pub.publish(msg);
