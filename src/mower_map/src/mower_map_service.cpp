@@ -190,6 +190,7 @@ Polygon sweep_footprint;
 bool has_sweep_footprint = false;
 double sweep_sample_resolution = 0.025;
 double sweep_clearance_margin = 0.0;
+double sweep_extra_clearance_margin = 0.05;
 
 Polygon makeCircularFootprint(double radius, int samples = 16) {
   Polygon result;
@@ -1056,9 +1057,10 @@ int main(int argc, char** argv) {
   rpc_provider.init();
 
   private_nh.param("sweep_sample_resolution", sweep_sample_resolution, 0.025);
+  private_nh.param("sweep_extra_clearance_margin", sweep_extra_clearance_margin, 0.05);
   if (loadSweepFootprint(private_nh)) {
     sweep_clearance_margin = loadSweepClearanceMargin(private_nh);
-    expandSweepFootprint(sweep_clearance_margin);
+    expandSweepFootprint(sweep_clearance_margin + std::max(0.0, sweep_extra_clearance_margin));
     ROS_INFO_STREAM("Loaded sweep footprint with " << sweep_footprint.size() << " points for map rasterization.");
   } else {
     ROS_WARN("No sweep footprint configured for map rasterization. Outline footprint sweep is disabled.");
