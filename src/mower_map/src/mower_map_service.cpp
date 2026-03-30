@@ -189,6 +189,7 @@ grid_map::GridMap map;
 Polygon sweep_footprint;
 bool has_sweep_footprint = false;
 double sweep_sample_resolution = 0.025;
+double sweep_clearance_margin = 0.0;
 
 Polygon makeCircularFootprint(double radius, int samples = 16) {
   Polygon result;
@@ -292,6 +293,41 @@ bool loadSweepFootprint(ros::NodeHandle& nh) {
 
   has_sweep_footprint = false;
   return false;
+}
+
+void expandSweepFootprint(double margin) {
+  if (!has_sweep_footprint || margin <= 0.0) {
+    return;
+  }
+
+  for (auto& point : sweep_footprint) {
+    const double length = std::hypot(point.x, point.y);
+    if (length <= 1e-6) {
+      continue;
+    }
+
+    const double scale = (length + margin) / length;
+    point.x *= scale;
+    point.y *= scale;
+  }
+}
+
+double loadSweepClearanceMargin(ros::NodeHandle& nh) {
+  const std::vector<std::string> margin_params = {
+      "clearance_margin",
+      "/move_base_flex/local_costmap/inflation_layer/inflation_radius",
+      "/local_costmap/inflation_layer/inflation_radius",
+  };
+
+  for (const auto& param_name : margin_params) {
+    double margin = 0.0;
+    if (nh.getParam(param_name, margin) && margin > 0.0) {
+      ROS_INFO_STREAM("Loaded map sweep clearance margin " << margin << " from param " << param_name);
+      return margin;
+    }
+  }
+
+  return 0.0;
 }
 
 double getSweepFootprintRadius() {
@@ -1021,6 +1057,8 @@ int main(int argc, char** argv) {
 
   private_nh.param("sweep_sample_resolution", sweep_sample_resolution, 0.025);
   if (loadSweepFootprint(private_nh)) {
+    sweep_clearance_margin = loadSweepClearanceMargin(private_nh);
+    expandSweepFootprint(sweep_clearance_margin);
     ROS_INFO_STREAM("Loaded sweep footprint with " << sweep_footprint.size() << " points for map rasterization.");
   } else {
     ROS_WARN("No sweep footprint configured for map rasterization. Outline footprint sweep is disabled.");
