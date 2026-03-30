@@ -48,6 +48,11 @@
 #include <vector>
 using json = nlohmann::ordered_json;
 
+#include <boost/geometry.hpp>
+#include <boost/geometry/geometries/multi_polygon.hpp>
+#include <boost/geometry/geometries/point_xy.hpp>
+#include <boost/geometry/geometries/polygon.hpp>
+
 // Monitoring
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
@@ -71,7 +76,44 @@ struct Point {
 
 typedef std::vector<Point> Polygon;
 
+namespace bg = boost::geometry;
+using BoostPoint = bg::model::d2::point_xy<double>;
+using BoostPolygon = bg::model::polygon<BoostPoint>;
+using BoostMultiPolygon = bg::model::multi_polygon<BoostPolygon>;
+
 grid_map::Polygon internalPolygonToGridMap(const Polygon& poly);
+struct MapArea;
+std::vector<Polygon> getMergedActiveObstaclePolygons(const std::vector<MapArea>& areas);
+
+BoostPolygon internalPolygonToBoost(const Polygon& poly) {
+  BoostPolygon result;
+  if (poly.size() < 3) {
+    return result;
+  }
+
+  auto& outer = result.outer();
+  outer.reserve(poly.size() + 1);
+  for (const auto& point : poly) {
+    outer.emplace_back(point.x, point.y);
+  }
+  outer.emplace_back(poly.front().x, poly.front().y);
+  bg::correct(result);
+  return result;
+}
+
+Polygon boostPolygonToInternal(const BoostPolygon& poly) {
+  Polygon result;
+  const auto& outer = poly.outer();
+  if (outer.size() < 4) {
+    return result;
+  }
+
+  result.reserve(outer.size() - 1);
+  for (size_t i = 0; i + 1 < outer.size(); ++i) {
+    result.push_back({bg::get<0>(outer[i]), bg::get<1>(outer[i])});
+  }
+  return result;
+}
 
 struct MapArea {
   std::string id;
@@ -202,6 +244,50 @@ Polygon makeCircularFootprint(double radius, int samples = 16) {
   for (int i = 0; i < samples; ++i) {
     double angle = (2.0 * M_PI * static_cast<double>(i)) / static_cast<double>(samples);
     result.push_back({radius * std::cos(angle), radius * std::sin(angle)});
+  }
+  return result;
+}
+
+std::vector<Polygon> getMergedActiveObstaclePolygons(const std::vector<MapArea>& areas) {
+  std::vector<BoostPolygon> merged;
+
+  for (const auto& area : areas) {
+    if (!area.active || area.type != "obstacle" || area.outline.size() < 3) {
+      continue;
+    }
+
+    merged.push_back(internalPolygonToBoost(area.outline));
+  }
+
+  bool merged_any = true;
+  while (merged_any) {
+    merged_any = false;
+    for (size_t i = 0; i < merged.size() && !merged_any; ++i) {
+      for (size_t j = i + 1; j < merged.size(); ++j) {
+        if (bg::disjoint(merged[i], merged[j])) {
+          continue;
+        }
+
+        BoostMultiPolygon union_result;
+        bg::union_(merged[i], merged[j], union_result);
+        merged.erase(merged.begin() + j);
+        merged.erase(merged.begin() + i);
+        for (const auto& poly : union_result) {
+          merged.push_back(poly);
+        }
+        merged_any = true;
+        break;
+      }
+    }
+  }
+
+  std::vector<Polygon> result;
+  result.reserve(merged.size());
+  for (const auto& poly : merged) {
+    Polygon outline = boostPolygonToInternal(poly);
+    if (!outline.empty()) {
+      result.push_back(outline);
+    }
   }
   return result;
 }
@@ -735,17 +821,14 @@ void buildMap() {
   }
   const grid_map::Matrix occupied_space_mask = data;
 
-  for (const auto& area : map_data.areas) {
-    if (!area.active) continue;
-    if (area.type == "obstacle") {
-      grid_map::Polygon poly = internalPolygonToGridMap(area.outline);
-      for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
-        const grid_map::Index index(*iterator);
-        data(index[0], index[1]) = 1.0;
-      }
-      sweepFootprintAlongOutline(map, data, area.outline, 0.0);
-      ensureObstacleOccupancy(map, data, area.outline);
+  for (const auto& outline : getMergedActiveObstaclePolygons(map_data.areas)) {
+    grid_map::Polygon poly = internalPolygonToGridMap(outline);
+    for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
+      const grid_map::Index index(*iterator);
+      data(index[0], index[1]) = 1.0;
     }
+    sweepFootprintAlongOutline(map, data, outline, 0.0);
+    ensureObstacleOccupancy(map, data, outline);
   }
 
   reapplyOccupiedMask(data, occupied_space_mask);
