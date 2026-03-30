@@ -4,4 +4,4 @@ global_costmap:
   rolling_window: false
   resolution: 0.10
   inflation_layer:
-    inflation_radius: 1.0
+    inflation_radius: 0.5
