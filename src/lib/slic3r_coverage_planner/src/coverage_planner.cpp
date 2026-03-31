@@ -28,6 +28,14 @@
 bool visualize_plan;
 ros::Publisher marker_array_publisher;
 
+namespace {
+geometry_msgs::Quaternion quaternionFromYaw(double yaw) {
+    tf2::Quaternion q;
+    q.setRPY(0.0, 0.0, yaw);
+    return tf2::toMsg(q);
+}
+}
+
 
 void
 createMarkers(const slic3r_coverage_planner::PlanPathRequest &planning_request,
@@ -241,6 +249,9 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
         }
         ROS_INFO_STREAM("Got " << points.size() << " points");
 
+        bool add_transition_entry_pose = false;
+        double transition_entry_orientation = 0.0;
+
         if (!is_first_point) {
             // Find a good transition point between the loops.
             // It should be close to the last split point, so that we don't need to traverse a lot.
@@ -293,6 +304,10 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
             if (smooth_transition_idx > 0) {
                 std::rotate(points.begin(), points.begin() + smooth_transition_idx, points.end());
             }
+
+            auto transition_dir = isObstacle ? lastPoint - points.front() : points.front() - lastPoint;
+            transition_entry_orientation = atan2(transition_dir.y, transition_dir.x);
+            add_transition_entry_pose = true;
         }
 
         for (auto &pt: points) {
@@ -308,16 +323,26 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
             auto dir = isObstacle ? lastPoint - pt : pt - lastPoint;
 
             double orientation = atan2(dir.y, dir.x);
-            tf2::Quaternion q(0.0, 0.0, orientation);
 
             geometry_msgs::PoseStamped pose;
             pose.header = header;
-            pose.pose.orientation = tf2::toMsg(q);
+            pose.pose.orientation = quaternionFromYaw(orientation);
             pose.pose.position.x = unscale(lastPoint.x);
             pose.pose.position.y = unscale(lastPoint.y);
             pose.pose.position.z = 0;
             path.path.poses.push_back(pose);
             lastPoint = pt;
+
+            if (add_transition_entry_pose) {
+                geometry_msgs::PoseStamped transition_pose;
+                transition_pose.header = header;
+                transition_pose.pose.orientation = quaternionFromYaw(transition_entry_orientation);
+                transition_pose.pose.position.x = unscale(lastPoint.x);
+                transition_pose.pose.position.y = unscale(lastPoint.y);
+                transition_pose.pose.position.z = 0;
+                path.path.poses.push_back(transition_pose);
+                add_transition_entry_pose = false;
+            }
         }
     }
 
@@ -646,11 +671,10 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
 
                 auto dir = pt - *lastPoint;
                 double orientation = atan2(dir.y, dir.x);
-                tf2::Quaternion q(0.0, 0.0, orientation);
 
                 geometry_msgs::PoseStamped pose;
                 pose.header = header;
-                pose.pose.orientation = tf2::toMsg(q);
+                pose.pose.orientation = quaternionFromYaw(orientation);
                 pose.pose.position.x = unscale(lastPoint->x);
                 pose.pose.position.y = unscale(lastPoint->y);
                 pose.pose.position.z = 0;
