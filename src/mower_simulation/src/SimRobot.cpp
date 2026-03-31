@@ -12,14 +12,31 @@
 #include <xbot_msgs/AbsolutePose.h>
 
 #include <boost/thread/pthread/thread_data.hpp>
+#include <cmath>
 
 constexpr double SimRobot::BATTERY_VOLTS_MIN;
 constexpr double SimRobot::BATTERY_VOLTS_MAX;
 constexpr double SimRobot::CHARGE_CURRENT;
 constexpr double SimRobot::CHARGE_VOLTS;
 
+namespace {
+double clampUnit(double value) {
+  if (value < -1.0) {
+    return -1.0;
+  }
+  if (value > 1.0) {
+    return 1.0;
+  }
+  return value;
+}
+}  // namespace
+
 SimRobot::SimRobot(ros::NodeHandle& nh, const ros::Duration& simulation_step_period)
     : nh_{nh}, simulation_step_period_{simulation_step_period} {
+  nh_.param("drive_max_wheel_speed_mps", drive_max_wheel_speed_mps_, drive_max_wheel_speed_mps_);
+  nh_.param("drive_time_constant_s", drive_time_constant_s_, drive_time_constant_s_);
+  nh_.param("drive_deadband", drive_deadband_, drive_deadband_);
+  nh_.param("drive_current_per_duty_amp", drive_current_per_duty_amp_, drive_current_per_duty_amp_);
 }
 
 void SimRobot::Start() {
@@ -55,6 +72,14 @@ void SimRobot::GetTwist(double& vx, double& vr) {
   vr += angular_speed_noise(generator);
 }
 
+void SimRobot::ConfigureDiffDrive(double wheel_distance_m, double wheel_ticks_per_meter) {
+  std::lock_guard<std::mutex> lk{state_mutex_};
+  if (wheel_distance_m > 0.0) {
+    wheel_distance_m_ = wheel_distance_m;
+  }
+  wheel_ticks_per_meter_ = wheel_ticks_per_meter;
+}
+
 void SimRobot::ResetEmergency() {
   std::lock_guard<std::mutex> lk{state_mutex_};
   emergency_active_ = false;
@@ -79,10 +104,26 @@ void SimRobot::GetEmergencyState(bool& active, bool& latch, uint16_t& reason) {
   }
 }
 
-void SimRobot::SetControlTwist(double linear, double angular) {
+void SimRobot::SetWheelDuty(double left_duty, double right_duty) {
   std::lock_guard<std::mutex> lk{state_mutex_};
-  vx_ = linear;
-  vr_ = angular;
+  left_wheel_target_duty_ = clampUnit(left_duty);
+  right_wheel_target_duty_ = clampUnit(right_duty);
+}
+
+SimRobot::DiffDriveState SimRobot::GetDiffDriveState() {
+  std::lock_guard<std::mutex> lk{state_mutex_};
+  DiffDriveState state;
+  state.left_speed_mps = left_wheel_speed_mps_;
+  state.right_speed_mps = right_wheel_speed_mps_;
+  state.linear_speed_mps = vx_;
+  state.angular_speed_radps = vr_;
+  state.left_duty = left_wheel_target_duty_;
+  state.right_duty = right_wheel_target_duty_;
+  state.left_current_a = left_wheel_current_a_;
+  state.right_current_a = right_wheel_current_a_;
+  state.left_tacho = static_cast<uint32_t>(left_tacho_ticks_);
+  state.right_tacho = static_cast<uint32_t>(right_tacho_ticks_);
+  return state;
 }
 
 void SimRobot::GetPosition(double& x, double& y, double& heading) {
@@ -129,19 +170,46 @@ void SimRobot::GetIsCharging(bool& charging, double& seconds_since_start, std::s
 void SimRobot::SimulationStep(const ros::TimerEvent& te) {
   std::lock_guard<std::mutex> lk{state_mutex_};
   const auto now = ros::Time::now();
-  // Update Position if not in emergency mode
-  if (!emergency_latch_) {
-    double time_diff_s = (now - last_update_).toSec();
-    double delta_x = (vx_ * cos(pos_heading_)) * time_diff_s;
-    double delta_y = (vx_ * sin(pos_heading_)) * time_diff_s;
-    double delta_th = vr_ * time_diff_s;
-    pos_x_ += delta_x;
-    pos_y_ += delta_y;
-    pos_heading_ += delta_th;
-    pos_heading_ = fmod(pos_heading_, M_PI * 2.0);
-    if (pos_heading_ < 0) {
-      pos_heading_ += M_PI * 2.0;
+  double time_diff_s = (now - last_update_).toSec();
+  const auto duty_to_speed = [this](double duty) {
+    const double magnitude = std::abs(duty);
+    if (magnitude <= drive_deadband_) {
+      return 0.0;
     }
+    const double normalized = (magnitude - drive_deadband_) / (1.0 - drive_deadband_);
+    return std::copysign(normalized * drive_max_wheel_speed_mps_, duty);
+  };
+
+  const double commanded_left_duty = emergency_latch_ ? 0.0 : left_wheel_target_duty_;
+  const double commanded_right_duty = emergency_latch_ ? 0.0 : right_wheel_target_duty_;
+  const double left_target_speed = duty_to_speed(commanded_left_duty);
+  const double right_target_speed = duty_to_speed(commanded_right_duty);
+  const double alpha = drive_time_constant_s_ > 1e-6 ? std::min(1.0, time_diff_s / drive_time_constant_s_) : 1.0;
+  left_wheel_speed_mps_ += alpha * (left_target_speed - left_wheel_speed_mps_);
+  right_wheel_speed_mps_ += alpha * (right_target_speed - right_wheel_speed_mps_);
+
+  left_wheel_current_a_ = drive_current_per_duty_amp_ * std::abs(commanded_left_duty);
+  right_wheel_current_a_ = drive_current_per_duty_amp_ * std::abs(commanded_right_duty);
+
+  vx_ = 0.5 * (left_wheel_speed_mps_ + right_wheel_speed_mps_);
+  vr_ = wheel_distance_m_ > 1e-6 ? (right_wheel_speed_mps_ - left_wheel_speed_mps_) / wheel_distance_m_ : 0.0;
+
+  if (wheel_ticks_per_meter_ > 0.0) {
+    left_tacho_accum_ += left_wheel_speed_mps_ * time_diff_s * wheel_ticks_per_meter_;
+    right_tacho_accum_ -= right_wheel_speed_mps_ * time_diff_s * wheel_ticks_per_meter_;
+    left_tacho_ticks_ = static_cast<int32_t>(std::llround(left_tacho_accum_));
+    right_tacho_ticks_ = static_cast<int32_t>(std::llround(right_tacho_accum_));
+  }
+
+  double delta_x = (vx_ * cos(pos_heading_)) * time_diff_s;
+  double delta_y = (vx_ * sin(pos_heading_)) * time_diff_s;
+  double delta_th = vr_ * time_diff_s;
+  pos_x_ += delta_x;
+  pos_y_ += delta_y;
+  pos_heading_ += delta_th;
+  pos_heading_ = fmod(pos_heading_, M_PI * 2.0);
+  if (pos_heading_ < 0) {
+    pos_heading_ += M_PI * 2.0;
   }
 
   // Update Charger Status

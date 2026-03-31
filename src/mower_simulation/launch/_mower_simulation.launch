@@ -6,6 +6,10 @@
     <arg name="emergency_service_rate_hz" default="1.0"/>
     <arg name="mower_service_rate_hz" default="2.0"/>
     <arg name="power_service_rate_hz" default="1.0"/>
+    <arg name="drive_max_wheel_speed_mps" default="0.667"/>
+    <arg name="drive_time_constant_s" default="0.2"/>
+    <arg name="drive_deadband" default="0.08"/>
+    <arg name="drive_current_per_duty_amp" default="4.0"/>
 
     <node pkg="mower_simulation" type="mower_simulation" name="mower_simulation" required="true" >
         <param name="simulation_rate_hz" value="$(arg simulation_rate_hz)"/>
@@ -15,6 +19,10 @@
         <param name="emergency_service_rate_hz" value="$(arg emergency_service_rate_hz)"/>
         <param name="mower_service_rate_hz" value="$(arg mower_service_rate_hz)"/>
         <param name="power_service_rate_hz" value="$(arg power_service_rate_hz)"/>
+        <param name="drive_max_wheel_speed_mps" value="$(arg drive_max_wheel_speed_mps)"/>
+        <param name="drive_time_constant_s" value="$(arg drive_time_constant_s)"/>
+        <param name="drive_deadband" value="$(arg drive_deadband)"/>
+        <param name="drive_current_per_duty_amp" value="$(arg drive_current_per_duty_amp)"/>
         <remap from="~xb_pose_out" to="xbot_positioning/xb_pose"/>
     </node>
 

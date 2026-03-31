@@ -18,6 +18,19 @@
 
 class SimRobot {
  public:
+  struct DiffDriveState {
+    double left_speed_mps = 0.0;
+    double right_speed_mps = 0.0;
+    double linear_speed_mps = 0.0;
+    double angular_speed_radps = 0.0;
+    double left_duty = 0.0;
+    double right_duty = 0.0;
+    double left_current_a = 0.0;
+    double right_current_a = 0.0;
+    uint32_t left_tacho = 0;
+    uint32_t right_tacho = 0;
+  };
+
   explicit SimRobot(ros::NodeHandle& nh, const ros::Duration& simulation_step_period);
   void Start();
 
@@ -28,7 +41,9 @@ class SimRobot {
   void SetEmergency(bool active, const uint16_t& reason);
 
   void GetEmergencyState(bool& active, bool& latch, uint16_t& reason);
-  void SetControlTwist(double linear, double angular);
+  void ConfigureDiffDrive(double wheel_distance_m, double wheel_ticks_per_meter);
+  void SetWheelDuty(double left_duty, double right_duty);
+  DiffDriveState GetDiffDriveState();
   void GetPosition(double& x, double& y, double& heading);
   void SetPosition(const double x, const double y, const double heading);
 
@@ -56,10 +71,26 @@ class SimRobot {
   double docking_pos_heading_ = 0;
 
   bool started_ = false;
-  // Speed X in m/s
+  // Body speed in m/s
   double vx_ = 0;
-  // Speed rotating in rad/s
+  // Body speed rotating in rad/s
   double vr_ = 0;
+  double left_wheel_speed_mps_ = 0;
+  double right_wheel_speed_mps_ = 0;
+  double left_wheel_target_duty_ = 0;
+  double right_wheel_target_duty_ = 0;
+  double left_wheel_current_a_ = 0;
+  double right_wheel_current_a_ = 0;
+  double wheel_distance_m_ = 0.45;
+  double wheel_ticks_per_meter_ = 0.0;
+  double drive_max_wheel_speed_mps_ = 0.667;
+  double drive_time_constant_s_ = 0.2;
+  double drive_deadband_ = 0.08;
+  double drive_current_per_duty_amp_ = 4.0;
+  double left_tacho_accum_ = 0.0;
+  double right_tacho_accum_ = 0.0;
+  int32_t left_tacho_ticks_ = 0;
+  int32_t right_tacho_ticks_ = 0;
   // position and heading. This can be used to simulate GPS
   double pos_x_ = 0;
   double pos_y_ = 0;

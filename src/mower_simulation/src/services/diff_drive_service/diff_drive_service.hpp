@@ -6,8 +6,11 @@
 #define DIFF_DRIVE_SERVICE_HPP
 
 #include <DiffDriveServiceBase.hpp>
+#include <cmath>
 
 #include "../../SimRobot.h"
+#include "wheel_speed_controller.hpp"
+#include "wheel_speed_limit_estimator.hpp"
 
 using namespace xbot::service;
 
@@ -27,7 +30,27 @@ class DiffDriveService : public DiffDriveServiceBase {
   void OnStop() override;
 
  private:
+  static constexpr double kControlTwistTimeoutSeconds = 1.0;
+  static WheelSpeedController::Gains DefaultWheelSpeedControllerGains() {
+    return WheelSpeedController::Gains{1.5f, 0.35f, 1.5f};
+  }
   SimRobot& robot_;
+  float desired_speed_l_ = 0.0f;
+  float desired_speed_r_ = 0.0f;
+  uint32_t last_ticks_left_ = 0;
+  uint32_t last_ticks_right_ = 0;
+  bool last_ticks_valid_ = false;
+  ros::Time last_status_update_{0};
+  ros::Time last_control_twist_received_{0};
+  WheelSpeedController left_wheel_controller_{DefaultWheelSpeedControllerGains()};
+  WheelSpeedController right_wheel_controller_{DefaultWheelSpeedControllerGains()};
+  WheelSpeedLimitEstimator wheel_speed_limit_estimator_{};
+
+  WheelSpeedController::Gains GetConfiguredWheelSpeedControllerGains() const;
+  float GetNominalWheelSpeedLimit() const;
+  void UpdateControllerGains();
+  void UpdateDutyFromMeasuredSpeeds(float dt);
+  void ResetDriveCommandState();
   void tick();
   ManagedSchedule tick_schedule_;
   void SetDuty();
