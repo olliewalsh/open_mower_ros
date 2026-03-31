@@ -577,7 +577,8 @@ namespace ftc_local_planner
             }
 
             // check if we're done following
-            if (current_index == global_plan.size() - 2)
+            if (current_index >= global_plan.size() - 2 &&
+                (current_index >= global_plan.size() - 1 || current_progress >= 0.999))
             {
                 ROS_INFO_STREAM("FTCLocalPlannerROS: switching planner to position mode");
                 set_planner_state(WAITING_FOR_GOAL_APPROACH);
@@ -795,7 +796,7 @@ namespace ftc_local_planner
             double angle_to_move = dt * cp_angular_speed;
 
             Eigen::Affine3d nextPose, currentPose;
-            while (angle_to_move > 0 && distance_to_move > 0 && current_index < global_plan.size() - 2)
+            while (angle_to_move > 0 && distance_to_move > 0 && current_index < global_plan.size() - 1)
             {
 
                 tf2::fromMsg(global_plan[current_index].pose, currentPose);
@@ -844,6 +845,12 @@ namespace ftc_local_planner
                     distance_to_move = 0;
                     angle_to_move = 0;
                 }
+            }
+
+            if (current_index >= global_plan.size() - 1)
+            {
+                tf2::fromMsg(global_plan.back().pose, current_control_point);
+                break;
             }
 
             tf2::fromMsg(global_plan[current_index].pose, currentPose);
