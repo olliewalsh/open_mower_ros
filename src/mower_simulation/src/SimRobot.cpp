@@ -18,7 +18,8 @@ constexpr double SimRobot::BATTERY_VOLTS_MAX;
 constexpr double SimRobot::CHARGE_CURRENT;
 constexpr double SimRobot::CHARGE_VOLTS;
 
-SimRobot::SimRobot(ros::NodeHandle& nh) : nh_{nh} {
+SimRobot::SimRobot(ros::NodeHandle& nh, const ros::Duration& simulation_step_period)
+    : nh_{nh}, simulation_step_period_{simulation_step_period} {
 }
 
 void SimRobot::Start() {
@@ -31,7 +32,7 @@ void SimRobot::Start() {
   pose_service_ = nh_.advertiseService("/xbot_positioning/set_robot_pose", &SimRobot::OnSetPose, this);
   odometry_pub_ = nh_.advertise<nav_msgs::Odometry>("odom_out", 50);
   xbot_absolute_pose_pub_ = nh_.advertise<xbot_msgs::AbsolutePose>("xb_pose_out", 50);
-  timer_ = nh_.createTimer(ros::Duration(0.1), &SimRobot::SimulationStep, this);
+  timer_ = nh_.createTimer(simulation_step_period_, &SimRobot::SimulationStep, this);
   timer_.start();
 }
 

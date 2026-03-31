@@ -18,7 +18,7 @@
 
 class SimRobot {
  public:
-  explicit SimRobot(ros::NodeHandle& nh);
+  explicit SimRobot(ros::NodeHandle& nh, const ros::Duration& simulation_step_period);
   void Start();
 
   void GetPosition(double& x, double& y);
@@ -72,6 +72,7 @@ class SimRobot {
   uint16_t emergency_reason_ = EmergencyReason::LATCH;
   ros::Time last_update_{0};
   ros::NodeHandle nh_;
+  ros::Duration simulation_step_period_;
 
   bool is_charging_ = false;
   ros::Time charging_started_time;

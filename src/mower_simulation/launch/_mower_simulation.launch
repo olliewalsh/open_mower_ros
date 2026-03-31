@@ -1,6 +1,20 @@
 <launch>
+    <arg name="simulation_rate_hz" default="25.0"/>
+    <arg name="diff_drive_service_rate_hz" default="25.0"/>
+    <arg name="imu_service_rate_hz" default="100.0"/>
+    <arg name="gps_service_rate_hz" default="10.0"/>
+    <arg name="emergency_service_rate_hz" default="1.0"/>
+    <arg name="mower_service_rate_hz" default="2.0"/>
+    <arg name="power_service_rate_hz" default="1.0"/>
 
     <node pkg="mower_simulation" type="mower_simulation" name="mower_simulation" required="true" >
+        <param name="simulation_rate_hz" value="$(arg simulation_rate_hz)"/>
+        <param name="diff_drive_service_rate_hz" value="$(arg diff_drive_service_rate_hz)"/>
+        <param name="imu_service_rate_hz" value="$(arg imu_service_rate_hz)"/>
+        <param name="gps_service_rate_hz" value="$(arg gps_service_rate_hz)"/>
+        <param name="emergency_service_rate_hz" value="$(arg emergency_service_rate_hz)"/>
+        <param name="mower_service_rate_hz" value="$(arg mower_service_rate_hz)"/>
+        <param name="power_service_rate_hz" value="$(arg power_service_rate_hz)"/>
         <remap from="~xb_pose_out" to="xbot_positioning/xb_pose"/>
     </node>
 

@@ -16,7 +16,11 @@ using namespace xbot::service;
 class EmergencyService : public EmergencyServiceBase {
  private:
  public:
-  explicit EmergencyService(uint16_t service_id, SimRobot& robot) : EmergencyServiceBase(service_id), robot_(robot) {
+  explicit EmergencyService(uint16_t service_id, SimRobot& robot, uint32_t tick_interval_us)
+      : EmergencyServiceBase(service_id),
+        tick_schedule_{scheduler_, IsRunning(), tick_interval_us,
+                       XBOT_FUNCTION_FOR_METHOD(EmergencyService, &EmergencyService::tick, this)},
+        robot_(robot) {
   }
 
  protected:
@@ -25,8 +29,7 @@ class EmergencyService : public EmergencyServiceBase {
 
  private:
   void tick();
-  ManagedSchedule tick_schedule_{scheduler_, IsRunning(), 100'000,
-                                 XBOT_FUNCTION_FOR_METHOD(EmergencyService, &EmergencyService::tick, this)};
+  ManagedSchedule tick_schedule_;
 
   SimRobot& robot_;
 

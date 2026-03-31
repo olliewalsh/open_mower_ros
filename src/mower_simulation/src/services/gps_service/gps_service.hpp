@@ -12,13 +12,16 @@ using namespace xbot::service;
 
 class GpsService : public GpsServiceBase {
  public:
-  explicit GpsService(uint16_t service_id, SimRobot& robot) : GpsServiceBase(service_id), robot_(robot) {
+  explicit GpsService(uint16_t service_id, SimRobot& robot, uint32_t tick_interval_us)
+      : GpsServiceBase(service_id),
+        tick_schedule_{scheduler_, IsRunning(), tick_interval_us,
+                       XBOT_FUNCTION_FOR_METHOD(GpsService, &GpsService::tick, this)},
+        robot_(robot) {
   }
 
  private:
   void tick();
-  ManagedSchedule tick_schedule_{scheduler_, IsRunning(), 200'000,
-                                 XBOT_FUNCTION_FOR_METHOD(GpsService, &GpsService::tick, this)};
+  ManagedSchedule tick_schedule_;
 
  private:
   SimRobot& robot_;

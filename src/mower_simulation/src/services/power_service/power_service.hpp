@@ -13,7 +13,11 @@ using namespace xbot::service;
 
 class PowerService : public PowerServiceBase {
  public:
-  explicit PowerService(uint16_t service_id, SimRobot& robot) : PowerServiceBase(service_id), robot_(robot) {
+  explicit PowerService(uint16_t service_id, SimRobot& robot, uint32_t tick_interval_us)
+      : PowerServiceBase(service_id),
+        robot_(robot),
+        tick_schedule_{scheduler_, IsRunning(), tick_interval_us,
+                       XBOT_FUNCTION_FOR_METHOD(PowerService, &PowerService::tick, this)} {
   }
 
  private:
@@ -30,8 +34,7 @@ class PowerService : public PowerServiceBase {
   SimRobot& robot_;
 
   void tick();
-  ManagedSchedule tick_schedule_{scheduler_, IsRunning(), 200'000,
-                                 XBOT_FUNCTION_FOR_METHOD(PowerService, &PowerService::tick, this)};
+  ManagedSchedule tick_schedule_;
 
  protected:
   void OnChargingAllowedChanged(const uint8_t& new_value) override;

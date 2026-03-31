@@ -13,7 +13,11 @@ using namespace xbot::service;
 
 class DiffDriveService : public DiffDriveServiceBase {
  public:
-  explicit DiffDriveService(uint16_t service_id, SimRobot& robot) : DiffDriveServiceBase(service_id), robot_(robot) {
+  explicit DiffDriveService(uint16_t service_id, SimRobot& robot, uint32_t tick_interval_us)
+      : DiffDriveServiceBase(service_id),
+        robot_(robot),
+        tick_schedule_{scheduler_, IsRunning(), tick_interval_us,
+                       XBOT_FUNCTION_FOR_METHOD(DiffDriveService, &DiffDriveService::tick, this)} {
   }
 
   void OnMowerStatusChanged(uint32_t new_status);
@@ -25,8 +29,7 @@ class DiffDriveService : public DiffDriveServiceBase {
  private:
   SimRobot& robot_;
   void tick();
-  ManagedSchedule tick_schedule_{scheduler_, IsRunning(), 20'000,
-                                 XBOT_FUNCTION_FOR_METHOD(DiffDriveService, &DiffDriveService::tick, this)};
+  ManagedSchedule tick_schedule_;
   void SetDuty();
   void ProcessStatusUpdate();
 

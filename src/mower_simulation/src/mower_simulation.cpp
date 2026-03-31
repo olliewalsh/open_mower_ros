@@ -21,6 +21,7 @@
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
+#include <cmath>
 #include <xbot-service/Io.hpp>
 #include <xbot-service/portable/system.hpp>
 
@@ -35,6 +36,23 @@
 #include "services/imu_service/imu_service.hpp"
 #include "services/mower_service/mower_service.hpp"
 #include "services/power_service/power_service.hpp"
+
+namespace {
+double positiveRateParam(ros::NodeHandle& nh, const std::string& name, double default_value) {
+  double rate_hz = default_value;
+  nh.param(name, rate_hz, default_value);
+  if (rate_hz <= 0.0) {
+    ROS_WARN_STREAM("Invalid mower_simulation parameter '" << name << "'=" << rate_hz << ". Falling back to "
+                                                           << default_value << " Hz.");
+    rate_hz = default_value;
+  }
+  return rate_hz;
+}
+
+uint32_t rateHzToIntervalUs(double rate_hz) {
+  return static_cast<uint32_t>(std::llround(1'000'000.0 / rate_hz));
+}
+}  // namespace
 
 ros::Publisher status_pub;
 ros::Publisher cmd_vel_pub;
@@ -63,7 +81,20 @@ int main(int argc, char** argv) {
   xbot::service::system::initSystem();
   xbot::service::Io::start(bind_ip.c_str());
 
-  SimRobot robot{paramNh};
+  const double simulation_rate_hz = positiveRateParam(paramNh, "simulation_rate_hz", 25.0);
+  const double diff_drive_service_rate_hz = positiveRateParam(paramNh, "diff_drive_service_rate_hz", 25.0);
+  const double imu_service_rate_hz = positiveRateParam(paramNh, "imu_service_rate_hz", 100.0);
+  const double gps_service_rate_hz = positiveRateParam(paramNh, "gps_service_rate_hz", 10.0);
+  const double emergency_service_rate_hz = positiveRateParam(paramNh, "emergency_service_rate_hz", 1.0);
+  const double mower_service_rate_hz = positiveRateParam(paramNh, "mower_service_rate_hz", 2.0);
+  const double power_service_rate_hz = positiveRateParam(paramNh, "power_service_rate_hz", 1.0);
+
+  ROS_INFO_STREAM("Mower simulation rates [Hz] sim="
+                  << simulation_rate_hz << " diff_drive=" << diff_drive_service_rate_hz << " imu="
+                  << imu_service_rate_hz << " gps=" << gps_service_rate_hz << " emergency=" << emergency_service_rate_hz
+                  << " mower=" << mower_service_rate_hz << " power=" << power_service_rate_hz);
+
+  SimRobot robot{paramNh, ros::Duration(1.0 / simulation_rate_hz)};
 
   // Move the robot to the docking station.
   // TODO: Use a better way to make sure that the docking position is loaded.
@@ -85,12 +116,14 @@ int main(int argc, char** argv) {
     sleep(1);
   }
 
-  EmergencyService emergency_service{xbot::service_ids::EMERGENCY, robot};
-  DiffDriveService diff_drive_service{xbot::service_ids::DIFF_DRIVE, robot};
-  MowerService mower_service{xbot::service_ids::MOWER, robot};
-  ImuService imu_service{xbot::service_ids::IMU, robot};
-  PowerService power_service{xbot::service_ids::POWER, robot};
-  GpsService gps_service{xbot::service_ids::GPS, robot};
+  EmergencyService emergency_service{xbot::service_ids::EMERGENCY, robot,
+                                     rateHzToIntervalUs(emergency_service_rate_hz)};
+  DiffDriveService diff_drive_service{xbot::service_ids::DIFF_DRIVE, robot,
+                                      rateHzToIntervalUs(diff_drive_service_rate_hz)};
+  MowerService mower_service{xbot::service_ids::MOWER, robot, rateHzToIntervalUs(mower_service_rate_hz)};
+  ImuService imu_service{xbot::service_ids::IMU, robot, rateHzToIntervalUs(imu_service_rate_hz)};
+  PowerService power_service{xbot::service_ids::POWER, robot, rateHzToIntervalUs(power_service_rate_hz)};
+  GpsService gps_service{xbot::service_ids::GPS, robot, rateHzToIntervalUs(gps_service_rate_hz)};
 
   emergency_service.start();
   diff_drive_service.start();
