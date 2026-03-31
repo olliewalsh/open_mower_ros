@@ -3,6 +3,21 @@ global_costmap:
   publish_frequency: 1.0
   rolling_window: false
   resolution: 0.05
+  plugins:
+    - name: static_layer
+      type: costmap_2d::StaticLayer
+    - name: obstacle_layer
+      type: costmap_2d::ObstacleLayer
+    - name: nav_point_layer
+      type: mower_map/NavPointLayer
+    - name: inflation_layer
+      type: costmap_2d::InflationLayer
+  nav_point_layer:
+    enabled: true
+    side_padding: 0.1
+    front_padding: 0.15
+    rear_opening_offset: 0.05
+    wall_thickness: 0.12
   inflation_layer:
     inflation_radius: 0.9
     cost_scaling_factor: 5.0

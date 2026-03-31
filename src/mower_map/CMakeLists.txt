@@ -11,6 +11,8 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED
+        costmap_2d
+        pluginlib
         roscpp
         std_msgs
         geometry_msgs
@@ -119,10 +121,9 @@ generate_messages(
 ## CATKIN_DEPENDS: catkin_packages dependent projects also need
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
-        #  INCLUDE_DIRS include
-        #  LIBRARIES mower_map
-        #  CATKIN_DEPENDS other_catkin_pkg
-        #  DEPENDS system_lib
+        INCLUDE_DIRS include
+        LIBRARIES mower_map_nav_point_layer
+        CATKIN_DEPENDS costmap_2d geometry_msgs message_runtime pluginlib roscpp
 )
 
 add_subdirectory(../lib/json json EXCLUDE_FROM_ALL)
@@ -134,7 +135,7 @@ add_subdirectory(../lib/json json EXCLUDE_FROM_ALL)
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(
-        # include
+         include
          ${catkin_INCLUDE_DIRS}
 )
 
@@ -171,6 +172,10 @@ include_directories(
 add_executable(mower_map_service src/mower_map_service.cpp)
 add_dependencies(mower_map_service ${catkin_EXPORTED_TARGETS} ${${PROJECT_NAME}_EXPORTED_TARGETS})
 target_link_libraries(mower_map_service ${catkin_LIBRARIES} ${OpenCV_LIBS} nlohmann_json::nlohmann_json xbot_rpc)
+
+add_library(mower_map_nav_point_layer src/nav_point_layer.cpp)
+add_dependencies(mower_map_nav_point_layer ${catkin_EXPORTED_TARGETS} ${${PROJECT_NAME}_EXPORTED_TARGETS})
+target_link_libraries(mower_map_nav_point_layer ${catkin_LIBRARIES})
 
 #############
 ## Install ##

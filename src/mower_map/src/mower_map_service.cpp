@@ -223,9 +223,6 @@ ros::Publisher map_size_pub;
 // MapData instance - the source of truth for map data
 MapData map_data;
 
-bool show_fake_obstacle = false;
-geometry_msgs::Pose fake_obstacle_pose;
-
 // The grid map. This is built from the polygons loaded from the file.
 grid_map::GridMap map;
 Polygon sweep_footprint;
@@ -837,59 +834,6 @@ void buildMap() {
     applyDockingStation(map, data, docking_station);
   }
 
-  if (show_fake_obstacle) {
-    grid_map::Polygon poly;
-    tf2::Quaternion q;
-    tf2::fromMsg(fake_obstacle_pose.orientation, q);
-
-    tf2::Matrix3x3 m(q);
-    double unused1, unused2, yaw;
-
-    m.getRPY(unused1, unused2, yaw);
-
-    Eigen::Vector2d front(cos(yaw), sin(yaw));
-    Eigen::Vector2d left(-sin(yaw), cos(yaw));
-    Eigen::Vector2d obstacle_pos(fake_obstacle_pose.position.x, fake_obstacle_pose.position.y);
-
-    {
-      grid_map::Position pos = obstacle_pos + 0.1 * left + 0.25 * front;
-      poly.addVertex(pos);
-    }
-    {
-      grid_map::Position pos = obstacle_pos + 0.2 * left - 0.1 * front;
-      poly.addVertex(pos);
-    }
-    {
-      grid_map::Position pos = obstacle_pos + 0.6 * left - 0.1 * front;
-      poly.addVertex(pos);
-    }
-    {
-      grid_map::Position pos = obstacle_pos + 0.6 * left + 0.7 * front;
-      poly.addVertex(pos);
-    }
-
-    {
-      grid_map::Position pos = obstacle_pos - 0.6 * left + 0.7 * front;
-      poly.addVertex(pos);
-    }
-    {
-      grid_map::Position pos = obstacle_pos - 0.6 * left - 0.1 * front;
-      poly.addVertex(pos);
-    }
-    {
-      grid_map::Position pos = obstacle_pos - 0.2 * left - 0.1 * front;
-      poly.addVertex(pos);
-    }
-    {
-      grid_map::Position pos = obstacle_pos - 0.1 * left + 0.25 * front;
-      poly.addVertex(pos);
-    }
-    for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
-      const grid_map::Index index(*iterator);
-      data(index[0], index[1]) = 1.0;
-    }
-  }
-
   nav_msgs::OccupancyGrid msg;
   grid_map::GridMapRosConverter::toOccupancyGrid(map, "navigation_area", 0.0, 1.0, msg);
   map_pub.publish(msg);
@@ -1005,30 +949,6 @@ bool getDockingPoint(mower_map::GetDockingPointSrvRequest& req, mower_map::GetDo
   tf2::Quaternion q;
   q.setRPY(0.0, 0.0, ds.heading);
   res.docking_pose.orientation = tf2::toMsg(q);
-
-  return true;
-}
-
-bool setNavPoint(mower_map::SetNavPointSrvRequest& req, mower_map::SetNavPointSrvResponse& res) {
-  ROS_INFO_STREAM("Setting Nav Point");
-
-  fake_obstacle_pose = req.nav_pose;
-
-  show_fake_obstacle = true;
-
-  buildMap();
-
-  return true;
-}
-
-bool clearNavPoint(mower_map::ClearNavPointSrvRequest& req, mower_map::ClearNavPointSrvResponse& res) {
-  ROS_INFO_STREAM("Clearing Nav Point");
-
-  if (show_fake_obstacle) {
-    show_fake_obstacle = false;
-
-    buildMap();
-  }
 
   return true;
 }
@@ -1162,8 +1082,6 @@ int main(int argc, char** argv) {
   ros::ServiceServer get_area_srv = n.advertiseService("mower_map_service/get_mowing_area", getMowingArea);
   ros::ServiceServer set_docking_point_srv = n.advertiseService("mower_map_service/set_docking_point", setDockingPoint);
   ros::ServiceServer get_docking_point_srv = n.advertiseService("mower_map_service/get_docking_point", getDockingPoint);
-  ros::ServiceServer set_nav_point_srv = n.advertiseService("mower_map_service/set_nav_point", setNavPoint);
-  ros::ServiceServer clear_nav_point_srv = n.advertiseService("mower_map_service/clear_nav_point", clearNavPoint);
   ros::ServiceServer clear_map_srv = n.advertiseService("mower_map_service/clear_map", clearMap);
 
   ros::spin();

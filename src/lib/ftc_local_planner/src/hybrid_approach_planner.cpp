@@ -17,8 +17,10 @@ namespace ftc_local_planner
 HybridApproachPlanner::HybridApproachPlanner()
     : initialized_(false),
       using_near_controller_(false),
+      near_controller_enabled_(false),
       switch_costmap_margin_(0.25),
       min_plan_length_for_near_controller_(1.0),
+      near_controller_max_compute_time_(0.25),
       near_failure_count_(0),
       near_failure_limit_(3),
       near_retry_cooldown_(2.0),
@@ -40,8 +42,10 @@ void HybridApproachPlanner::initialize(std::string name, tf2_ros::Buffer *tf, co
     costmap_ros_ = costmap_ros;
 
     ros::NodeHandle private_nh("~/" + planner_name_);
+    private_nh.param("enable_near_controller", near_controller_enabled_, false);
     private_nh.param("switch_costmap_margin", switch_costmap_margin_, 0.25);
     private_nh.param("min_plan_length_for_near_controller", min_plan_length_for_near_controller_, 1.0);
+    private_nh.param("near_controller_max_compute_time", near_controller_max_compute_time_, 0.25);
     private_nh.param("near_failure_limit", near_failure_limit_, 3);
     private_nh.param("near_retry_cooldown", near_retry_cooldown_, 2.0);
     private_nh.param("far_controller_name", far_controller_name_, std::string("FTCPlanner"));
@@ -104,7 +108,8 @@ uint32_t HybridApproachPlanner::computeVelocityCommands(const geometry_msgs::Pos
         return 102;
     }
 
-    if (!using_near_controller_ &&
+    if (near_controller_enabled_ &&
+        !using_near_controller_ &&
         ros::Time::now() >= near_retry_allowed_at_ &&
         global_plan_length() >= min_plan_length_for_near_controller_ &&
         goal_is_within_local_costmap())
@@ -112,7 +117,32 @@ uint32_t HybridApproachPlanner::computeVelocityCommands(const geometry_msgs::Pos
         switch_to_near_controller();
     }
 
-    const uint32_t result = active_controller()->computeVelocityCommands(pose, velocity, cmd_vel, message);
+    const bool used_near_controller = using_near_controller_;
+    const ros::WallTime compute_started_at = ros::WallTime::now();
+    uint32_t result = active_controller()->computeVelocityCommands(pose, velocity, cmd_vel, message);
+    const double compute_duration = (ros::WallTime::now() - compute_started_at).toSec();
+
+    const bool near_controller_timed_out = used_near_controller &&
+                                           near_controller_max_compute_time_ > 0.0 &&
+                                           compute_duration > near_controller_max_compute_time_;
+
+    if (near_controller_timed_out)
+    {
+        near_failure_count_++;
+        ROS_WARN_STREAM("HybridApproachPlanner: Near controller " << near_controller_name_ << " took "
+                        << compute_duration << " s to compute commands (" << near_failure_count_ << "/"
+                        << near_failure_limit_ << "), exceeding the " << near_controller_max_compute_time_
+                        << " s limit.");
+        if (near_failure_count_ >= near_failure_limit_)
+        {
+            switch_to_far_controller("near controller exceeded compute time limit", true);
+        }
+        else
+        {
+            switch_to_far_controller("near controller exceeded compute time limit", false);
+        }
+        return active_controller()->computeVelocityCommands(pose, velocity, cmd_vel, message);
+    }
 
     if (using_near_controller_ && near_controller_failed(result))
     {

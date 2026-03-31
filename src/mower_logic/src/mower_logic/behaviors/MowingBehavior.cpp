@@ -676,23 +676,39 @@ bool MowingBehavior::execute_mowing_plan() {
     /////////////////////////////////////////////////////////////////////////////////////////////////////////
     {
       ROS_INFO_STREAM("MowingBehavior: (FIRST POINT)  Moving to path segment starting point");
-      if (path.is_outline && getConfig().add_fake_obstacle) {
-        mower_map::SetNavPointSrv set_nav_point_srv;
-        set_nav_point_srv.request.nav_pose = path.path.poses[currentMowingPathIndex].pose;
-        setNavPointClient.call(set_nav_point_srv);
-        sleep(1);
-      }
-
       const auto current_pose = getPose();
       const auto& first_point_target = path.path.poses[currentMowingPathIndex];
       double dx = first_point_target.pose.position.x - current_pose.pose.pose.position.x;
       double dy = first_point_target.pose.position.y - current_pose.pose.pose.position.y;
       bool skip_first_point_move_base = std::hypot(dx, dy) <= config.first_point_skip_distance;
+      const bool use_fake_nav_obstacle =
+          path.is_outline && getConfig().add_fake_obstacle && !skip_first_point_move_base;
+      bool fake_nav_obstacle_active = false;
+
+      auto clear_fake_nav_obstacle = [&]() {
+        if (!fake_nav_obstacle_active) {
+          return;
+        }
+        mower_map::ClearNavPointSrv clear_nav_point_srv;
+        clearNavPointClient.call(clear_nav_point_srv);
+        fake_nav_obstacle_active = false;
+      };
 
       actionlib::SimpleClientGoalState current_status(actionlib::SimpleClientGoalState::SUCCEEDED);
       ros::Rate r(10);
 
       if (!skip_first_point_move_base) {
+        if (use_fake_nav_obstacle) {
+          mower_map::SetNavPointSrv set_nav_point_srv;
+          set_nav_point_srv.request.nav_pose = first_point_target.pose;
+          if (setNavPointClient.call(set_nav_point_srv)) {
+            fake_nav_obstacle_active = true;
+            sleep(1);
+          } else {
+            ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) Failed to set temporary nav obstacle.");
+          }
+        }
+
         mbf_msgs::MoveBaseGoal moveBaseGoal;
         moveBaseGoal.target_pose = first_point_target;
         moveBaseGoal.controller = config.navigation_controller;
@@ -710,11 +726,13 @@ bool MowingBehavior::execute_mowing_plan() {
               // remove all paths in current area and return true
               mowerEnabled = false;
               mbfClient->cancelAllGoals();
+              clear_fake_nav_obstacle();
               currentMowingPaths.clear();
               skip_area = false;
               return true;
             }
             if (skip_path) {
+              clear_fake_nav_obstacle();
               skip_path = false;
               currentMowingPath++;
               currentMowingPathIndex = 0;
@@ -724,12 +742,14 @@ bool MowingBehavior::execute_mowing_plan() {
               ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) ABORT was requested - stopping path execution.");
               mbfClient->cancelAllGoals();
               mowerEnabled = false;
+              clear_fake_nav_obstacle();
               return false;
             }
             if (requested_pause_flag) {
               ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) PAUSE was requested - stopping path execution.");
               mbfClient->cancelAllGoals();
               mowerEnabled = false;
+              clear_fake_nav_obstacle();
               return false;
             }
           } else {
@@ -750,6 +770,7 @@ bool MowingBehavior::execute_mowing_plan() {
 
       first_point_attempt_counter++;
       if (current_status.state_ != actionlib::SimpleClientGoalState::SUCCEEDED) {
+        clear_fake_nav_obstacle();
         // we cannot reach the start point
         ROS_ERROR_STREAM("MowingBehavior: (FIRST POINT) - Could not reach goal (first point). Planner Status was: "
                          << current_status.state_);
@@ -787,8 +808,7 @@ bool MowingBehavior::execute_mowing_plan() {
         continue;
       }
 
-      mower_map::ClearNavPointSrv clear_nav_point_srv;
-      clearNavPointClient.call(clear_nav_point_srv);
+      clear_fake_nav_obstacle();
 
       // we have reached the start pose of the mow area, reset error handling values
       first_point_attempt_counter = 0;

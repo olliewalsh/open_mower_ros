@@ -1,9 +1,11 @@
 HybridApproachPlanner:
+  enable_near_controller: false
   far_controller_name: FTCPlanner
   far_controller_type: ftc_local_planner/FTCPlanner
   near_controller_name: TEBPlanner
   near_controller_type: teb_local_planner/TebLocalPlannerROS
   switch_costmap_margin: 0.25
   min_plan_length_for_near_controller: 1.0
+  near_controller_max_compute_time: 0.25
   near_failure_limit: 3
   near_retry_cooldown: 2.0

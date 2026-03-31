@@ -48,8 +48,10 @@ class HybridApproachPlanner : public mbf_costmap_core::CostmapController
 
     bool initialized_;
     bool using_near_controller_;
+    bool near_controller_enabled_;
     double switch_costmap_margin_;
     double min_plan_length_for_near_controller_;
+    double near_controller_max_compute_time_;
     int near_failure_count_;
     int near_failure_limit_;
     double near_retry_cooldown_;

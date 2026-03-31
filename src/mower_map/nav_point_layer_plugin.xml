@@ -1,0 +1,7 @@
+<library path="lib/libmower_map_nav_point_layer">
+  <class name="mower_map/NavPointLayer"
+         type="mower_map::NavPointLayer"
+         base_class_type="costmap_2d::Layer">
+    <description>Temporary footprint-based U-shaped obstacle around the nav point.</description>
+  </class>
+</library>
