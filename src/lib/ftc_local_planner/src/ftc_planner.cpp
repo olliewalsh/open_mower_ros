@@ -131,14 +131,7 @@ namespace ftc_local_planner
     std::vector<geometry_msgs::PoseStamped> FTCPlanner::prune_initial_plan_points(
         const std::vector<geometry_msgs::PoseStamped> &plan) const
     {
-        if (plan.size() <= 3)
-        {
-            return plan;
-        }
-
-        std::vector<geometry_msgs::PoseStamped> pruned_plan = plan;
-
-        return pruned_plan;
+        return plan;
     }
 
     FTCPlanner::~FTCPlanner()

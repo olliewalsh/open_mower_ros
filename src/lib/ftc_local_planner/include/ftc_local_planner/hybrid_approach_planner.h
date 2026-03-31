@@ -41,6 +41,8 @@ class HybridApproachPlanner : public mbf_costmap_core::CostmapController
     bool goal_is_within_local_costmap() const;
     bool near_controller_failed(uint32_t result) const;
     double global_plan_length() const;
+    std::vector<geometry_msgs::PoseStamped> simplify_far_plan(
+        const std::vector<geometry_msgs::PoseStamped> &plan) const;
     void switch_to_near_controller();
     void switch_to_far_controller(const std::string &reason, bool start_cooldown);
 
@@ -65,6 +67,7 @@ class HybridApproachPlanner : public mbf_costmap_core::CostmapController
     ControllerPtr far_controller_;
     ControllerPtr near_controller_;
     std::vector<geometry_msgs::PoseStamped> global_plan_;
+    std::vector<geometry_msgs::PoseStamped> far_controller_plan_;
 };
 
 }  // namespace ftc_local_planner
