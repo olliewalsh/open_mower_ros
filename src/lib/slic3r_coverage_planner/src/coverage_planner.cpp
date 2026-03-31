@@ -16,6 +16,7 @@
 #include "visualization_msgs/MarkerArray.h"
 #include "Surface.hpp"
 #include <tf2/LinearMath/Quaternion.h>
+#include <tf2/utils.h>
 #include <Fill/FillPlanePath.hpp>
 #include <PerimeterGenerator.hpp>
 
@@ -182,6 +183,20 @@ createMarkers(const slic3r_coverage_planner::PlanPathRequest &planning_request,
             marker.scale.x = 0.2;
             marker.scale.y = marker.scale.z = 0.05;
             markerArray.markers.push_back(marker);
+
+            visualization_msgs::Marker end_marker;
+            end_marker.header.frame_id = "map";
+            end_marker.ns = "mower_map_service_lines";
+            end_marker.id = static_cast<int>(markerArray.markers.size());
+            end_marker.frame_locked = true;
+            end_marker.action = visualization_msgs::Marker::ADD;
+            end_marker.type = visualization_msgs::Marker::ARROW;
+            end_marker.color = colors[cidx];
+            end_marker.color.a = 0.7;
+            end_marker.pose = path.path.poses.back().pose;
+            end_marker.scale.x = 0.16;
+            end_marker.scale.y = end_marker.scale.z = 0.04;
+            markerArray.markers.push_back(end_marker);
         }
 
         // New color for a new path
@@ -311,10 +326,16 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
         return path;
     }
 
-    // finally, we add the final pose for "lastPoint" with the same orientation as the last pose
+    // finally, add the final pose for "lastPoint".
+    // Area outlines end with a normal orientation; obstacle outlines are reversed later, so keep
+    // the pre-reversal final pose tangent and apply the normal on the published path after reversal.
     geometry_msgs::PoseStamped pose;
     pose.header = header;
-    pose.pose.orientation = path.path.poses.back().pose.orientation;
+    tf2::Quaternion q_final;
+    double tangent_orientation = tf2::getYaw(path.path.poses.back().pose.orientation);
+    double final_orientation = isObstacle ? tangent_orientation : (tangent_orientation + M_PI_2);
+    q_final.setRPY(0.0, 0.0, final_orientation);
+    pose.pose.orientation = tf2::toMsg(q_final);
     pose.pose.position.x = unscale(lastPoint.x);
     pose.pose.position.y = unscale(lastPoint.y);
     pose.pose.position.z = 0;
@@ -584,6 +605,15 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
         auto path = determinePathForOutline(header, outline_poly, group, true, nullptr, req.distance * 3.0);
         if (!path.path.poses.empty()) {
             std::reverse(path.path.poses.begin(), path.path.poses.end());
+            if (path.path.poses.size() >= 2) {
+                path.path.poses.front().pose.orientation = path.path.poses[1].pose.orientation;
+
+                tf2::Quaternion q_final;
+                double tangent_orientation = tf2::getYaw(
+                    path.path.poses[path.path.poses.size() - 2].pose.orientation);
+                q_final.setRPY(0.0, 0.0, tangent_orientation + M_PI_2);
+                path.path.poses.back().pose.orientation = tf2::toMsg(q_final);
+            }
             res.paths.push_back(path);
         }
     }
