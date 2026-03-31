@@ -5,6 +5,8 @@
 #ifndef DIFF_DRIVE_SERVICE_HPP
 #define DIFF_DRIVE_SERVICE_HPP
 
+#include <ros/ros.h>
+
 #include <DiffDriveServiceBase.hpp>
 #include <cmath>
 
@@ -35,8 +37,11 @@ class DiffDriveService : public DiffDriveServiceBase {
     return WheelSpeedController::Gains{1.5f, 0.35f, 1.5f};
   }
   SimRobot& robot_;
+  ros::NodeHandle ll_diff_drive_param_nh_{"/ll/services/diff_drive"};
   float desired_speed_l_ = 0.0f;
   float desired_speed_r_ = 0.0f;
+  float wheel_distance_m_ = 0.0f;
+  float wheel_ticks_per_meter_ = 0.0f;
   uint32_t last_ticks_left_ = 0;
   uint32_t last_ticks_right_ = 0;
   bool last_ticks_valid_ = false;
@@ -47,6 +52,7 @@ class DiffDriveService : public DiffDriveServiceBase {
   WheelSpeedLimitEstimator wheel_speed_limit_estimator_{};
 
   WheelSpeedController::Gains GetConfiguredWheelSpeedControllerGains() const;
+  bool LoadDiffDriveGeometryParams();
   float GetNominalWheelSpeedLimit() const;
   void UpdateControllerGains();
   void UpdateDutyFromMeasuredSpeeds(float dt);

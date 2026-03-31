@@ -7,21 +7,41 @@
 #include <algorithm>
 
 WheelSpeedController::Gains DiffDriveService::GetConfiguredWheelSpeedControllerGains() const {
+  const auto defaults = DefaultWheelSpeedControllerGains();
   WheelSpeedController::Gains gains{
       static_cast<float>(WheelSpeedFeedforward.value),
       static_cast<float>(WheelSpeedKp.value),
       static_cast<float>(WheelSpeedKi.value),
   };
+  double param_feedforward = gains.feedforward;
+  double param_kp = gains.kp;
+  double param_ki = gains.ki;
+  ll_diff_drive_param_nh_.param("wheel_speed_feedforward", param_feedforward, static_cast<double>(gains.feedforward));
+  ll_diff_drive_param_nh_.param("wheel_speed_kp", param_kp, static_cast<double>(gains.kp));
+  ll_diff_drive_param_nh_.param("wheel_speed_ki", param_ki, static_cast<double>(gains.ki));
+  gains.feedforward = static_cast<float>(param_feedforward);
+  gains.kp = static_cast<float>(param_kp);
+  gains.ki = static_cast<float>(param_ki);
   if (gains.feedforward <= 0.0f) {
-    gains.feedforward = DefaultWheelSpeedControllerGains().feedforward;
+    gains.feedforward = defaults.feedforward;
   }
   if (gains.kp < 0.0f) {
-    gains.kp = DefaultWheelSpeedControllerGains().kp;
+    gains.kp = defaults.kp;
   }
   if (gains.ki < 0.0f) {
-    gains.ki = DefaultWheelSpeedControllerGains().ki;
+    gains.ki = defaults.ki;
   }
   return gains;
+}
+
+bool DiffDriveService::LoadDiffDriveGeometryParams() {
+  double wheel_distance = static_cast<double>(WheelDistance.value);
+  double wheel_ticks_per_meter = static_cast<double>(WheelTicksPerMeter.value);
+  ll_diff_drive_param_nh_.param("wheel_distance_m", wheel_distance, wheel_distance);
+  ll_diff_drive_param_nh_.param("ticks_per_m", wheel_ticks_per_meter, wheel_ticks_per_meter);
+  wheel_distance_m_ = static_cast<float>(wheel_distance);
+  wheel_ticks_per_meter_ = static_cast<float>(wheel_ticks_per_meter);
+  return wheel_distance_m_ > 0.0f && wheel_ticks_per_meter_ > 0.0f;
 }
 
 float DiffDriveService::GetNominalWheelSpeedLimit() const {
@@ -77,17 +97,17 @@ void DiffDriveService::OnControlTwistChanged(const double* new_value, uint32_t l
   last_control_twist_received_ = ros::Time::now();
   const auto linear = static_cast<float>(new_value[0]);
   const auto angular = static_cast<float>(new_value[5]);
-  desired_speed_r_ = linear + 0.5f * static_cast<float>(WheelDistance.value) * angular;
-  desired_speed_l_ = linear - 0.5f * static_cast<float>(WheelDistance.value) * angular;
+  desired_speed_r_ = linear + 0.5f * wheel_distance_m_ * angular;
+  desired_speed_l_ = linear - 0.5f * wheel_distance_m_ * angular;
   UpdateDutyFromMeasuredSpeeds(0.0f);
   SetDuty();
 }
 
 bool DiffDriveService::OnStart() {
-  if (WheelDistance.value == 0 || WheelTicksPerMeter.value == 0.0) {
+  if (!LoadDiffDriveGeometryParams()) {
     return false;
   }
-  robot_.ConfigureDiffDrive(static_cast<double>(WheelDistance.value), static_cast<double>(WheelTicksPerMeter.value));
+  robot_.ConfigureDiffDrive(static_cast<double>(wheel_distance_m_), static_cast<double>(wheel_ticks_per_meter_));
   UpdateControllerGains();
   ResetDriveCommandState();
   last_ticks_valid_ = false;
@@ -107,11 +127,10 @@ void DiffDriveService::ProcessStatusUpdate() {
     const double dt = std::max(1e-6, (now - last_status_update_).toSec());
     const int32_t d_left = static_cast<int32_t>(state.left_tacho - last_ticks_left_);
     const int32_t d_right = static_cast<int32_t>(state.right_tacho - last_ticks_right_);
-    const float wheel_ticks_per_meter = static_cast<float>(WheelTicksPerMeter.value);
     left_wheel_controller_.SetMeasuredSpeed(static_cast<float>(d_left) /
-                                            static_cast<float>(dt * wheel_ticks_per_meter));
+                                            static_cast<float>(dt * wheel_ticks_per_meter_));
     right_wheel_controller_.SetMeasuredSpeed(-static_cast<float>(d_right) /
-                                             static_cast<float>(dt * wheel_ticks_per_meter));
+                                             static_cast<float>(dt * wheel_ticks_per_meter_));
     UpdateDutyFromMeasuredSpeeds(static_cast<float>(dt));
     SetDuty();
   } else {
