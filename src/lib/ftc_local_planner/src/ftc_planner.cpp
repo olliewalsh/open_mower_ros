@@ -546,15 +546,28 @@ namespace ftc_local_planner
         {
             double distance = local_control_point.translation().norm();
             double longitudinal_lag = std::max(0.0, lon_error);
+
+            // If the last path segment is already consumed, transition into the goal-approach state
+            // before running lag/crash checks. This avoids false crashes on the tail of the path.
+            if (current_index >= global_plan.size() - 2 &&
+                (current_index >= global_plan.size() - 1 || current_progress >= 0.999))
+            {
+                ROS_INFO_STREAM("FTCLocalPlannerROS: switching planner to position mode");
+                set_planner_state(WAITING_FOR_GOAL_APPROACH);
+                return;
+            }
+
             double lag_speed = std::max(current_movement_speed, config.follow_lag_min_speed);
             double follow_lag_time = longitudinal_lag / lag_speed;
             if (config.max_follow_lag_time > 0.0 &&
+                longitudinal_lag > config.min_follow_lag_distance &&
                 time_in_current_state() > config.follow_lag_grace_period &&
                 follow_lag_time > config.max_follow_lag_time)
             {
                 ROS_ERROR_STREAM("FTCLocalPlannerROS: Robot is lagging behind the control point. follow_lag_time (" << follow_lag_time
                                  << " s) > config.max_follow_lag_time (" << config.max_follow_lag_time
-                                 << " s), longitudinal_lag (" << longitudinal_lag << " m), lag_speed (" << lag_speed << " m/s). It probably has crashed.");
+                                 << " s), longitudinal_lag (" << longitudinal_lag << " m) > config.min_follow_lag_distance ("
+                                 << config.min_follow_lag_distance << " m), lag_speed (" << lag_speed << " m/s). It probably has crashed.");
                 is_crashed = true;
                 set_planner_state(FINISHED);
                 return;
@@ -569,14 +582,6 @@ namespace ftc_local_planner
                 return;
             }
 
-            // check if we're done following
-            if (current_index >= global_plan.size() - 2 &&
-                (current_index >= global_plan.size() - 1 || current_progress >= 0.999))
-            {
-                ROS_INFO_STREAM("FTCLocalPlannerROS: switching planner to position mode");
-                set_planner_state(WAITING_FOR_GOAL_APPROACH);
-                return;
-            }
         }
         break;
         case WAITING_FOR_GOAL_APPROACH:
