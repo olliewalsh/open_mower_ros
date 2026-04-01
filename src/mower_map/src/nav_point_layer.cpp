@@ -25,6 +25,7 @@ void NavPointLayer::onInitialize() {
   private_nh.param("front_padding", front_padding_, 0.15);
   private_nh.param("rear_opening_offset", rear_opening_offset_, 0.05);
   private_nh.param("wall_thickness", wall_thickness_, 0.12);
+  private_nh.param("robot_clearance_padding", robot_clearance_padding_, 0.05);
 
   refreshFootprintMetrics();
 
@@ -83,16 +84,84 @@ std::vector<geometry_msgs::Point> NavPointLayer::makeWorldPolygon(
   return world_polygon;
 }
 
+std::vector<std::pair<double, double>> NavPointLayer::getRobotFootprintInNavFrame() const {
+  std::vector<std::pair<double, double>> local_points;
+  if (!robot_pose_valid_) {
+    return local_points;
+  }
+
+  const auto footprint = layered_costmap_->getFootprint();
+  if (footprint.empty()) {
+    return local_points;
+  }
+
+  tf2::Quaternion nav_q;
+  tf2::fromMsg(nav_pose_.orientation, nav_q);
+  double nav_roll = 0.0;
+  double nav_pitch = 0.0;
+  double nav_yaw = 0.0;
+  tf2::Matrix3x3(nav_q).getRPY(nav_roll, nav_pitch, nav_yaw);
+
+  const double robot_c = std::cos(robot_yaw_);
+  const double robot_s = std::sin(robot_yaw_);
+  const double nav_c = std::cos(-nav_yaw);
+  const double nav_s = std::sin(-nav_yaw);
+
+  local_points.reserve(footprint.size());
+  for (const auto& point : footprint) {
+    const double world_x = robot_x_ + point.x * robot_c - point.y * robot_s;
+    const double world_y = robot_y_ + point.x * robot_s + point.y * robot_c;
+
+    const double dx = world_x - nav_pose_.position.x;
+    const double dy = world_y - nav_pose_.position.y;
+
+    const double local_x = dx * nav_c - dy * nav_s;
+    const double local_y = dx * nav_s + dy * nav_c;
+    local_points.emplace_back(local_x, local_y);
+  }
+
+  return local_points;
+}
+
 std::vector<std::vector<geometry_msgs::Point>> NavPointLayer::buildNavObstaclePolygons() const {
-  const double inner_left = footprint_left_ + side_padding_;
-  const double inner_right = footprint_right_ - side_padding_;
-  const double outer_left = inner_left + wall_thickness_;
-  const double outer_right = inner_right - wall_thickness_;
+  double inner_left = footprint_left_ + side_padding_;
+  double inner_right = footprint_right_ - side_padding_;
   const double side_wall_front = footprint_front_ + front_padding_;
   const double side_wall_rear = footprint_rear_ + rear_opening_offset_;
   const double front_wall_front = side_wall_front + wall_thickness_;
+  bool include_front_wall = true;
+
+  const auto robot_footprint_local = getRobotFootprintInNavFrame();
+  if (!robot_footprint_local.empty()) {
+    double robot_front = robot_footprint_local.front().first;
+    double robot_left = robot_footprint_local.front().second;
+    double robot_right = robot_footprint_local.front().second;
+    for (const auto& point : robot_footprint_local) {
+      robot_front = std::max(robot_front, point.first);
+      robot_left = std::max(robot_left, point.second);
+      robot_right = std::min(robot_right, point.second);
+    }
+
+    if (robot_left >= inner_left - robot_clearance_padding_) {
+      inner_left = robot_left + robot_clearance_padding_;
+    }
+    if (robot_right <= inner_right + robot_clearance_padding_) {
+      inner_right = robot_right - robot_clearance_padding_;
+    }
+
+    if (robot_front >= side_wall_front - robot_clearance_padding_) {
+      include_front_wall = false;
+    }
+  }
+
+  const double outer_left = inner_left + wall_thickness_;
+  const double outer_right = inner_right - wall_thickness_;
 
   std::vector<std::vector<geometry_msgs::Point>> polygons;
+
+  if (side_wall_rear >= side_wall_front || inner_right >= inner_left || outer_right >= outer_left) {
+    return polygons;
+  }
 
   const auto append_polygon = [&](const std::vector<std::pair<double, double>>& local_polygon) {
     polygons.push_back(makeWorldPolygon(local_polygon));
@@ -112,12 +181,14 @@ std::vector<std::vector<geometry_msgs::Point>> NavPointLayer::buildNavObstaclePo
       {side_wall_rear, inner_right},
   });
 
-  append_polygon({
-      {side_wall_front, outer_right},
-      {front_wall_front, outer_right},
-      {front_wall_front, outer_left},
-      {side_wall_front, outer_left},
-  });
+  if (include_front_wall) {
+    append_polygon({
+        {side_wall_front, outer_right},
+        {front_wall_front, outer_right},
+        {front_wall_front, outer_left},
+        {side_wall_front, outer_left},
+    });
+  }
 
   return polygons;
 }
@@ -157,11 +228,16 @@ void NavPointLayer::updateBoundsFrom(const Bounds& bounds, double* min_x, double
   *max_y = std::max(*max_y, bounds.max_y);
 }
 
-void NavPointLayer::updateBounds(double /*robot_x*/, double /*robot_y*/, double /*robot_yaw*/, double* min_x,
-                                 double* min_y, double* max_x, double* max_y) {
+void NavPointLayer::updateBounds(double robot_x, double robot_y, double robot_yaw, double* min_x, double* min_y,
+                                 double* max_x, double* max_y) {
   if (!enabled_) {
     return;
   }
+
+  robot_x_ = robot_x;
+  robot_y_ = robot_y;
+  robot_yaw_ = robot_yaw;
+  robot_pose_valid_ = true;
 
   refreshFootprintMetrics();
 
