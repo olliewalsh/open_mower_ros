@@ -33,6 +33,7 @@ void NavPointLayer::onInitialize() {
   private_nh.param("rear_opening_offset", rear_opening_offset_, 0.05);
   private_nh.param("wall_thickness", wall_thickness_, 0.12);
   private_nh.param("robot_clearance_padding", robot_clearance_padding_, 0.05);
+  private_nh.param("nav_obstacle_cost", nav_obstacle_cost_, 240);
   private_nh.param("inner_soft_buffer_width", inner_soft_buffer_width_, 0.2);
   private_nh.param("inner_soft_buffer_cost", inner_soft_buffer_cost_, 200);
   private_nh.param("apply_timeout_seconds", apply_timeout_seconds_, 5.0);
@@ -156,7 +157,8 @@ NavPointLayer::NavObstacleLayout NavPointLayer::computeNavObstacleLayout() const
   layout.inner_left = footprint_left_ + side_padding_;
   layout.inner_right = footprint_right_ - side_padding_;
   layout.side_wall_front = footprint_front_ + front_padding_;
-  layout.side_wall_rear = footprint_rear_ + rear_opening_offset_;
+  layout.side_wall_rear = footprint_rear_ + rear_opening_offset_ -
+                          0.3 * std::max(0.0, layout.side_wall_front - (footprint_rear_ + rear_opening_offset_));
   layout.front_wall_front = layout.side_wall_front + wall_thickness_;
   layout.include_front_wall = true;
 
@@ -389,11 +391,13 @@ void NavPointLayer::updateCosts(costmap_2d::Costmap2D& master_grid, int /*min_i*
 
   const unsigned char soft_cost = static_cast<unsigned char>(
       std::max(0, std::min(inner_soft_buffer_cost_, static_cast<int>(costmap_2d::LETHAL_OBSTACLE - 1))));
+  const unsigned char nav_obstacle_cost = static_cast<unsigned char>(
+      std::max(0, std::min(nav_obstacle_cost_, static_cast<int>(costmap_2d::LETHAL_OBSTACLE - 1))));
   for (const auto& poly : soft_polygons) {
     master_grid.setConvexPolygonCost(poly, soft_cost);
   }
   for (const auto& poly : polygons) {
-    master_grid.setConvexPolygonCost(poly, costmap_2d::LETHAL_OBSTACLE);
+    master_grid.setConvexPolygonCost(poly, nav_obstacle_cost);
   }
 }
 

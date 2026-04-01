@@ -87,6 +87,7 @@ class NavPointLayer : public costmap_2d::CostmapLayer {
   double rear_opening_offset_ = 0.05;
   double wall_thickness_ = 0.12;
   double robot_clearance_padding_ = 0.05;
+  int nav_obstacle_cost_ = 240;
   double inner_soft_buffer_width_ = 0.2;
   int inner_soft_buffer_cost_ = 200;
   double apply_timeout_seconds_ = 5.0;
