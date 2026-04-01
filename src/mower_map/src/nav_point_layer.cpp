@@ -26,6 +26,7 @@ void NavPointLayer::onInitialize() {
   private_nh.param("rear_opening_offset", rear_opening_offset_, 0.05);
   private_nh.param("wall_thickness", wall_thickness_, 0.12);
   private_nh.param("robot_clearance_padding", robot_clearance_padding_, 0.05);
+  private_nh.param("apply_timeout_seconds", apply_timeout_seconds_, 5.0);
 
   refreshFootprintMetrics();
 
@@ -234,13 +235,17 @@ void NavPointLayer::updateBounds(double robot_x, double robot_y, double robot_ya
     return;
   }
 
-  robot_x_ = robot_x;
-  robot_y_ = robot_y;
-  robot_yaw_ = robot_yaw;
-  robot_pose_valid_ = true;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    robot_x_ = robot_x;
+    robot_y_ = robot_y;
+    robot_yaw_ = robot_yaw;
+    robot_pose_valid_ = true;
+  }
 
   refreshFootprintMetrics();
 
+  std::lock_guard<std::mutex> lock(state_mutex_);
   if (nav_point_dirty_) {
     updateBoundsFrom(last_bounds_, min_x, min_y, max_x, max_y);
     const Bounds current_bounds = computeObstacleBounds();
@@ -255,35 +260,65 @@ void NavPointLayer::updateBounds(double robot_x, double robot_y, double robot_ya
 
 void NavPointLayer::updateCosts(costmap_2d::Costmap2D& master_grid, int /*min_i*/, int /*min_j*/, int /*max_i*/,
                                 int /*max_j*/) {
-  if (!enabled_ || !nav_point_active_) {
+  if (!enabled_) {
     return;
   }
 
-  const auto polygons = buildNavObstaclePolygons();
+  std::unique_lock<std::mutex> lock(state_mutex_);
+  const bool nav_point_active = nav_point_active_;
+  const auto polygons =
+      nav_point_active ? buildNavObstaclePolygons() : std::vector<std::vector<geometry_msgs::Point>>{};
+  applied_generation_ = requested_generation_;
+  lock.unlock();
+  state_cv_.notify_all();
+
   for (const auto& poly : polygons) {
     master_grid.setConvexPolygonCost(poly, costmap_2d::LETHAL_OBSTACLE);
   }
 }
 
 bool NavPointLayer::setNavPoint(mower_map::SetNavPointSrvRequest& req, mower_map::SetNavPointSrvResponse& /*res*/) {
-  nav_pose_ = req.nav_pose;
-  nav_point_active_ = true;
-  nav_point_dirty_ = true;
-  current_ = false;
+  uint64_t generation = 0;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    nav_pose_ = req.nav_pose;
+    nav_point_active_ = true;
+    nav_point_dirty_ = true;
+    current_ = false;
+    generation = ++requested_generation_;
+  }
   ROS_INFO_STREAM("NavPointLayer: Set temporary nav obstacle.");
-  return true;
+  return waitForAppliedGeneration(generation);
 }
 
 bool NavPointLayer::clearNavPoint(mower_map::ClearNavPointSrvRequest& /*req*/,
                                   mower_map::ClearNavPointSrvResponse& /*res*/) {
-  if (!nav_point_active_) {
+  uint64_t generation = 0;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (!nav_point_active_) {
+      return true;
+    }
+    nav_point_active_ = false;
+    nav_point_dirty_ = true;
+    current_ = false;
+    generation = ++requested_generation_;
+  }
+  ROS_INFO_STREAM("NavPointLayer: Cleared temporary nav obstacle.");
+  return waitForAppliedGeneration(generation);
+}
+
+bool NavPointLayer::waitForAppliedGeneration(uint64_t generation) {
+  std::unique_lock<std::mutex> lock(state_mutex_);
+  if (applied_generation_ >= generation) {
     return true;
   }
-  nav_point_active_ = false;
-  nav_point_dirty_ = true;
-  current_ = false;
-  ROS_INFO_STREAM("NavPointLayer: Cleared temporary nav obstacle.");
-  return true;
+  const bool applied = state_cv_.wait_for(lock, std::chrono::duration<double>(apply_timeout_seconds_),
+                                          [&]() { return applied_generation_ >= generation; });
+  if (!applied) {
+    ROS_WARN_STREAM("NavPointLayer: Timed out waiting for nav point generation " << generation << " to apply.");
+  }
+  return applied;
 }
 
 }  // namespace mower_map

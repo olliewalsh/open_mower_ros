@@ -7,6 +7,10 @@
 #include <mower_map/SetNavPointSrv.h>
 #include <ros/ros.h>
 
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+
 namespace mower_map {
 
 class NavPointLayer : public costmap_2d::CostmapLayer {
@@ -37,10 +41,13 @@ class NavPointLayer : public costmap_2d::CostmapLayer {
   Bounds computeObstacleBounds() const;
   void updateBoundsFrom(const Bounds& bounds, double* min_x, double* min_y, double* max_x, double* max_y) const;
   void refreshFootprintMetrics();
+  bool waitForAppliedGeneration(uint64_t generation);
 
   ros::NodeHandle service_nh_;
   ros::ServiceServer set_nav_point_srv_;
   ros::ServiceServer clear_nav_point_srv_;
+  mutable std::mutex state_mutex_;
+  std::condition_variable state_cv_;
 
   geometry_msgs::Pose nav_pose_;
   double robot_x_ = 0.0;
@@ -60,6 +67,9 @@ class NavPointLayer : public costmap_2d::CostmapLayer {
   double rear_opening_offset_ = 0.05;
   double wall_thickness_ = 0.12;
   double robot_clearance_padding_ = 0.05;
+  double apply_timeout_seconds_ = 5.0;
+  uint64_t requested_generation_ = 0;
+  uint64_t applied_generation_ = 0;
 };
 
 }  // namespace mower_map
