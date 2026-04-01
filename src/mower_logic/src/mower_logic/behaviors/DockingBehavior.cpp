@@ -136,11 +136,8 @@ bool DockingBehavior::dock_straight() {
 
   // we can assume the last_state is current since we have a security timer
   while (waitingForResult) {
-    r.sleep();
-
     const auto last_status = getStatus();
     const auto last_power = getPower();
-    auto mbfState = mbfClientExePath->getState();
 
     if (aborted) {
       ROS_INFO_STREAM("Docking aborted.");
@@ -148,24 +145,27 @@ bool DockingBehavior::dock_straight() {
       stopMoving();
       dockingSuccess = false;
       waitingForResult = false;
+      continue;
     }
 
     // Use first valid sensor
     const float last_charge_v = utils::GetFirstValid({last_power.charge_voltage_adc, last_power.charge_voltage_chg});
 
+    if (!mbfClientExePath->waitForResult(ros::Duration(0.1))) {
+      // currently moving or pending. Cancel as soon as we're in the station
+      if (last_charge_v > 5.0) {
+        ROS_INFO_STREAM("Got a voltage of " << last_charge_v << " V. Cancelling docking.");
+        ros::Duration(config.docking_extra_time).sleep();
+        mbfClientExePath->cancelGoal();
+        stopMoving();
+        dockingSuccess = true;
+        waitingForResult = false;
+      }
+      continue;
+    }
+
+    auto mbfState = mbfClientExePath->getState();
     switch (mbfState.state_) {
-      case actionlib::SimpleClientGoalState::ACTIVE:
-      case actionlib::SimpleClientGoalState::PENDING:
-        // currently moving. Cancel as soon as we're in the station
-        if (last_charge_v > 5.0) {
-          ROS_INFO_STREAM("Got a voltage of " << last_charge_v << " V. Cancelling docking.");
-          ros::Duration(config.docking_extra_time).sleep();
-          mbfClientExePath->cancelGoal();
-          stopMoving();
-          dockingSuccess = true;
-          waitingForResult = false;
-        }
-        break;
       case actionlib::SimpleClientGoalState::SUCCEEDED:
         // we stopped moving because the path has ended. check, if we have docked successfully
         ROS_INFO_STREAM("Docking stopped, because we reached end pose. Voltage was " << last_charge_v << " V.");

@@ -105,19 +105,19 @@ class Behavior {
   actionlib::SimpleClientGoalState sendGoalAndWaitUnlessAborted(
       actionlib::SimpleActionClient<ActionSpec>* client, const typename ActionSpec::_action_goal_type::_goal_type& goal,
       double poll_rate = 10) {
-    ros::Rate rate(poll_rate);
+    const double poll_period = poll_rate > 0.0 ? (1.0 / poll_rate) : 0.1;
+    actionlib::SimpleClientGoalState last_state(actionlib::SimpleClientGoalState::PENDING);
     client->sendGoal(goal);
 
     while (true) {
-      rate.sleep();
-
-      auto state = client->getState();
       if (aborted) {
         client->cancelGoal();
-        return state;
+        return last_state;
       }
-      if (state.isDone()) {
-        return state;
+
+      if (client->waitForResult(ros::Duration(poll_period))) {
+        last_state = client->getState();
+        return last_state;
       }
     }
   }
