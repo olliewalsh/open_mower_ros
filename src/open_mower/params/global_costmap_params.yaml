@@ -8,10 +8,10 @@ global_costmap:
       type: costmap_2d::StaticLayer
     - name: obstacle_layer
       type: costmap_2d::ObstacleLayer
-    - name: nav_point_layer
-      type: mower_map/NavPointLayer
     - name: inflation_layer
       type: costmap_2d::InflationLayer
+    - name: nav_point_layer
+      type: mower_map/NavPointLayer
   nav_point_layer:
     enabled: true
     side_padding: 0.1

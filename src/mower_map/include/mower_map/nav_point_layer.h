@@ -33,9 +33,23 @@ class NavPointLayer : public costmap_2d::CostmapLayer {
     bool valid = false;
   };
 
+  struct NavObstacleLayout {
+    double inner_left = 0.0;
+    double inner_right = 0.0;
+    double outer_left = 0.0;
+    double outer_right = 0.0;
+    double side_wall_front = 0.0;
+    double side_wall_rear = 0.0;
+    double front_wall_front = 0.0;
+    bool include_front_wall = true;
+    bool valid = false;
+  };
+
   bool setNavPoint(mower_map::SetNavPointSrvRequest& req, mower_map::SetNavPointSrvResponse& res);
   bool clearNavPoint(mower_map::ClearNavPointSrvRequest& req, mower_map::ClearNavPointSrvResponse& res);
+  NavObstacleLayout computeNavObstacleLayout() const;
   std::vector<std::vector<geometry_msgs::Point>> buildNavObstaclePolygons() const;
+  std::vector<std::vector<geometry_msgs::Point>> buildNavSoftBufferPolygons() const;
   std::vector<geometry_msgs::Point> makeWorldPolygon(const std::vector<std::pair<double, double>>& local_polygon) const;
   std::vector<std::pair<double, double>> getRobotFootprintInNavFrame(double robot_x, double robot_y,
                                                                      double robot_yaw) const;
@@ -73,6 +87,8 @@ class NavPointLayer : public costmap_2d::CostmapLayer {
   double rear_opening_offset_ = 0.05;
   double wall_thickness_ = 0.12;
   double robot_clearance_padding_ = 0.05;
+  double inner_soft_buffer_width_ = 0.2;
+  int inner_soft_buffer_cost_ = 200;
   double apply_timeout_seconds_ = 5.0;
   uint64_t requested_generation_ = 0;
   uint64_t applied_generation_ = 0;

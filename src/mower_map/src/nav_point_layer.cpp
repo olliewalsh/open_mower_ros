@@ -33,6 +33,8 @@ void NavPointLayer::onInitialize() {
   private_nh.param("rear_opening_offset", rear_opening_offset_, 0.05);
   private_nh.param("wall_thickness", wall_thickness_, 0.12);
   private_nh.param("robot_clearance_padding", robot_clearance_padding_, 0.05);
+  private_nh.param("inner_soft_buffer_width", inner_soft_buffer_width_, 0.2);
+  private_nh.param("inner_soft_buffer_cost", inner_soft_buffer_cost_, 200);
   private_nh.param("apply_timeout_seconds", apply_timeout_seconds_, 5.0);
 
   refreshFootprintMetrics();
@@ -149,36 +151,37 @@ bool NavPointLayer::polygonsIntersect(const std::vector<geometry_msgs::Point>& a
   return bg::intersects(toBoostPolygon(a), toBoostPolygon(b));
 }
 
-std::vector<std::vector<geometry_msgs::Point>> NavPointLayer::buildNavObstaclePolygons() const {
-  double inner_left = footprint_left_ + side_padding_;
-  double inner_right = footprint_right_ - side_padding_;
-  const double side_wall_front = footprint_front_ + front_padding_;
-  const double side_wall_rear = footprint_rear_ + rear_opening_offset_;
-  const double front_wall_front = side_wall_front + wall_thickness_;
-  bool include_front_wall = true;
+NavPointLayer::NavObstacleLayout NavPointLayer::computeNavObstacleLayout() const {
+  NavObstacleLayout layout;
+  layout.inner_left = footprint_left_ + side_padding_;
+  layout.inner_right = footprint_right_ - side_padding_;
+  layout.side_wall_front = footprint_front_ + front_padding_;
+  layout.side_wall_rear = footprint_rear_ + rear_opening_offset_;
+  layout.front_wall_front = layout.side_wall_front + wall_thickness_;
+  layout.include_front_wall = true;
 
   const auto make_left_wall = [&](double current_inner_left) {
     return makeWorldPolygon({
-        {side_wall_rear, current_inner_left},
-        {side_wall_front, current_inner_left},
-        {side_wall_front, current_inner_left + wall_thickness_},
-        {side_wall_rear, current_inner_left + wall_thickness_},
+        {layout.side_wall_rear, current_inner_left},
+        {layout.side_wall_front, current_inner_left},
+        {layout.side_wall_front, current_inner_left + wall_thickness_},
+        {layout.side_wall_rear, current_inner_left + wall_thickness_},
     });
   };
   const auto make_right_wall = [&](double current_inner_right) {
     return makeWorldPolygon({
-        {side_wall_rear, current_inner_right - wall_thickness_},
-        {side_wall_front, current_inner_right - wall_thickness_},
-        {side_wall_front, current_inner_right},
-        {side_wall_rear, current_inner_right},
+        {layout.side_wall_rear, current_inner_right - wall_thickness_},
+        {layout.side_wall_front, current_inner_right - wall_thickness_},
+        {layout.side_wall_front, current_inner_right},
+        {layout.side_wall_rear, current_inner_right},
     });
   };
   const auto make_front_wall = [&](double current_inner_left, double current_inner_right) {
     return makeWorldPolygon({
-        {side_wall_front, current_inner_right - wall_thickness_},
-        {front_wall_front, current_inner_right - wall_thickness_},
-        {front_wall_front, current_inner_left + wall_thickness_},
-        {side_wall_front, current_inner_left + wall_thickness_},
+        {layout.side_wall_front, current_inner_right - wall_thickness_},
+        {layout.front_wall_front, current_inner_right - wall_thickness_},
+        {layout.front_wall_front, current_inner_left + wall_thickness_},
+        {layout.side_wall_front, current_inner_left + wall_thickness_},
     });
   };
 
@@ -194,32 +197,97 @@ std::vector<std::vector<geometry_msgs::Point>> NavPointLayer::buildNavObstaclePo
       }
 
       const auto robot_footprint_world = makeWorldPolygon(robot_footprint_local);
-      if (polygonsIntersect(robot_footprint_world, make_left_wall(inner_left))) {
-        inner_left = std::max(inner_left, robot_left + robot_clearance_padding_);
+      if (polygonsIntersect(robot_footprint_world, make_left_wall(layout.inner_left))) {
+        layout.inner_left = std::max(layout.inner_left, robot_left + robot_clearance_padding_);
       }
-      if (polygonsIntersect(robot_footprint_world, make_right_wall(inner_right))) {
-        inner_right = std::min(inner_right, robot_right - robot_clearance_padding_);
+      if (polygonsIntersect(robot_footprint_world, make_right_wall(layout.inner_right))) {
+        layout.inner_right = std::min(layout.inner_right, robot_right - robot_clearance_padding_);
       }
-      if (polygonsIntersect(robot_footprint_world, make_front_wall(inner_left, inner_right))) {
-        include_front_wall = false;
+      if (polygonsIntersect(robot_footprint_world, make_front_wall(layout.inner_left, layout.inner_right))) {
+        layout.include_front_wall = false;
       }
     }
   }
 
-  const double outer_left = inner_left + wall_thickness_;
-  const double outer_right = inner_right - wall_thickness_;
+  layout.outer_left = layout.inner_left + wall_thickness_;
+  layout.outer_right = layout.inner_right - wall_thickness_;
 
+  if (layout.side_wall_rear < layout.side_wall_front && layout.inner_right < layout.inner_left &&
+      layout.outer_right < layout.outer_left) {
+    layout.valid = true;
+  }
+
+  return layout;
+}
+
+std::vector<std::vector<geometry_msgs::Point>> NavPointLayer::buildNavObstaclePolygons() const {
+  const NavObstacleLayout layout = computeNavObstacleLayout();
   std::vector<std::vector<geometry_msgs::Point>> polygons;
-
-  if (side_wall_rear >= side_wall_front || inner_right >= inner_left || outer_right >= outer_left) {
+  if (!layout.valid) {
     return polygons;
   }
 
-  polygons.push_back(make_left_wall(inner_left));
-  polygons.push_back(make_right_wall(inner_right));
+  const auto make_left_wall = [&](double current_inner_left) {
+    return makeWorldPolygon({
+        {layout.side_wall_rear, current_inner_left},
+        {layout.side_wall_front, current_inner_left},
+        {layout.side_wall_front, current_inner_left + wall_thickness_},
+        {layout.side_wall_rear, current_inner_left + wall_thickness_},
+    });
+  };
+  const auto make_right_wall = [&](double current_inner_right) {
+    return makeWorldPolygon({
+        {layout.side_wall_rear, current_inner_right - wall_thickness_},
+        {layout.side_wall_front, current_inner_right - wall_thickness_},
+        {layout.side_wall_front, current_inner_right},
+        {layout.side_wall_rear, current_inner_right},
+    });
+  };
+  const auto make_front_wall = [&]() {
+    return makeWorldPolygon({
+        {layout.side_wall_front, layout.inner_right - wall_thickness_},
+        {layout.front_wall_front, layout.inner_right - wall_thickness_},
+        {layout.front_wall_front, layout.inner_left + wall_thickness_},
+        {layout.side_wall_front, layout.inner_left + wall_thickness_},
+    });
+  };
 
-  if (include_front_wall) {
-    polygons.push_back(make_front_wall(inner_left, inner_right));
+  polygons.push_back(make_left_wall(layout.inner_left));
+  polygons.push_back(make_right_wall(layout.inner_right));
+
+  if (layout.include_front_wall) {
+    polygons.push_back(make_front_wall());
+  }
+
+  return polygons;
+}
+
+std::vector<std::vector<geometry_msgs::Point>> NavPointLayer::buildNavSoftBufferPolygons() const {
+  const NavObstacleLayout layout = computeNavObstacleLayout();
+  std::vector<std::vector<geometry_msgs::Point>> polygons;
+  if (!layout.valid || inner_soft_buffer_width_ <= 0.0 || inner_soft_buffer_cost_ <= 0) {
+    return polygons;
+  }
+
+  const double left_buffer_inner = std::max(layout.inner_right, layout.inner_left - inner_soft_buffer_width_);
+  const double right_buffer_inner = std::min(layout.inner_left, layout.inner_right + inner_soft_buffer_width_);
+
+  if (left_buffer_inner < layout.inner_left) {
+    polygons.push_back(makeWorldPolygon({
+        {layout.side_wall_rear, left_buffer_inner},
+        {layout.side_wall_front, left_buffer_inner},
+        {layout.side_wall_front, layout.inner_left},
+        {layout.side_wall_rear, layout.inner_left},
+    }));
+  }
+
+  if (layout.inner_right < right_buffer_inner) {
+    polygons.push_back(makeWorldPolygon({
+        {layout.side_wall_rear, layout.inner_right},
+        {layout.side_wall_front, layout.inner_right},
+        {layout.side_wall_front, right_buffer_inner},
+        {layout.side_wall_rear, right_buffer_inner},
+    }));
   }
 
   return polygons;
@@ -231,7 +299,22 @@ NavPointLayer::Bounds NavPointLayer::computeObstacleBounds() const {
     return bounds;
   }
 
+  const auto soft_polygons = buildNavSoftBufferPolygons();
   const auto polygons = buildNavObstaclePolygons();
+  for (const auto& polygon : soft_polygons) {
+    for (const auto& point : polygon) {
+      if (!bounds.valid) {
+        bounds.min_x = bounds.max_x = point.x;
+        bounds.min_y = bounds.max_y = point.y;
+        bounds.valid = true;
+        continue;
+      }
+      bounds.min_x = std::min(bounds.min_x, static_cast<double>(point.x));
+      bounds.min_y = std::min(bounds.min_y, static_cast<double>(point.y));
+      bounds.max_x = std::max(bounds.max_x, static_cast<double>(point.x));
+      bounds.max_y = std::max(bounds.max_y, static_cast<double>(point.y));
+    }
+  }
   for (const auto& polygon : polygons) {
     for (const auto& point : polygon) {
       if (!bounds.valid) {
@@ -296,12 +379,19 @@ void NavPointLayer::updateCosts(costmap_2d::Costmap2D& master_grid, int /*min_i*
   }
 
   std::unique_lock<std::mutex> lock(state_mutex_);
+  const auto soft_polygons =
+      nav_point_active_ ? buildNavSoftBufferPolygons() : std::vector<std::vector<geometry_msgs::Point>>{};
   const auto polygons =
       nav_point_active_ ? buildNavObstaclePolygons() : std::vector<std::vector<geometry_msgs::Point>>{};
   applied_generation_ = requested_generation_;
   lock.unlock();
   state_cv_.notify_all();
 
+  const unsigned char soft_cost = static_cast<unsigned char>(
+      std::max(0, std::min(inner_soft_buffer_cost_, static_cast<int>(costmap_2d::LETHAL_OBSTACLE - 1))));
+  for (const auto& poly : soft_polygons) {
+    master_grid.setConvexPolygonCost(poly, soft_cost);
+  }
   for (const auto& poly : polygons) {
     master_grid.setConvexPolygonCost(poly, costmap_2d::LETHAL_OBSTACLE);
   }
