@@ -37,7 +37,9 @@ class NavPointLayer : public costmap_2d::CostmapLayer {
   bool clearNavPoint(mower_map::ClearNavPointSrvRequest& req, mower_map::ClearNavPointSrvResponse& res);
   std::vector<std::vector<geometry_msgs::Point>> buildNavObstaclePolygons() const;
   std::vector<geometry_msgs::Point> makeWorldPolygon(const std::vector<std::pair<double, double>>& local_polygon) const;
-  std::vector<std::pair<double, double>> getRobotFootprintInNavFrame() const;
+  std::vector<std::pair<double, double>> getRobotFootprintInNavFrame(double robot_x, double robot_y,
+                                                                     double robot_yaw) const;
+  bool polygonsIntersect(const std::vector<geometry_msgs::Point>& a, const std::vector<geometry_msgs::Point>& b) const;
   Bounds computeObstacleBounds() const;
   void updateBoundsFrom(const Bounds& bounds, double* min_x, double* min_y, double* max_x, double* max_y) const;
   void refreshFootprintMetrics();
@@ -54,6 +56,10 @@ class NavPointLayer : public costmap_2d::CostmapLayer {
   double robot_y_ = 0.0;
   double robot_yaw_ = 0.0;
   bool robot_pose_valid_ = false;
+  double nav_set_robot_x_ = 0.0;
+  double nav_set_robot_y_ = 0.0;
+  double nav_set_robot_yaw_ = 0.0;
+  bool nav_set_robot_pose_valid_ = false;
   bool nav_point_active_ = false;
   bool nav_point_dirty_ = false;
   Bounds last_bounds_;

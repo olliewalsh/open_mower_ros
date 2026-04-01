@@ -4,12 +4,19 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 #include <algorithm>
+#include <boost/geometry.hpp>
+#include <boost/geometry/geometries/point_xy.hpp>
+#include <boost/geometry/geometries/polygon.hpp>
 #include <utility>
 #include <vector>
 
 PLUGINLIB_EXPORT_CLASS(mower_map::NavPointLayer, costmap_2d::Layer)
 
 namespace mower_map {
+
+namespace bg = boost::geometry;
+using BoostPoint = bg::model::d2::point_xy<double>;
+using BoostPolygon = bg::model::polygon<BoostPoint>;
 
 NavPointLayer::NavPointLayer() : service_nh_("/mower_map_service") {
 }
@@ -85,12 +92,9 @@ std::vector<geometry_msgs::Point> NavPointLayer::makeWorldPolygon(
   return world_polygon;
 }
 
-std::vector<std::pair<double, double>> NavPointLayer::getRobotFootprintInNavFrame() const {
+std::vector<std::pair<double, double>> NavPointLayer::getRobotFootprintInNavFrame(double robot_x, double robot_y,
+                                                                                  double robot_yaw) const {
   std::vector<std::pair<double, double>> local_points;
-  if (!robot_pose_valid_) {
-    return local_points;
-  }
-
   const auto footprint = layered_costmap_->getFootprint();
   if (footprint.empty()) {
     return local_points;
@@ -103,15 +107,15 @@ std::vector<std::pair<double, double>> NavPointLayer::getRobotFootprintInNavFram
   double nav_yaw = 0.0;
   tf2::Matrix3x3(nav_q).getRPY(nav_roll, nav_pitch, nav_yaw);
 
-  const double robot_c = std::cos(robot_yaw_);
-  const double robot_s = std::sin(robot_yaw_);
+  const double robot_c = std::cos(robot_yaw);
+  const double robot_s = std::sin(robot_yaw);
   const double nav_c = std::cos(-nav_yaw);
   const double nav_s = std::sin(-nav_yaw);
 
   local_points.reserve(footprint.size());
   for (const auto& point : footprint) {
-    const double world_x = robot_x_ + point.x * robot_c - point.y * robot_s;
-    const double world_y = robot_y_ + point.x * robot_s + point.y * robot_c;
+    const double world_x = robot_x + point.x * robot_c - point.y * robot_s;
+    const double world_y = robot_y + point.x * robot_s + point.y * robot_c;
 
     const double dx = world_x - nav_pose_.position.x;
     const double dy = world_y - nav_pose_.position.y;
@@ -124,6 +128,27 @@ std::vector<std::pair<double, double>> NavPointLayer::getRobotFootprintInNavFram
   return local_points;
 }
 
+bool NavPointLayer::polygonsIntersect(const std::vector<geometry_msgs::Point>& a,
+                                      const std::vector<geometry_msgs::Point>& b) const {
+  if (a.size() < 3 || b.size() < 3) {
+    return false;
+  }
+
+  auto toBoostPolygon = [](const std::vector<geometry_msgs::Point>& polygon) {
+    BoostPolygon result;
+    auto& outer = result.outer();
+    outer.reserve(polygon.size() + 1);
+    for (const auto& point : polygon) {
+      outer.emplace_back(point.x, point.y);
+    }
+    outer.emplace_back(polygon.front().x, polygon.front().y);
+    bg::correct(result);
+    return result;
+  };
+
+  return bg::intersects(toBoostPolygon(a), toBoostPolygon(b));
+}
+
 std::vector<std::vector<geometry_msgs::Point>> NavPointLayer::buildNavObstaclePolygons() const {
   double inner_left = footprint_left_ + side_padding_;
   double inner_right = footprint_right_ - side_padding_;
@@ -132,26 +157,52 @@ std::vector<std::vector<geometry_msgs::Point>> NavPointLayer::buildNavObstaclePo
   const double front_wall_front = side_wall_front + wall_thickness_;
   bool include_front_wall = true;
 
-  const auto robot_footprint_local = getRobotFootprintInNavFrame();
-  if (!robot_footprint_local.empty()) {
-    double robot_front = robot_footprint_local.front().first;
-    double robot_left = robot_footprint_local.front().second;
-    double robot_right = robot_footprint_local.front().second;
-    for (const auto& point : robot_footprint_local) {
-      robot_front = std::max(robot_front, point.first);
-      robot_left = std::max(robot_left, point.second);
-      robot_right = std::min(robot_right, point.second);
-    }
+  const auto make_left_wall = [&](double current_inner_left) {
+    return makeWorldPolygon({
+        {side_wall_rear, current_inner_left},
+        {side_wall_front, current_inner_left},
+        {side_wall_front, current_inner_left + wall_thickness_},
+        {side_wall_rear, current_inner_left + wall_thickness_},
+    });
+  };
+  const auto make_right_wall = [&](double current_inner_right) {
+    return makeWorldPolygon({
+        {side_wall_rear, current_inner_right - wall_thickness_},
+        {side_wall_front, current_inner_right - wall_thickness_},
+        {side_wall_front, current_inner_right},
+        {side_wall_rear, current_inner_right},
+    });
+  };
+  const auto make_front_wall = [&](double current_inner_left, double current_inner_right) {
+    return makeWorldPolygon({
+        {side_wall_front, current_inner_right - wall_thickness_},
+        {front_wall_front, current_inner_right - wall_thickness_},
+        {front_wall_front, current_inner_left + wall_thickness_},
+        {side_wall_front, current_inner_left + wall_thickness_},
+    });
+  };
 
-    if (robot_left >= inner_left - robot_clearance_padding_) {
-      inner_left = robot_left + robot_clearance_padding_;
-    }
-    if (robot_right <= inner_right + robot_clearance_padding_) {
-      inner_right = robot_right - robot_clearance_padding_;
-    }
+  if (nav_set_robot_pose_valid_) {
+    const auto robot_footprint_local =
+        getRobotFootprintInNavFrame(nav_set_robot_x_, nav_set_robot_y_, nav_set_robot_yaw_);
+    if (!robot_footprint_local.empty()) {
+      double robot_left = robot_footprint_local.front().second;
+      double robot_right = robot_footprint_local.front().second;
+      for (const auto& point : robot_footprint_local) {
+        robot_left = std::max(robot_left, point.second);
+        robot_right = std::min(robot_right, point.second);
+      }
 
-    if (robot_front >= side_wall_front - robot_clearance_padding_) {
-      include_front_wall = false;
+      const auto robot_footprint_world = makeWorldPolygon(robot_footprint_local);
+      if (polygonsIntersect(robot_footprint_world, make_left_wall(inner_left))) {
+        inner_left = std::max(inner_left, robot_left + robot_clearance_padding_);
+      }
+      if (polygonsIntersect(robot_footprint_world, make_right_wall(inner_right))) {
+        inner_right = std::min(inner_right, robot_right - robot_clearance_padding_);
+      }
+      if (polygonsIntersect(robot_footprint_world, make_front_wall(inner_left, inner_right))) {
+        include_front_wall = false;
+      }
     }
   }
 
@@ -164,31 +215,11 @@ std::vector<std::vector<geometry_msgs::Point>> NavPointLayer::buildNavObstaclePo
     return polygons;
   }
 
-  const auto append_polygon = [&](const std::vector<std::pair<double, double>>& local_polygon) {
-    polygons.push_back(makeWorldPolygon(local_polygon));
-  };
-
-  append_polygon({
-      {side_wall_rear, inner_left},
-      {side_wall_front, inner_left},
-      {side_wall_front, outer_left},
-      {side_wall_rear, outer_left},
-  });
-
-  append_polygon({
-      {side_wall_rear, outer_right},
-      {side_wall_front, outer_right},
-      {side_wall_front, inner_right},
-      {side_wall_rear, inner_right},
-  });
+  polygons.push_back(make_left_wall(inner_left));
+  polygons.push_back(make_right_wall(inner_right));
 
   if (include_front_wall) {
-    append_polygon({
-        {side_wall_front, outer_right},
-        {front_wall_front, outer_right},
-        {front_wall_front, outer_left},
-        {side_wall_front, outer_left},
-    });
+    polygons.push_back(make_front_wall(inner_left, inner_right));
   }
 
   return polygons;
@@ -265,9 +296,8 @@ void NavPointLayer::updateCosts(costmap_2d::Costmap2D& master_grid, int /*min_i*
   }
 
   std::unique_lock<std::mutex> lock(state_mutex_);
-  const bool nav_point_active = nav_point_active_;
   const auto polygons =
-      nav_point_active ? buildNavObstaclePolygons() : std::vector<std::vector<geometry_msgs::Point>>{};
+      nav_point_active_ ? buildNavObstaclePolygons() : std::vector<std::vector<geometry_msgs::Point>>{};
   applied_generation_ = requested_generation_;
   lock.unlock();
   state_cv_.notify_all();
@@ -282,6 +312,10 @@ bool NavPointLayer::setNavPoint(mower_map::SetNavPointSrvRequest& req, mower_map
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
     nav_pose_ = req.nav_pose;
+    nav_set_robot_x_ = robot_x_;
+    nav_set_robot_y_ = robot_y_;
+    nav_set_robot_yaw_ = robot_yaw_;
+    nav_set_robot_pose_valid_ = robot_pose_valid_;
     nav_point_active_ = true;
     nav_point_dirty_ = true;
     current_ = false;
@@ -300,6 +334,7 @@ bool NavPointLayer::clearNavPoint(mower_map::ClearNavPointSrvRequest& /*req*/,
       return true;
     }
     nav_point_active_ = false;
+    nav_set_robot_pose_valid_ = false;
     nav_point_dirty_ = true;
     current_ = false;
     generation = ++requested_generation_;
