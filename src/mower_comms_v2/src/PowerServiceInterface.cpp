@@ -51,6 +51,7 @@ void PowerServiceInterface::OnChargerInputCurrentChanged(const float& new_value)
 }
 
 bool PowerServiceInterface::OnConfigurationRequested(uint16_t service_id) {
+  std::unique_lock<std::mutex> lk{config_mutex_};
   StartTransaction(true);
   SetRegisterBatteryEmptyVoltage(battery_empty_voltage_);
   SetRegisterBatteryFullVoltage(battery_full_voltage_);
@@ -68,6 +69,27 @@ bool PowerServiceInterface::OnConfigurationRequested(uint16_t service_id) {
   SetRegisterDangerouslyOverrideHardwareChargeCurrentLimit(override_hardware_charge_current_limit_ ? 1 : 0);
   CommitTransaction();
   return true;
+}
+
+void PowerServiceInterface::UpdateConfig(float battery_full_voltage, float battery_empty_voltage,
+                                         float battery_critical_voltage, float battery_critical_high_voltage,
+                                         float charge_current, float system_current) {
+  std::unique_lock<std::mutex> lk{config_mutex_};
+  battery_full_voltage_ = battery_full_voltage;
+  battery_empty_voltage_ = battery_empty_voltage;
+  battery_critical_voltage_ = battery_critical_voltage;
+  battery_critical_high_voltage_ = battery_critical_high_voltage;
+  charge_current_ = charge_current;
+  system_current_ = system_current;
+
+  StartTransaction(true);
+  SetRegisterBatteryFullVoltage(battery_full_voltage_);
+  SetRegisterBatteryEmptyVoltage(battery_empty_voltage_);
+  SetRegisterCriticalBatteryLowVoltage(battery_critical_voltage_);
+  SetRegisterCriticalBatteryHighVoltage(battery_critical_high_voltage_);
+  SetRegisterChargeCurrent(charge_current_);
+  SetRegisterSystemCurrent(system_current_);
+  CommitTransaction();
 }
 
 void PowerServiceInterface::OnTransactionStart(uint64_t timestamp) {

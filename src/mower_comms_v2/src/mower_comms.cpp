@@ -70,6 +70,13 @@ double diff_drive_wheel_speed_kp = 0.35;
 double diff_drive_wheel_speed_ki = 1.5;
 double diff_drive_max_duty = 0.95;
 
+float power_battery_full_voltage = 0;
+float power_battery_empty_voltage = 0;
+float power_battery_critical_voltage = 0;
+float power_battery_critical_high_voltage = 0;
+float power_charge_current = -1;
+float power_system_current = -1;
+
 bool setEmergencyStop(mower_msgs::EmergencyStopSrvRequest& req, mower_msgs::EmergencyStopSrvResponse& res) {
   emergency_service->SetHighLevelEmergency(req.reason);
   return true;
@@ -132,6 +139,46 @@ void syncDiffDriveGainsTimerTask(const ros::TimerEvent&) {
                   << diff_drive_wheel_speed_ki << ", max_duty: " << diff_drive_max_duty);
   diff_drive_service->UpdateWheelSpeedGains(diff_drive_wheel_speed_feedforward, diff_drive_wheel_speed_kp,
                                             diff_drive_wheel_speed_ki, diff_drive_max_duty);
+}
+
+void syncPowerConfigTimerTask(const ros::TimerEvent&) {
+  if (!power_service || !ll_param_nh) return;
+
+  float battery_full_voltage = power_battery_full_voltage;
+  float battery_empty_voltage = power_battery_empty_voltage;
+  float battery_critical_voltage = power_battery_critical_voltage;
+  float battery_critical_high_voltage = power_battery_critical_high_voltage;
+  float charge_current = power_charge_current;
+  float system_current = power_system_current;
+
+  ll_param_nh->param("services/power/battery_full_voltage", battery_full_voltage, battery_full_voltage);
+  ll_param_nh->param("services/power/battery_empty_voltage", battery_empty_voltage, battery_empty_voltage);
+  ll_param_nh->param("services/power/battery_critical_voltage", battery_critical_voltage, battery_critical_voltage);
+  ll_param_nh->param("services/power/battery_critical_high_voltage", battery_critical_high_voltage,
+                     battery_critical_high_voltage);
+  ll_param_nh->param("services/power/charge_current", charge_current, charge_current);
+  ll_param_nh->param("services/power/system_current", system_current, system_current);
+
+  if (battery_full_voltage == power_battery_full_voltage && battery_empty_voltage == power_battery_empty_voltage &&
+      battery_critical_voltage == power_battery_critical_voltage &&
+      battery_critical_high_voltage == power_battery_critical_high_voltage && charge_current == power_charge_current &&
+      system_current == power_system_current) {
+    return;
+  }
+
+  power_battery_full_voltage = battery_full_voltage;
+  power_battery_empty_voltage = battery_empty_voltage;
+  power_battery_critical_voltage = battery_critical_voltage;
+  power_battery_critical_high_voltage = battery_critical_high_voltage;
+  power_charge_current = charge_current;
+  power_system_current = system_current;
+
+  ROS_INFO_STREAM("Updating power config: full="
+                  << power_battery_full_voltage << ", empty=" << power_battery_empty_voltage << ", critical="
+                  << power_battery_critical_voltage << ", critical_high=" << power_battery_critical_high_voltage
+                  << ", charge_current=" << power_charge_current << ", system_current=" << power_system_current);
+  power_service->UpdateConfig(power_battery_full_voltage, power_battery_empty_voltage, power_battery_critical_voltage,
+                              power_battery_critical_high_voltage, power_charge_current, power_system_current);
 }
 
 bool setMowEnabled(mower_msgs::MowerControlSrvRequest& req, mower_msgs::MowerControlSrvResponse& res) {
@@ -249,51 +296,44 @@ int main(int argc, char** argv) {
 
   // Power service
   power_pub = n.advertise<mower_msgs::Power>("ll/power", 1);
-
-  // Mainly for monitoring and informational purposes
-  float battery_full_voltage;
-  float battery_empty_voltage;
-  float battery_critical_voltage;
-  float battery_critical_high_voltage;
-  if (!paramNh.getParam("services/power/battery_full_voltage", battery_full_voltage)) {
+  if (!paramNh.getParam("services/power/battery_full_voltage", power_battery_full_voltage)) {
     ROS_ERROR("Need to set param: services/power/battery_full_voltage");
     return 1;
   }
-  if (!paramNh.getParam("services/power/battery_empty_voltage", battery_empty_voltage)) {
+  if (!paramNh.getParam("services/power/battery_empty_voltage", power_battery_empty_voltage)) {
     ROS_ERROR("Need to set param: services/power/battery_empty_voltage");
     return 1;
   }
-  if (!paramNh.getParam("services/power/battery_critical_voltage", battery_critical_voltage)) {
+  if (!paramNh.getParam("services/power/battery_critical_voltage", power_battery_critical_voltage)) {
     ROS_ERROR("Need to set param: services/power/battery_critical_voltage");
     return 1;
   }
-  if (!paramNh.getParam("services/power/battery_critical_high_voltage", battery_critical_high_voltage)) {
+  if (!paramNh.getParam("services/power/battery_critical_high_voltage", power_battery_critical_high_voltage)) {
     ROS_ERROR("Need to set param: services/power/battery_critical_high_voltage");
     return 1;
   }
 
   // Optional charger configuration
   float charge_voltage = -1.0f;
-  float charge_current = -1.0f;
   float charge_termination_current = -1.0f;
   float charge_precharge_current = -1.0f;
   int charge_recharge_voltage = -1;
   paramNh.getParam("services/power/charge_voltage", charge_voltage);
-  paramNh.getParam("services/power/charge_current", charge_current);
+  paramNh.getParam("services/power/charge_current", power_charge_current);
   paramNh.getParam("services/power/charge_termination_current", charge_termination_current);
   paramNh.getParam("services/power/charge_pre_charge_current", charge_precharge_current);
   paramNh.getParam("services/power/charge_re_charge_voltage", charge_recharge_voltage);
 
   // Optional settings also required for charger DPM (dynamic power management)
-  float system_current = -1.0f;  // Max. current allowed to be drawn from wall AC/DC
-  paramNh.getParam("services/power/system_current", system_current);
+  paramNh.getParam("services/power/system_current", power_system_current);
   bool override_hw_charge_current_limit = false;
   paramNh.getParam("services/power/dangerously_override_hardware_charge_current_limit",
                    override_hw_charge_current_limit);
   power_service = std::make_unique<PowerServiceInterface>(
-      xbot::service_ids::POWER, ctx, power_pub, battery_full_voltage, battery_empty_voltage, battery_critical_voltage,
-      battery_critical_high_voltage, charge_voltage, charge_current, charge_termination_current,
-      charge_precharge_current, charge_recharge_voltage, system_current, override_hw_charge_current_limit);
+      xbot::service_ids::POWER, ctx, power_pub, power_battery_full_voltage, power_battery_empty_voltage,
+      power_battery_critical_voltage, power_battery_critical_high_voltage, charge_voltage, power_charge_current,
+      charge_termination_current, charge_precharge_current, charge_recharge_voltage, power_system_current,
+      override_hw_charge_current_limit);
   power_service->Start();
 
   // BMS service
@@ -345,6 +385,7 @@ int main(int argc, char** argv) {
   ros::Timer publish_timer = n.createTimer(ros::Duration(0.5), sendEmergencyHeartbeatTimerTask);
   ros::Timer publish_timer_2 = n.createTimer(ros::Duration(5.0), sendMowerEnabledTimerTask);
   ros::Timer diff_drive_gains_timer = n.createTimer(ros::Duration(1.0), syncDiffDriveGainsTimerTask);
+  ros::Timer power_config_timer = n.createTimer(ros::Duration(1.0), syncPowerConfigTimerTask);
   ros::Subscriber action_sub = n.subscribe("xbot/action", 0, actionReceived, ros::TransportHints().tcpNoDelay(true));
 
   ROS_INFO("All mower_comms_v2 services started");
