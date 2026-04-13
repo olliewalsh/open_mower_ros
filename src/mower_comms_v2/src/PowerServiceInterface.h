@@ -10,6 +10,7 @@
 
 #include <PowerServiceInterfaceBase.hpp>
 #include <array>
+#include <mutex>
 
 class PowerServiceInterface : public PowerServiceInterfaceBase {
  public:
@@ -49,12 +50,17 @@ class PowerServiceInterface : public PowerServiceInterfaceBase {
 
   bool OnConfigurationRequested(uint16_t service_id) override;
 
+ public:
+  void UpdateConfig(float battery_full_voltage, float battery_empty_voltage, float battery_critical_voltage,
+                    float battery_critical_high_voltage, float battery_charge_current, float system_current);
+
  private:
   void OnTransactionStart(uint64_t timestamp) override;
   void OnTransactionEnd() override;
   mower_msgs::Power power_msg_{};
   const ros::Publisher& status_publisher_;
 
+  std::mutex config_mutex_{};
   float battery_full_voltage_;
   float battery_empty_voltage_;
   float battery_critical_voltage_;

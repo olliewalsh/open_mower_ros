@@ -67,6 +67,13 @@ double diff_drive_wheel_speed_kp = 0.35;
 double diff_drive_wheel_speed_ki = 1.5;
 double diff_drive_max_duty = 0.95;
 
+float power_battery_full_voltage = 0;
+float power_battery_empty_voltage = 0;
+float power_battery_critical_voltage = 0;
+float power_battery_critical_high_voltage = 0;
+float power_charge_current = -1;
+float power_system_current = -1;
+
 bool setEmergencyStop(mower_msgs::EmergencyStopSrvRequest& req, mower_msgs::EmergencyStopSrvResponse& res) {
   // This should never be the case, also this is no race condition, because callback will only be called
   // after initialization whereas the service is created during intialization
@@ -137,6 +144,46 @@ void syncDiffDriveGainsTimerTask(const ros::TimerEvent&) {
                                             diff_drive_wheel_speed_ki, diff_drive_max_duty);
 }
 
+void syncPowerConfigTimerTask(const ros::TimerEvent&) {
+  if (!power_service || !ll_param_nh) return;
+
+  float battery_full_voltage = power_battery_full_voltage;
+  float battery_empty_voltage = power_battery_empty_voltage;
+  float battery_critical_voltage = power_battery_critical_voltage;
+  float battery_critical_high_voltage = power_battery_critical_high_voltage;
+  float charge_current = power_charge_current;
+  float system_current = power_system_current;
+
+  ll_param_nh->param("services/power/battery_full_voltage", battery_full_voltage, battery_full_voltage);
+  ll_param_nh->param("services/power/battery_empty_voltage", battery_empty_voltage, battery_empty_voltage);
+  ll_param_nh->param("services/power/battery_critical_voltage", battery_critical_voltage, battery_critical_voltage);
+  ll_param_nh->param("services/power/battery_critical_high_voltage", battery_critical_high_voltage,
+                     battery_critical_high_voltage);
+  ll_param_nh->param("services/power/charge_current", charge_current, charge_current);
+  ll_param_nh->param("services/power/system_current", system_current, system_current);
+
+  if (battery_full_voltage == power_battery_full_voltage && battery_empty_voltage == power_battery_empty_voltage &&
+      battery_critical_voltage == power_battery_critical_voltage &&
+      battery_critical_high_voltage == power_battery_critical_high_voltage && charge_current == power_charge_current &&
+      system_current == power_system_current) {
+    return;
+  }
+
+  power_battery_full_voltage = battery_full_voltage;
+  power_battery_empty_voltage = battery_empty_voltage;
+  power_battery_critical_voltage = battery_critical_voltage;
+  power_battery_critical_high_voltage = battery_critical_high_voltage;
+  power_charge_current = charge_current;
+  power_system_current = system_current;
+
+  ROS_INFO_STREAM("Updating power config: full="
+                  << power_battery_full_voltage << ", empty=" << power_battery_empty_voltage << ", critical="
+                  << power_battery_critical_voltage << ", critical_high=" << power_battery_critical_high_voltage
+                  << ", charge_current=" << power_charge_current << ", system_current=" << power_system_current);
+  power_service->UpdateConfig(power_battery_full_voltage, power_battery_empty_voltage, power_battery_critical_voltage,
+                              power_battery_critical_high_voltage, power_charge_current, power_system_current);
+}
+
 bool setMowEnabled(mower_msgs::MowerControlSrvRequest& req, mower_msgs::MowerControlSrvResponse& res) {
   mower_service->SetMowerEnabled(req.mow_enabled);
   return true;
@@ -179,6 +226,7 @@ int main(int argc, char** argv) {
   ros::Timer publish_timer = n.createTimer(ros::Duration(0.5), sendEmergencyHeartbeatTimerTask);
   ros::Timer publish_timer_2 = n.createTimer(ros::Duration(5.0), sendMowerEnabledTimerTask);
   ros::Timer diff_drive_gains_timer = n.createTimer(ros::Duration(1.0), syncDiffDriveGainsTimerTask);
+  ros::Timer power_config_timer = n.createTimer(ros::Duration(1.0), syncPowerConfigTimerTask);
   action_pub = n.advertise<std_msgs::String>("xbot/action", 1);
   ros::Subscriber action_sub = n.subscribe("xbot/action", 0, actionReceived, ros::TransportHints().tcpNoDelay(true));
 
@@ -259,33 +307,27 @@ int main(int argc, char** argv) {
 
   // Power service
   power_pub = n.advertise<mower_msgs::Power>("ll/power", 1);
-  float battery_full_voltage;
-  float battery_empty_voltage;
-  float battery_critical_voltage;
-  float battery_critical_high_voltage;
-  float charge_current = -1;
-  float system_current = -1;
-  if (!paramNh.getParam("services/power/battery_full_voltage", battery_full_voltage)) {
+  if (!paramNh.getParam("services/power/battery_full_voltage", power_battery_full_voltage)) {
     ROS_ERROR("Need to set param: services/power/battery_full_voltage");
     return 1;
   }
-  if (!paramNh.getParam("services/power/battery_empty_voltage", battery_empty_voltage)) {
+  if (!paramNh.getParam("services/power/battery_empty_voltage", power_battery_empty_voltage)) {
     ROS_ERROR("Need to set param: services/power/battery_empty_voltage");
     return 1;
   }
-  if (!paramNh.getParam("services/power/battery_critical_voltage", battery_critical_voltage)) {
+  if (!paramNh.getParam("services/power/battery_critical_voltage", power_battery_critical_voltage)) {
     ROS_ERROR("Need to set param: services/power/battery_critical_voltage");
     return 1;
   }
-  if (!paramNh.getParam("services/power/battery_critical_high_voltage", battery_critical_high_voltage)) {
+  if (!paramNh.getParam("services/power/battery_critical_high_voltage", power_battery_critical_high_voltage)) {
     ROS_ERROR("Need to set param: services/power/battery_critical_high_voltage");
     return 1;
   }
-  paramNh.getParam("services/power/charge_current", charge_current);
-  paramNh.getParam("services/power/system_current", system_current);
+  paramNh.getParam("services/power/charge_current", power_charge_current);
+  paramNh.getParam("services/power/system_current", power_system_current);
   power_service = std::make_unique<PowerServiceInterface>(
-      xbot::service_ids::POWER, ctx, power_pub, battery_full_voltage, battery_empty_voltage, battery_critical_voltage,
-      battery_critical_high_voltage, charge_current, system_current);
+      xbot::service_ids::POWER, ctx, power_pub, power_battery_full_voltage, power_battery_empty_voltage,
+      power_battery_critical_voltage, power_battery_critical_high_voltage, power_charge_current, power_system_current);
   power_service->Start();
 
   // GPS service
