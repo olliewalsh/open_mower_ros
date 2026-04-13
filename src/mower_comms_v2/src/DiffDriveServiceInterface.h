@@ -19,7 +19,7 @@ class DiffDriveServiceInterface : public DiffDriveServiceInterfaceBase {
                             const ros::Publisher& left_esc_status_publisher,
                             const ros::Publisher& right_esc_status_publisher, double ticks_per_meter,
                             double wheel_distance, double wheel_speed_feedforward, double wheel_speed_kp,
-                            double wheel_speed_ki)
+                            double wheel_speed_ki, double max_duty)
       : DiffDriveServiceInterfaceBase(service_id, ctx),
         actual_twist_publisher_(actual_twist_publisher),
         left_esc_status_publisher_(left_esc_status_publisher),
@@ -28,7 +28,8 @@ class DiffDriveServiceInterface : public DiffDriveServiceInterfaceBase {
         ticks_per_meter_(ticks_per_meter),
         wheel_speed_feedforward_(wheel_speed_feedforward),
         wheel_speed_kp_(wheel_speed_kp),
-        wheel_speed_ki_(wheel_speed_ki) {
+        wheel_speed_ki_(wheel_speed_ki),
+        max_duty_(max_duty) {
   }
 
   bool OnConfigurationRequested(uint16_t service_id) override;
@@ -38,7 +39,8 @@ class DiffDriveServiceInterface : public DiffDriveServiceInterfaceBase {
    * @param msg The ROS message
    */
   void SendTwist(const geometry_msgs::TwistConstPtr& msg);
-  void UpdateWheelSpeedGains(double wheel_speed_feedforward, double wheel_speed_kp, double wheel_speed_ki);
+  void UpdateWheelSpeedGains(double wheel_speed_feedforward, double wheel_speed_kp, double wheel_speed_ki,
+                             double max_duty);
 
  protected:
   /**
@@ -64,6 +66,7 @@ class DiffDriveServiceInterface : public DiffDriveServiceInterfaceBase {
   // Store the seq number for the actual twist message
   uint32_t seq = 0;
   std::mutex state_mutex_{};
+  std::mutex config_mutex_{};
 
  public:
   const ros::Publisher& actual_twist_publisher_;
@@ -74,6 +77,7 @@ class DiffDriveServiceInterface : public DiffDriveServiceInterfaceBase {
   double wheel_speed_feedforward_;
   double wheel_speed_kp_;
   double wheel_speed_ki_;
+  double max_duty_;
 
   // Store the latest ESC state
   mower_msgs::ESCStatus left_esc_state_{};
