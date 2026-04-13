@@ -28,7 +28,7 @@ FTCPlanner:
   ki_ang_max_rotate: 31.0
   kd_ang_rotate: 0.2
   max_cmd_vel_ang: 1.8
-  max_cmd_vel_speed: 0.5
+  max_cmd_vel_speed: 0.65
   max_cmd_vel_acceleration: 0.15
   max_follow_distance: 0.35
   target_goal_angle_error: 10.0
@@ -44,5 +44,5 @@ FTCPlanner:
   lon_pid_speed_delta: true
   follow_distance: 0.02
   velocity_lookahead_scale: 0.95
-  speed_limit_min: 0.1
+  speed_limit_min: 0.15
   initial_path_trim: 0.08

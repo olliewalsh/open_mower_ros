@@ -177,6 +177,12 @@ namespace ftc_local_planner
             return RET_SUCCESS;
         }
 
+        // Compute mow current speed limit before updating control point
+        // so both control point and output speed use the same value.
+        double mow_current_over = std::max(0.0, (double)(last_status.mower_esc_current - config.max_mow_motor_current));
+        mow_speed_limit_ = std::max(config.speed_limit_min,
+            config.max_cmd_vel_speed - mow_current_over * config.kp_mow_current_lim);
+
         // We're not crashed and not finished.
         // First, we update the control point if needed. This is needed since we need the local_control_point to calculate the next state.
         update_control_point(dt);
@@ -432,6 +438,11 @@ namespace ftc_local_planner
                 if (current_movement_speed < speed)
                     current_movement_speed = speed;
             }
+
+            // Hard-cap control point speed so it can't run ahead of the
+            // robot when mow current limiting kicks in.
+            if (current_movement_speed > mow_speed_limit_)
+                current_movement_speed = mow_speed_limit_;
 
             double distance_to_move = dt * current_movement_speed;
             double angle_to_move = dt * config.speed_angular * (M_PI / 180.0);
@@ -697,16 +708,14 @@ namespace ftc_local_planner
             }
             else
             {
-                double mow_current_over = std::max(0.0, last_status.mower_esc_current - config.max_mow_motor_current);
-                double mow_speed_cap = config.max_cmd_vel_speed - mow_current_over * config.kp_mow_current_lim;
-                double max_speed = std::max(config.speed_limit_min, std::min(config.max_cmd_vel_speed, mow_speed_cap));
-                if (lin_speed > max_speed)
+                double lin_speed_limit = mow_speed_limit_ * config.lin_speed_limit_factor;
+                if (lin_speed > lin_speed_limit)
                 {
-                    lin_speed = max_speed;
+                    lin_speed = lin_speed_limit;
                 }
-                else if (lin_speed < -max_speed)
+                else if (lin_speed < -lin_speed_limit)
                 {
-                    lin_speed = -max_speed;
+                    lin_speed = -lin_speed_limit;
                 }
             }
             cmd_vel.twist.linear.x = lin_speed;

@@ -6,7 +6,7 @@ ll:
       wheel_speed_feedforward: 1.2
       wheel_speed_kp: 0.35
       wheel_speed_ki: 0.8
-      wheel_speed_kd: 0.05
+      wheel_speed_kd: 0.0
     gps:
       protocol: "NMEA"
       baudrate: 921600
