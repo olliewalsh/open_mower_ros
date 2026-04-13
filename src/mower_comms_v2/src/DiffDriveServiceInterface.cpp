@@ -15,23 +15,26 @@ bool DiffDriveServiceInterface::OnConfigurationRequested(uint16_t service_id) {
   SetRegisterWheelSpeedFeedforward(wheel_speed_feedforward_);
   SetRegisterWheelSpeedKp(wheel_speed_kp_);
   SetRegisterWheelSpeedKi(wheel_speed_ki_);
+  SetRegisterWheelSpeedKd(wheel_speed_kd_);
   SetRegisterMaxDuty(max_duty_);
   CommitTransaction();
   return true;
 }
 
 void DiffDriveServiceInterface::UpdateWheelSpeedGains(double wheel_speed_feedforward, double wheel_speed_kp,
-                                                      double wheel_speed_ki, double max_duty) {
+                                                      double wheel_speed_ki, double wheel_speed_kd, double max_duty) {
   std::unique_lock<std::mutex> lk{config_mutex_};
   wheel_speed_feedforward_ = wheel_speed_feedforward;
   wheel_speed_kp_ = wheel_speed_kp;
   wheel_speed_ki_ = wheel_speed_ki;
+  wheel_speed_kd_ = wheel_speed_kd;
   max_duty_ = max_duty;
 
   StartTransaction(true);
   SetRegisterWheelSpeedFeedforward(wheel_speed_feedforward_);
   SetRegisterWheelSpeedKp(wheel_speed_kp_);
   SetRegisterWheelSpeedKi(wheel_speed_ki_);
+  SetRegisterWheelSpeedKd(wheel_speed_kd_);
   SetRegisterMaxDuty(max_duty_);
   CommitTransaction();
 }
