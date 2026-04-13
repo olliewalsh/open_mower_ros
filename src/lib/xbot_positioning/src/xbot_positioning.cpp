@@ -203,7 +203,9 @@ void onWheelTicks(const xbot_msgs::WheelTick::ConstPtr &msg) {
 }
 
 void onTwistIn(const geometry_msgs::TwistStamped::ConstPtr &msg) {
-    vx = msg->twist.linear.x;
+    if (std::isfinite(msg->twist.linear.x)) {
+        vx = msg->twist.linear.x;
+    }
 }
 
 bool setGpsState(xbot_positioning::GPSControlSrvRequest &req, xbot_positioning::GPSControlSrvResponse &res) {
