@@ -26,7 +26,12 @@ class ImuServiceInterface : public ImuServiceInterfaceBase {
   const ros::Publisher& imu_publisher_;
   std::string axis_config_;
 
-  sensor_msgs::Imu imu_msg{};
+  sensor_msgs::Imu imu_msg = [] {
+    sensor_msgs::Imu msg{};
+    msg.orientation.w = 1.0;
+    msg.orientation_covariance[0] = -1;
+    return msg;
+  }();
   bool validateAxisConfig();
 };
 
