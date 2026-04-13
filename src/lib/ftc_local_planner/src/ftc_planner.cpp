@@ -697,7 +697,9 @@ namespace ftc_local_planner
             }
             else
             {
-                double max_speed = config.max_cmd_vel_speed;
+                double mow_current_over = std::max(0.0, last_status.mower_esc_current - config.max_mow_motor_current);
+                double mow_speed_cap = config.max_cmd_vel_speed - mow_current_over * config.kp_mow_current_lim;
+                double max_speed = std::max(config.speed_limit_min, std::min(config.max_cmd_vel_speed, mow_speed_cap));
                 if (lin_speed > max_speed)
                 {
                     lin_speed = max_speed;
