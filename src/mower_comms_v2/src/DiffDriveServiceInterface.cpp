@@ -8,26 +8,31 @@
 #include <geometry_msgs/TwistStamped.h>
 
 bool DiffDriveServiceInterface::OnConfigurationRequested(uint16_t service_id) {
+  std::unique_lock<std::mutex> lk{config_mutex_};
   StartTransaction(true);
   SetRegisterWheelDistance(wheel_distance_);
   SetRegisterWheelTicksPerMeter(ticks_per_meter_);
   SetRegisterWheelSpeedFeedforward(wheel_speed_feedforward_);
   SetRegisterWheelSpeedKp(wheel_speed_kp_);
   SetRegisterWheelSpeedKi(wheel_speed_ki_);
+  SetRegisterMaxDuty(max_duty_);
   CommitTransaction();
   return true;
 }
 
 void DiffDriveServiceInterface::UpdateWheelSpeedGains(double wheel_speed_feedforward, double wheel_speed_kp,
-                                                      double wheel_speed_ki) {
+                                                      double wheel_speed_ki, double max_duty) {
+  std::unique_lock<std::mutex> lk{config_mutex_};
   wheel_speed_feedforward_ = wheel_speed_feedforward;
   wheel_speed_kp_ = wheel_speed_kp;
   wheel_speed_ki_ = wheel_speed_ki;
+  max_duty_ = max_duty;
 
   StartTransaction(true);
   SetRegisterWheelSpeedFeedforward(wheel_speed_feedforward_);
   SetRegisterWheelSpeedKp(wheel_speed_kp_);
   SetRegisterWheelSpeedKi(wheel_speed_ki_);
+  SetRegisterMaxDuty(max_duty_);
   CommitTransaction();
 }
 

@@ -7,6 +7,7 @@
 [submodule "services"]
 	path = services
 	url = https://github.com/olliewalsh/definitions-open-mower.git
+        branch = feature/velocity_control
 [submodule "src/lib/ros_ntrip_client"]
 	path = src/lib/ros_ntrip_client
 	url = https://github.com/olliewalsh/ros_ntrip_client.git

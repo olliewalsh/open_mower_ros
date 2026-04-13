@@ -65,6 +65,7 @@ xbot::serviceif::Context ctx{};
 double diff_drive_wheel_speed_feedforward = 1.5;
 double diff_drive_wheel_speed_kp = 0.35;
 double diff_drive_wheel_speed_ki = 1.5;
+double diff_drive_max_duty = 0.95;
 
 bool setEmergencyStop(mower_msgs::EmergencyStopSrvRequest& req, mower_msgs::EmergencyStopSrvResponse& res) {
   // This should never be the case, also this is no race condition, because callback will only be called
@@ -112,25 +113,28 @@ void syncDiffDriveGainsTimerTask(const ros::TimerEvent&) {
   double wheel_speed_feedforward = diff_drive_wheel_speed_feedforward;
   double wheel_speed_kp = diff_drive_wheel_speed_kp;
   double wheel_speed_ki = diff_drive_wheel_speed_ki;
+  double max_duty = diff_drive_max_duty;
 
   ll_param_nh->param("services/diff_drive/wheel_speed_feedforward", wheel_speed_feedforward, wheel_speed_feedforward);
   ll_param_nh->param("services/diff_drive/wheel_speed_kp", wheel_speed_kp, wheel_speed_kp);
   ll_param_nh->param("services/diff_drive/wheel_speed_ki", wheel_speed_ki, wheel_speed_ki);
+  ll_param_nh->param("services/diff_drive/max_duty", max_duty, max_duty);
 
   if (wheel_speed_feedforward == diff_drive_wheel_speed_feedforward && wheel_speed_kp == diff_drive_wheel_speed_kp &&
-      wheel_speed_ki == diff_drive_wheel_speed_ki) {
+      wheel_speed_ki == diff_drive_wheel_speed_ki && max_duty == diff_drive_max_duty) {
     return;
   }
 
   diff_drive_wheel_speed_feedforward = wheel_speed_feedforward;
   diff_drive_wheel_speed_kp = wheel_speed_kp;
   diff_drive_wheel_speed_ki = wheel_speed_ki;
+  diff_drive_max_duty = max_duty;
 
-  ROS_INFO_STREAM("Updating wheel speed gains ff/kp/ki: " << diff_drive_wheel_speed_feedforward << ", "
-                                                          << diff_drive_wheel_speed_kp << ", "
-                                                          << diff_drive_wheel_speed_ki);
+  ROS_INFO_STREAM("Updating wheel speed gains ff/kp/ki: "
+                  << diff_drive_wheel_speed_feedforward << ", " << diff_drive_wheel_speed_kp << ", "
+                  << diff_drive_wheel_speed_ki << ", max_duty: " << diff_drive_max_duty);
   diff_drive_service->UpdateWheelSpeedGains(diff_drive_wheel_speed_feedforward, diff_drive_wheel_speed_kp,
-                                            diff_drive_wheel_speed_ki);
+                                            diff_drive_wheel_speed_ki, diff_drive_max_duty);
 }
 
 bool setMowEnabled(mower_msgs::MowerControlSrvRequest& req, mower_msgs::MowerControlSrvResponse& res) {
@@ -197,6 +201,7 @@ int main(int argc, char** argv) {
   diff_drive_wheel_speed_feedforward = 1.5;
   diff_drive_wheel_speed_kp = 0.35;
   diff_drive_wheel_speed_ki = 1.5;
+  diff_drive_max_duty = 0.95;
   if (!paramNh.getParam("services/diff_drive/ticks_per_m", wheel_ticks_per_m)) {
     ROS_ERROR("Need to provide param services/diff_drive/ticks_per_m");
     return 1;
@@ -209,10 +214,12 @@ int main(int argc, char** argv) {
                 diff_drive_wheel_speed_feedforward);
   paramNh.param("services/diff_drive/wheel_speed_kp", diff_drive_wheel_speed_kp, diff_drive_wheel_speed_kp);
   paramNh.param("services/diff_drive/wheel_speed_ki", diff_drive_wheel_speed_ki, diff_drive_wheel_speed_ki);
+  paramNh.param("services/diff_drive/max_duty", diff_drive_max_duty, diff_drive_max_duty);
   ROS_INFO_STREAM("Wheel ticks [1/m]: " << wheel_ticks_per_m);
   ROS_INFO_STREAM("Wheel distance [m]: " << wheel_distance_m);
   ROS_INFO_STREAM("Wheel speed gains ff/kp/ki: " << diff_drive_wheel_speed_feedforward << ", "
-                                                 << diff_drive_wheel_speed_kp << ", " << diff_drive_wheel_speed_ki);
+                                                 << diff_drive_wheel_speed_kp << ", " << diff_drive_wheel_speed_ki
+                                                 << ", max_duty: " << diff_drive_max_duty);
 
   int baud_rate = 0;
   paramNh.getParam("services/gps/baud_rate", baud_rate);
@@ -234,7 +241,7 @@ int main(int argc, char** argv) {
   diff_drive_service = std::make_unique<DiffDriveServiceInterface>(
       xbot::service_ids::DIFF_DRIVE, ctx, actual_twist_pub, status_left_esc_pub, status_right_esc_pub,
       wheel_ticks_per_m, wheel_distance_m, diff_drive_wheel_speed_feedforward, diff_drive_wheel_speed_kp,
-      diff_drive_wheel_speed_ki);
+      diff_drive_wheel_speed_ki, diff_drive_max_duty);
   diff_drive_service->Start();
 
   // Mower service
