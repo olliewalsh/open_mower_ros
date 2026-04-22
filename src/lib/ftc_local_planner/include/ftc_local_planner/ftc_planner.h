@@ -83,6 +83,7 @@ namespace ftc_local_planner
         double mow_rpm_speed_limit_ = 0.0;
         double last_rpm_deficit_ = 0.0;
         ros::Time last_time;
+        ros::Time follow_distance_exceeded_time_;
 
         mower_msgs::Status last_status;
         /**
