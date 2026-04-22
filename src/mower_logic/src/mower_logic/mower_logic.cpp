@@ -95,6 +95,11 @@ ros::Time last_rain_check;
 bool rain_detected = true;
 ros::Time rain_resume;
 bool mower_overtemp_latched = false;
+bool mow_stall_latched = false;
+ros::Time mow_stall_start(0);
+ros::Time mow_stall_latch_time(0);
+bool last_mow_enabled = false;
+ros::Time mow_enabled_time(0);
 
 /**
  * Some thread safe methods to get a copy of the logic state
@@ -429,6 +434,41 @@ void checkSafety(const ros::TimerEvent& timer_event) {
       currentBehavior->requestPause(pauseType::PAUSE_OVERTEMP);
     } else {
       currentBehavior->requestContinue(pauseType::PAUSE_OVERTEMP);
+    }
+
+    // Track mow enable transitions for spin-up grace period
+    if (last_status.mow_enabled && !last_mow_enabled) {
+      mow_enabled_time = ros::Time::now();
+    }
+    last_mow_enabled = last_status.mow_enabled;
+
+    // Mow motor stall detection (skip during spin-up grace period)
+    bool past_grace =
+        last_status.mow_enabled && (ros::Time::now() - mow_enabled_time).toSec() >= last_config.mow_start_grace_period;
+    bool mow_stalled = past_grace && last_status.mower_motor_rpm < last_config.mow_stall_rpm_threshold;
+    if (!mow_stall_latched) {
+      if (mow_stalled) {
+        if (mow_stall_start.isZero()) {
+          mow_stall_start = ros::Time::now();
+        } else if ((ros::Time::now() - mow_stall_start).toSec() >= last_config.mow_stall_duration) {
+          mow_stall_latched = true;
+          mow_stall_latch_time = ros::Time::now();
+          ROS_WARN_STREAM("om_mower_logic: Mow motor stall detected (RPM: " << last_status.mower_motor_rpm << ")");
+        }
+      } else {
+        mow_stall_start = ros::Time(0);
+      }
+    } else {
+      if ((ros::Time::now() - mow_stall_latch_time).toSec() >= last_config.mow_stall_cooldown) {
+        mow_stall_latched = false;
+        mow_stall_start = ros::Time(0);
+        ROS_INFO_STREAM("om_mower_logic: Mow stall cooldown complete, resuming");
+      }
+    }
+    if (mow_stall_latched) {
+      currentBehavior->requestPause(pauseType::PAUSE_MOW_STALL);
+    } else {
+      currentBehavior->requestContinue(pauseType::PAUSE_MOW_STALL);
     }
   }
 

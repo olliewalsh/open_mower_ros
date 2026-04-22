@@ -255,6 +255,7 @@ bool MowingBehavior::execute_mowing_plan() {
   int first_point_attempt_counter = 0;
   int first_point_trim_counter = 0;
   ros::Time paused_time(0.0);
+  u_int8_t pause_cause = 0;
 
   // loop through all mowingPaths to execute the plan fully.
   while (currentMowingPath < currentMowingPaths.size() && ros::ok() && !aborted) {
@@ -264,6 +265,7 @@ bool MowingBehavior::execute_mowing_plan() {
     if (requested_pause_flag) {  // pause was requested
       paused = true;
       mowerEnabled = false;
+      pause_cause = requested_pause_flag;
       u_int8_t last_requested_pause_flags = 0;
       while (requested_pause_flag && !aborted)  // while emergency and/or manual pause not asked to continue, we wait
       {
@@ -285,7 +287,12 @@ bool MowingBehavior::execute_mowing_plan() {
             pause_reason += " and ";
           }
         }
+        if (requested_pause_flag & pauseType::PAUSE_MOW_STALL) {
+          if (!pause_reason.empty()) pause_reason += " and ";
+          pause_reason += "mow motor stalled";
+        }
         if (requested_pause_flag & pauseType::PAUSE_MANUAL) {
+          if (!pause_reason.empty()) pause_reason += " and ";
           pause_reason += "waiting for CONTINUE";
         }
         ROS_INFO_STREAM_THROTTLE(30, "MowingBehavior: PAUSED (" << pause_reason << ")");
@@ -306,6 +313,23 @@ bool MowingBehavior::execute_mowing_plan() {
       ROS_INFO_STREAM("MowingBehavior: CONTINUING");
       paused = false;
       update_actions();
+
+      // Skip forward on path after overtemp or stall to avoid re-entering the same spot
+      if ((pause_cause & (pauseType::PAUSE_OVERTEMP | pauseType::PAUSE_MOW_STALL)) &&
+          config.pause_resume_skip_distance > 0.0 && currentMowingPath < currentMowingPaths.size()) {
+        auto& skip_path = currentMowingPaths[currentMowingPath];
+        double skipped = 0.0;
+        while (currentMowingPathIndex + 1 < skip_path.path.poses.size() &&
+               skipped < config.pause_resume_skip_distance) {
+          auto& p1 = skip_path.path.poses[currentMowingPathIndex].pose.position;
+          auto& p2 = skip_path.path.poses[currentMowingPathIndex + 1].pose.position;
+          double dx = p2.x - p1.x;
+          double dy = p2.y - p1.y;
+          skipped += sqrt(dx * dx + dy * dy);
+          currentMowingPathIndex++;
+        }
+        ROS_INFO_STREAM("MowingBehavior: Skipped " << skipped << "m forward on path after pause");
+      }
     }
 
     auto& path = currentMowingPaths[currentMowingPath];
