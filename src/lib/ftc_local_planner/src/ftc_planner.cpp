@@ -90,6 +90,7 @@ namespace ftc_local_planner
         i_angle_error = 0.0;
         lin_speed = 0.0;
         last_rpm_deficit_ = 0.0;
+        follow_distance_exceeded_time_ = ros::Time(0);
 
         nav_msgs::Path path;
 
@@ -274,13 +275,19 @@ namespace ftc_local_planner
         case FOLLOWING:
         {
             double distance = local_control_point.translation().norm();
-            // check for crash
+            // check for crash with debounce
             if (distance > config.max_follow_distance)
             {
-                ROS_ERROR_STREAM("FTCLocalPlannerROS: Robot is far away from global plan. distance (" << distance << ") > config.max_follow_distance (" << config.max_follow_distance << ") It probably has crashed.");
-                is_crashed = true;
-                set_planner_state(FINISHED);
-                return;
+                if (follow_distance_exceeded_time_.isZero()) {
+                    follow_distance_exceeded_time_ = ros::Time::now();
+                } else if ((ros::Time::now() - follow_distance_exceeded_time_).toSec() >= config.max_follow_distance_timeout) {
+                    ROS_ERROR_STREAM("FTCLocalPlannerROS: Robot is far away from global plan. distance (" << distance << ") > config.max_follow_distance (" << config.max_follow_distance << ") for " << config.max_follow_distance_timeout << "s. It probably has crashed.");
+                    is_crashed = true;
+                    set_planner_state(FINISHED);
+                    return;
+                }
+            } else {
+                follow_distance_exceeded_time_ = ros::Time(0);
             }
 
             // check if we're done following
