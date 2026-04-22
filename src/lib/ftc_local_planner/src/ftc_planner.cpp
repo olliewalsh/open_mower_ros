@@ -89,7 +89,9 @@ namespace ftc_local_planner
         i_lat_error = 0.0;
         i_angle_error = 0.0;
         lin_speed = 0.0;
+        filtered_rpm_deficit_ = 0.0;
         last_rpm_deficit_ = 0.0;
+        filtered_mow_speed_limit_ = config.max_cmd_vel_speed;
         follow_distance_exceeded_time_ = ros::Time(0);
 
         nav_msgs::Path path;
@@ -187,15 +189,20 @@ namespace ftc_local_planner
         // Linear speed: PD on mow motor RPM (fast slowdown when motor stalls)
         if (last_status.mow_enabled) {
             double rpm_deficit = std::max(0.0, config.min_mow_motor_rpm - (double)last_status.mower_motor_rpm);
-            double d_rpm_deficit = (rpm_deficit - last_rpm_deficit_) / dt;
-            last_rpm_deficit_ = rpm_deficit;
+            // Filter RPM deficit before differentiating: fast attack to catch
+            // stalls, slow release to avoid chatter during recovery.
+            double alpha_rpm = (rpm_deficit > filtered_rpm_deficit_) ? 0.5 : 0.1;
+            filtered_rpm_deficit_ = alpha_rpm * rpm_deficit + (1.0 - alpha_rpm) * filtered_rpm_deficit_;
+            double d_rpm_deficit = (filtered_rpm_deficit_ - last_rpm_deficit_) / dt;
+            last_rpm_deficit_ = filtered_rpm_deficit_;
             mow_rpm_speed_limit_ = std::min(config.max_cmd_vel_speed, std::max(config.speed_limit_min,
-                config.max_cmd_vel_speed - rpm_deficit * config.kp_mow_rpm_lim - d_rpm_deficit * config.kd_mow_rpm_lim));
+                config.max_cmd_vel_speed - filtered_rpm_deficit_ * config.kp_mow_rpm_lim - d_rpm_deficit * config.kd_mow_rpm_lim));
 
             // Ensure control point can't outrun the RPM-based lin_speed limit
             mow_speed_limit_ = std::min(mow_speed_limit_, mow_rpm_speed_limit_);
         } else {
             mow_rpm_speed_limit_ = config.max_cmd_vel_speed;
+            filtered_rpm_deficit_ = 0.0;
             last_rpm_deficit_ = 0.0;
         }
 
@@ -461,10 +468,13 @@ namespace ftc_local_planner
                     current_movement_speed = speed;
             }
 
-            // Hard-cap control point speed so it can't run ahead of the
-            // robot when mow current limiting kicks in.
-            if (current_movement_speed > mow_speed_limit_)
-                current_movement_speed = mow_speed_limit_;
+            // Smooth the mow speed limit: fast attack so the control point
+            // slows promptly under load, slow release to prevent the control
+            // point from surging when the current transiently drops.
+            double alpha_mow = (mow_speed_limit_ < filtered_mow_speed_limit_) ? 0.3 : 0.05;
+            filtered_mow_speed_limit_ = alpha_mow * mow_speed_limit_ + (1.0 - alpha_mow) * filtered_mow_speed_limit_;
+            if (current_movement_speed > filtered_mow_speed_limit_)
+                current_movement_speed = filtered_mow_speed_limit_;
 
             double distance_to_move = dt * current_movement_speed;
             double angle_to_move = dt * config.speed_angular * (M_PI / 180.0);
@@ -596,6 +606,7 @@ namespace ftc_local_planner
             angle_error *= config.ang_error_scale_factor / (config.ang_error_scale_factor + abs(lin_speed));
         }
 
+        double prev_i_lon_error = i_lon_error;
         i_lon_error += lon_error * dt;
         i_lat_error += lat_error * dt;
         i_angle_error += angle_error * dt;
@@ -653,12 +664,11 @@ namespace ftc_local_planner
         last_lat_error = lat_error;
         last_lon_error = lon_error;
         last_angle_error = angle_error;
-        double mow_current_error = std::max(0.0, last_status.mower_esc_current - config.max_mow_motor_current);
         speed_limit = std::min(config.max_cmd_vel_speed, std::max(
             config.speed_limit_min,
             std::min(
                 config.max_cmd_vel_speed - (lon_error * config.kp_lim + i_lon_error * config.ki_lim + d_lon * config.kd_lim),
-                config.max_cmd_vel_speed - (mow_current_error * config.kp_mow_current_lim)
+                filtered_mow_speed_limit_
             )
         ));
 
@@ -724,6 +734,7 @@ namespace ftc_local_planner
             else {
                 lin_speed = lon_error * config.kp_lon + i_lon_error * config.ki_lon + d_lon * config.kd_lon + d_lon_input * config.kd_lon_input;
             }
+            double unclamped_lin_speed = lin_speed;
             if (lin_speed < 0 && config.forward_only)
             {
                 lin_speed = 0;
@@ -738,6 +749,14 @@ namespace ftc_local_planner
                 {
                     lin_speed = -mow_rpm_speed_limit_;
                 }
+            }
+            // Anti-windup: if output was clamped, only keep the integral
+            // update when the error drives the controller back out of
+            // saturation (same logic as wheel_speed_controller).
+            if ((unclamped_lin_speed > lin_speed && lon_error > 0) ||
+                (unclamped_lin_speed < lin_speed && lon_error < 0))
+            {
+                i_lon_error = prev_i_lon_error;
             }
             cmd_vel.twist.linear.x = lin_speed;
         }
