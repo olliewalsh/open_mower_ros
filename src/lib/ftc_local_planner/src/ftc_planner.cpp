@@ -89,6 +89,7 @@ namespace ftc_local_planner
         i_lat_error = 0.0;
         i_angle_error = 0.0;
         lin_speed = 0.0;
+        last_rpm_deficit_ = 0.0;
 
         nav_msgs::Path path;
 
@@ -177,11 +178,25 @@ namespace ftc_local_planner
             return RET_SUCCESS;
         }
 
-        // Compute mow current speed limit before updating control point
-        // so both control point and output speed use the same value.
+        // Control point speed: limited by mow motor current (gradual slowdown as load increases)
         double mow_current_over = std::max(0.0, (double)(last_status.mower_esc_current - config.max_mow_motor_current));
         mow_speed_limit_ = std::max(config.speed_limit_min,
             config.max_cmd_vel_speed - mow_current_over * config.kp_mow_current_lim);
+
+        // Linear speed: PD on mow motor RPM (fast slowdown when motor stalls)
+        if (last_status.mow_enabled) {
+            double rpm_deficit = std::max(0.0, config.min_mow_motor_rpm - (double)last_status.mower_motor_rpm);
+            double d_rpm_deficit = (rpm_deficit - last_rpm_deficit_) / dt;
+            last_rpm_deficit_ = rpm_deficit;
+            mow_rpm_speed_limit_ = std::min(config.max_cmd_vel_speed, std::max(config.speed_limit_min,
+                config.max_cmd_vel_speed - rpm_deficit * config.kp_mow_rpm_lim - d_rpm_deficit * config.kd_mow_rpm_lim));
+
+            // Ensure control point can't outrun the RPM-based lin_speed limit
+            mow_speed_limit_ = std::min(mow_speed_limit_, mow_rpm_speed_limit_);
+        } else {
+            mow_rpm_speed_limit_ = config.max_cmd_vel_speed;
+            last_rpm_deficit_ = 0.0;
+        }
 
         // We're not crashed and not finished.
         // First, we update the control point if needed. This is needed since we need the local_control_point to calculate the next state.
@@ -708,14 +723,13 @@ namespace ftc_local_planner
             }
             else
             {
-                double lin_speed_limit = mow_speed_limit_ * config.lin_speed_limit_factor;
-                if (lin_speed > lin_speed_limit)
+                if (lin_speed > mow_rpm_speed_limit_)
                 {
-                    lin_speed = lin_speed_limit;
+                    lin_speed = mow_rpm_speed_limit_;
                 }
-                else if (lin_speed < -lin_speed_limit)
+                else if (lin_speed < -mow_rpm_speed_limit_)
                 {
-                    lin_speed = -lin_speed_limit;
+                    lin_speed = -mow_rpm_speed_limit_;
                 }
             }
             cmd_vel.twist.linear.x = lin_speed;

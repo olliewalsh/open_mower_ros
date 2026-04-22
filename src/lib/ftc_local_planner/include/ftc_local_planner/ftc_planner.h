@@ -80,6 +80,8 @@ namespace ftc_local_planner
         double i_angle_error = 0.0;
         double speed_limit = 0.0;
         double mow_speed_limit_ = 0.0;
+        double mow_rpm_speed_limit_ = 0.0;
+        double last_rpm_deficit_ = 0.0;
         ros::Time last_time;
 
         mower_msgs::Status last_status;
