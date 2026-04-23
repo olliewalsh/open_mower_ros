@@ -691,7 +691,8 @@ namespace ftc_local_planner
                     ang_gain_factor = 0.1;
             }
             ang_speed *= ang_gain_factor;
-            ang_speed += lat_error * config.kp_lat + i_lat_error * config.ki_lat + d_lat * config.kd_lat + d_lat_input * config.kd_lat_input;
+            double lat_speed_scale = current_movement_speed / config.max_cmd_vel_speed;
+            ang_speed += (lat_error * config.kp_lat + i_lat_error * config.ki_lat + d_lat * config.kd_lat + d_lat_input * config.kd_lat_input) * lat_speed_scale;
         }
 
         if (ang_speed > config.max_cmd_vel_ang)
