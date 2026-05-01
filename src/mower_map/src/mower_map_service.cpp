@@ -411,19 +411,24 @@ void buildMap() {
   for (const auto& area : map_data.areas) {
     if (!area.active) continue;
 
-    double value;
     if (area.type == "mow" || area.type == "nav") {
-      value = 0.0;
-    } else if (area.type == "obstacle") {
-      value = 1.0;
-    } else {
-      continue;
+      grid_map::Polygon poly = internalPolygonToGridMap(area.outline);
+      for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
+        const grid_map::Index index(*iterator);
+        data(index[0], index[1]) = 0.0;
+      }
     }
+  }
 
-    grid_map::Polygon poly = internalPolygonToGridMap(area.outline);
-    for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
-      const grid_map::Index index(*iterator);
-      data(index[0], index[1]) = value;
+  for (const auto& area : map_data.areas) {
+    if (!area.active) continue;
+
+    if (area.type == "obstacle") {
+      grid_map::Polygon poly = internalPolygonToGridMap(area.outline);
+      for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
+        const grid_map::Index index(*iterator);
+        data(index[0], index[1]) = 1.0;
+      }
     }
   }
 
