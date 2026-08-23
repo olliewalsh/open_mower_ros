@@ -80,6 +80,7 @@ void xesc_2040_driver::Xesc2040Driver::getStatus(xesc_msgs::XescStateStamped &st
     if(!xesc_interface)
         return;
     xesc_interface->get_status(&status);
+    state_msg.header.seq = status.seq;
 
     state_msg.header.stamp = ros::Time::now();
     state_msg.state.connection_state = status.connection_state;
@@ -100,6 +101,7 @@ void xesc_2040_driver::Xesc2040Driver::getStatusBlocking(xesc_msgs::XescStateSta
     if(!xesc_interface)
         return;
     xesc_interface->wait_for_status(&status);
+    state_msg.header.seq = status.seq;
 
     state_msg.header.stamp = ros::Time::now();
     state_msg.state.connection_state = status.connection_state;

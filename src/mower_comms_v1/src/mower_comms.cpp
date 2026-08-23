@@ -29,6 +29,8 @@
 
 #include <algorithm>
 #include <bitset>
+#include <cmath>
+#include <cstdint>
 
 #include "COBS.h"
 #include "boost/crc.hpp"
@@ -44,6 +46,7 @@
 #include "sensor_msgs/MagneticField.h"
 #include "std_msgs/Bool.h"
 #include "std_msgs/Empty.h"
+#include "wheel_speed_controller.hpp"
 
 ros::Publisher status_pub;
 ros::Publisher power_pub;
@@ -68,8 +71,17 @@ bool ll_clear_emergency = false;
 // True, if we can send to the low level board
 bool allow_send = false;
 
-// Current speeds (duty cycle) for the three ESCs
+// Applied duty cycle for the three ESCs.
 float speed_l = 0, speed_r = 0, speed_mow = 0, target_speed_mow = 0;
+
+// Desired wheel speeds in m/s.
+float desired_speed_l = 0, desired_speed_r = 0;
+
+const WheelSpeedController::Gains default_wheel_speed_gains{1.5f, 0.35f, 1.5f, 0.0f};
+WheelSpeedController left_wheel_controller{default_wheel_speed_gains};
+WheelSpeedController right_wheel_controller{default_wheel_speed_gains};
+float wheel_speed_feedforward = default_wheel_speed_gains.feedforward;
+float max_drive_duty = 0.95f;
 
 // Ticks / m and wheel distance for this robot
 double wheel_ticks_per_m = 0.0;
@@ -101,6 +113,15 @@ bool has_ticks;
 uint32_t last_ticks_l = 0;
 uint32_t last_ticks_r = 0;
 ros::Time last_ticks_stamp{};
+// Fresh ESC samples are paired before updating odometry and the controllers.
+bool left_status_sequence_valid = false;
+bool right_status_sequence_valid = false;
+uint32_t last_left_status_sequence = 0;
+uint32_t last_right_status_sequence = 0;
+bool left_status_pending = false;
+bool right_status_pending = false;
+xesc_msgs::XescStateStamped pending_left_status{};
+xesc_msgs::XescStateStamped pending_right_status{};
 geometry_msgs::TwistStamped measured_twist_msg{};
 
 std::mutex ll_status_mutex;
@@ -114,22 +135,54 @@ bool is_emergency() {
   return emergency_high_level || emergency_low_level;
 }
 
+bool isEscConnected(const xesc_msgs::XescStateStamped& status) {
+  return status.state.connection_state == xesc_msgs::XescState::XESC_CONNECTION_STATE_CONNECTED ||
+         status.state.connection_state == xesc_msgs::XescState::XESC_CONNECTION_STATE_CONNECTED_INCOMPATIBLE_FW;
+}
+
+void resetDriveController() {
+  desired_speed_l = 0.0f;
+  desired_speed_r = 0.0f;
+  speed_l = 0.0f;
+  speed_r = 0.0f;
+  left_wheel_controller.Reset();
+  right_wheel_controller.Reset();
+}
+
+void updateDriveDuty(float dt) {
+  const float nominal_speed_limit = max_drive_duty / wheel_speed_feedforward;
+  const float peak_target = std::max(std::fabs(desired_speed_l), std::fabs(desired_speed_r));
+  const float scale = peak_target > nominal_speed_limit ? nominal_speed_limit / peak_target : 1.0f;
+
+  left_wheel_controller.SetTargetSpeed(desired_speed_l * scale);
+  right_wheel_controller.SetTargetSpeed(desired_speed_r * scale);
+  left_wheel_controller.Update(dt);
+  right_wheel_controller.Update(dt);
+
+  speed_l = left_wheel_controller.duty();
+  speed_r = right_wheel_controller.duty();
+
+  // Preserve the commanded turn radius if a controller output exceeds the duty limit.
+  const float peak_duty = std::max(std::fabs(speed_l), std::fabs(speed_r));
+  if (peak_duty > max_drive_duty) {
+    const float duty_scale = max_drive_duty / peak_duty;
+    speed_l *= duty_scale;
+    speed_r *= duty_scale;
+  }
+}
+
 void publishActuators() {
   speed_mow = target_speed_mow;
 
   // emergency or timeout -> send 0 speeds
+  const ros::Time now = ros::Time::now();
   if (is_emergency()) {
-    speed_l = 0;
-    speed_r = 0;
+    resetDriveController();
     speed_mow = 0;
+  } else if (now - last_cmd_vel > ros::Duration(1.0)) {
+    resetDriveController();
   }
-  if (ros::Time::now() - last_cmd_vel > ros::Duration(1.0)) {
-    speed_l = 0;
-    speed_r = 0;
-  }
-  if (ros::Time::now() - last_cmd_vel > ros::Duration(25.0)) {
-    speed_l = 0;
-    speed_r = 0;
+  if (now - last_cmd_vel > ros::Duration(25.0)) {
     speed_mow = 0;
   }
 
@@ -163,7 +216,7 @@ void publishActuators() {
   }
 }
 
-void convertStatus(xesc_msgs::XescStateStamped& vesc_status, mower_msgs::ESCStatus& ros_esc_status) {
+void convertStatus(const xesc_msgs::XescStateStamped& vesc_status, mower_msgs::ESCStatus& ros_esc_status) {
   if (vesc_status.state.connection_state != xesc_msgs::XescState::XESC_CONNECTION_STATE_CONNECTED &&
       vesc_status.state.connection_state != xesc_msgs::XescState::XESC_CONNECTION_STATE_CONNECTED_INCOMPATIBLE_FW) {
     // ESC is disconnected
@@ -183,24 +236,65 @@ void convertStatus(xesc_msgs::XescStateStamped& vesc_status, mower_msgs::ESCStat
   ros_esc_status.temperature_pcb = vesc_status.state.temperature_pcb;
 }
 
-void convertStatus(xesc_msgs::XescStateStamped& vesc_status, uint8_t& esc_status, double& esc_temperature,
-                   double& esc_current, double& motor_temperature, double& motor_rpm) {
-  if (vesc_status.state.connection_state != xesc_msgs::XescState::XESC_CONNECTION_STATE_CONNECTED &&
-      vesc_status.state.connection_state != xesc_msgs::XescState::XESC_CONNECTION_STATE_CONNECTED_INCOMPATIBLE_FW) {
-    // ESC is disconnected
-    esc_status = mower_msgs::ESCStatus::ESC_STATUS_DISCONNECTED;
-  } else if (vesc_status.state.fault_code) {
-    ROS_ERROR_STREAM_THROTTLE(1, "Motor controller fault code: " << vesc_status.state.fault_code);
-    // ESC has a fault
-    esc_status = mower_msgs::ESCStatus::ESC_STATUS_ERROR;
-  } else {
-    // ESC is OK but standing still
-    esc_status = mower_msgs::ESCStatus::ESC_STATUS_OK;
+void processDriveStatusPair(const xesc_msgs::XescStateStamped& left_status,
+                            const xesc_msgs::XescStateStamped& right_status, const ros::Time& stamp) {
+  if (has_ticks) {
+    const float dt = static_cast<float>((stamp - last_ticks_stamp).toSec());
+    if (dt > 0.0f && wheel_ticks_per_m > 0.0 && wheel_distance_m > 0.0) {
+      const int32_t d_left = static_cast<int32_t>(left_status.state.tacho - last_ticks_l);
+      const int32_t d_right = static_cast<int32_t>(right_status.state.tacho - last_ticks_r);
+      const float measured_speed_l = static_cast<float>(d_left) / (dt * static_cast<float>(wheel_ticks_per_m));
+      const float measured_speed_r = -static_cast<float>(d_right) / (dt * static_cast<float>(wheel_ticks_per_m));
+
+      left_wheel_controller.SetMeasuredSpeed(measured_speed_l);
+      right_wheel_controller.SetMeasuredSpeed(measured_speed_r);
+      updateDriveDuty(dt);
+
+      measured_twist_msg.header.frame_id = "base_link";
+      measured_twist_msg.header.stamp = stamp;
+      measured_twist_msg.header.seq++;
+      measured_twist_msg.twist.linear.x = 0.5f * (measured_speed_l + measured_speed_r);
+      measured_twist_msg.twist.angular.z = (measured_speed_r - measured_speed_l) / static_cast<float>(wheel_distance_m);
+      actual_twist_pub.publish(measured_twist_msg);
+    }
   }
-  motor_rpm = vesc_status.state.rpm;
-  esc_current = vesc_status.state.current_input;
-  motor_temperature = vesc_status.state.temperature_motor;
-  esc_temperature = vesc_status.state.temperature_pcb;
+
+  last_ticks_stamp = stamp;
+  last_ticks_l = left_status.state.tacho;
+  last_ticks_r = right_status.state.tacho;
+  has_ticks = true;
+}
+
+void updateDriveFeedback(const xesc_msgs::XescStateStamped& left_status,
+                         const xesc_msgs::XescStateStamped& right_status, const ros::Time& stamp) {
+  if (!isEscConnected(left_status) || !isEscConnected(right_status)) {
+    left_status_sequence_valid = false;
+    right_status_sequence_valid = false;
+    left_status_pending = false;
+    right_status_pending = false;
+    has_ticks = false;
+    resetDriveController();
+    return;
+  }
+
+  if (!left_status_sequence_valid || left_status.header.seq != last_left_status_sequence) {
+    last_left_status_sequence = left_status.header.seq;
+    left_status_sequence_valid = true;
+    pending_left_status = left_status;
+    left_status_pending = true;
+  }
+  if (!right_status_sequence_valid || right_status.header.seq != last_right_status_sequence) {
+    last_right_status_sequence = right_status.header.seq;
+    right_status_sequence_valid = true;
+    pending_right_status = right_status;
+    right_status_pending = true;
+  }
+
+  if (left_status_pending && right_status_pending) {
+    processDriveStatusPair(pending_left_status, pending_right_status, stamp);
+    left_status_pending = false;
+    right_status_pending = false;
+  }
 }
 
 void publishStatus() {
@@ -260,59 +354,25 @@ void publishStatus() {
   left_xesc_interface->getStatus(left_status);
   right_xesc_interface->getStatus(right_status);
 
+  mower_msgs::ESCStatus mow_esc_status{};
   mower_msgs::ESCStatus left_esc_status{};
   mower_msgs::ESCStatus right_esc_status{};
 
-  // convertStatus(mow_status, status_msg.mow_esc_status);
+  convertStatus(mow_status, mow_esc_status);
   convertStatus(left_status, left_esc_status);
   convertStatus(right_status, right_esc_status);
 
-  status_msg.mower_esc_current = static_cast<float>(mow_status.state.current_input);
-  status_msg.mower_esc_status = mow_status.state.connection_state;
-  status_msg.mower_motor_rpm = mow_status.state.rpm;
-  status_msg.mower_esc_temperature = static_cast<float>(mow_status.state.temperature_pcb);
-  status_msg.mower_motor_temperature = static_cast<float>(mow_status.state.temperature_motor);
+  status_msg.mower_esc_current = mow_esc_status.current;
+  status_msg.mower_esc_status = mow_esc_status.status;
+  status_msg.mower_motor_rpm = mow_esc_status.rpm;
+  status_msg.mower_esc_temperature = mow_esc_status.temperature_pcb;
+  status_msg.mower_motor_temperature = mow_esc_status.temperature_motor;
 
   status_pub.publish(status_msg);
   status_left_esc_pub.publish(left_esc_status);
   status_right_esc_pub.publish(right_esc_status);
 
-  if (!has_ticks) {
-    last_ticks_stamp = status_msg.stamp;
-    last_ticks_l = left_status.state.tacho_absolute;
-    last_ticks_r = right_status.state.tacho_absolute;
-    has_ticks = true;
-  } else {
-    bool wheel_direction_l = left_status.state.direction && abs(left_status.state.duty_cycle) > 0;
-    bool wheel_direction_r = !right_status.state.direction && abs(right_status.state.duty_cycle) > 0;
-
-    double dt = (status_msg.stamp - last_ticks_stamp).toSec();
-
-    double d_wheel_l = (double)(left_status.state.tacho_absolute - last_ticks_l) * (1 / wheel_ticks_per_m);
-    double d_wheel_r = (double)(right_status.state.tacho_absolute - last_ticks_r) * (1 / wheel_ticks_per_m);
-
-    if (wheel_direction_l) {
-      d_wheel_l *= -1.0;
-    }
-    if (wheel_direction_r) {
-      d_wheel_r *= -1.0;
-    }
-
-    double d_ticks = (d_wheel_l + d_wheel_r) / 2.0;
-    double vx = d_ticks / dt;
-    double vr = -(d_wheel_l + d_wheel_r) / (2.0f * dt);
-    last_ticks_stamp = status_msg.stamp;
-    last_ticks_l = left_status.state.tacho_absolute;
-    last_ticks_r = right_status.state.tacho_absolute;
-
-    measured_twist_msg.header.frame_id = "base_link";
-    measured_twist_msg.header.stamp = status_msg.stamp;
-    measured_twist_msg.header.seq++;
-    measured_twist_msg.twist.linear.x = vx;
-    measured_twist_msg.twist.angular.z = vr;
-
-    actual_twist_pub.publish(measured_twist_msg);
-  }
+  updateDriveFeedback(left_status, right_status, status_msg.stamp);
 }
 
 std::string getHallConfigsString(const HallConfig* hall_configs, const size_t size) {
@@ -469,21 +529,10 @@ void highLevelStatusReceived(const mower_msgs::HighLevelStatus::ConstPtr& msg) {
 }
 
 void velReceived(const geometry_msgs::Twist::ConstPtr& msg) {
-  // TODO: update this to rad/s values and implement xESC speed control
   last_cmd_vel = ros::Time::now();
-  speed_r = msg->linear.x + 0.5 * wheel_distance_m * msg->angular.z;
-  speed_l = msg->linear.x - 0.5 * wheel_distance_m * msg->angular.z;
-
-  if (speed_l >= 1.0) {
-    speed_l = 1.0;
-  } else if (speed_l <= -1.0) {
-    speed_l = -1.0;
-  }
-  if (speed_r >= 1.0) {
-    speed_r = 1.0;
-  } else if (speed_r <= -1.0) {
-    speed_r = -1.0;
-  }
+  desired_speed_r = msg->linear.x + 0.5 * wheel_distance_m * msg->angular.z;
+  desired_speed_l = msg->linear.x - 0.5 * wheel_distance_m * msg->angular.z;
+  updateDriveDuty(0.0f);
 }
 
 void handleLowLevelUIEvent(struct ll_ui_event* ui_event) {
@@ -730,11 +779,44 @@ int main(int argc, char** argv) {
 
   paramNh.getParam("services/diff_drive/ticks_per_m", wheel_ticks_per_m);
   paramNh.getParam("services/diff_drive/wheel_distance_m", wheel_distance_m);
+  if (wheel_ticks_per_m <= 0.0 || wheel_distance_m <= 0.0) {
+    ROS_FATAL_STREAM("Invalid diff drive geometry: ticks_per_m=" << wheel_ticks_per_m
+                                                                 << ", wheel_distance_m=" << wheel_distance_m);
+    return 1;
+  }
+
+  WheelSpeedController::Gains wheel_speed_gains{
+      static_cast<float>(paramNh.param("services/diff_drive/wheel_speed_feedforward",
+                                       static_cast<double>(default_wheel_speed_gains.feedforward))),
+      static_cast<float>(
+          paramNh.param("services/diff_drive/wheel_speed_kp", static_cast<double>(default_wheel_speed_gains.kp))),
+      static_cast<float>(
+          paramNh.param("services/diff_drive/wheel_speed_ki", static_cast<double>(default_wheel_speed_gains.ki))),
+      static_cast<float>(
+          paramNh.param("services/diff_drive/wheel_speed_kd", static_cast<double>(default_wheel_speed_gains.kd)))};
+  max_drive_duty = static_cast<float>(paramNh.param("services/diff_drive/max_duty", 0.95));
+  if (wheel_speed_gains.feedforward <= 0.0f || wheel_speed_gains.kp < 0.0f || wheel_speed_gains.ki < 0.0f ||
+      wheel_speed_gains.kd < 0.0f || max_drive_duty <= 0.0f || max_drive_duty > 1.0f) {
+    ROS_FATAL_STREAM("Invalid wheel speed controller configuration: ff/kp/ki/kd="
+                     << wheel_speed_gains.feedforward << "/" << wheel_speed_gains.kp << "/" << wheel_speed_gains.ki
+                     << "/" << wheel_speed_gains.kd << ", max_duty=" << max_drive_duty);
+    return 1;
+  }
+
+  wheel_speed_feedforward = wheel_speed_gains.feedforward;
+  left_wheel_controller.SetGains(wheel_speed_gains);
+  right_wheel_controller.SetGains(wheel_speed_gains);
+  left_wheel_controller.SetMaxDuty(max_drive_duty);
+  right_wheel_controller.SetMaxDuty(max_drive_duty);
 
   ROS_INFO_STREAM("Wheel ticks [1/m]: " << wheel_ticks_per_m);
   ROS_INFO_STREAM("Wheel distance [m]: " << wheel_distance_m);
+  ROS_INFO_STREAM("Wheel speed gains ff/kp/ki/kd: " << wheel_speed_gains.feedforward << ", " << wheel_speed_gains.kp
+                                                    << ", " << wheel_speed_gains.ki << ", " << wheel_speed_gains.kd
+                                                    << ", max_duty: " << max_drive_duty);
 
-  speed_l = speed_r = speed_mow = target_speed_mow = 0;
+  resetDriveController();
+  speed_mow = target_speed_mow = 0;
 
   // Some generic settings from param server (non- dynamic)
   llhl_config.options.ignore_charging_current =

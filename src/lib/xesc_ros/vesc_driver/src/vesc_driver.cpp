@@ -71,6 +71,7 @@ namespace vesc_driver {
 
     void VescDriver::getStatus(xesc_msgs::XescStateStamped &state_msg) {
         vesc_.get_status(&vesc_status);
+        state_msg.header.seq = vesc_status.seq;
 
         state_msg.header.stamp = ros::Time::now();
         state_msg.state.connection_state = vesc_status.connection_state;
@@ -90,6 +91,7 @@ namespace vesc_driver {
 
     void VescDriver::getStatusBlocking(xesc_msgs::XescStateStamped &state_msg) {
         vesc_.wait_for_status(&vesc_status);
+        state_msg.header.seq = vesc_status.seq;
 
         state_msg.header.stamp = ros::Time::now();
         state_msg.state.connection_state = vesc_status.connection_state;
