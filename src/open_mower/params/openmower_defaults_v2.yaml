@@ -62,7 +62,12 @@ mower_logic:
 xbot_monitoring:
   external_mqtt_enable: false
 
-# Openmower doesn't work in m/s but duty cycle by default, so we must adjust the speed for the recovery behavior
+# Use a cautious speed and distance for the open-loop recovery manoeuvre.
 move_base_flex:
   BackwardForwardRecovery:
-    linear_vel: 0.6
+    max_distance: 0.5
+    linear_vel: 0.25
+    check_frequency: 10.0
+    obstacle_check_distance: 0.5
+    max_cost_threshold: 243
+    timeout: 3.0
