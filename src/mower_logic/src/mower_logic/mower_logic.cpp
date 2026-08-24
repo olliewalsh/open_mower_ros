@@ -187,25 +187,45 @@ void registerActions(std::string prefix, const std::vector<xbot_msgs::ActionInfo
   }
 }
 
-void setRobotPose(geometry_msgs::Pose& pose) {
-  // set the robot pose internally as well. othwerise we need to wait for xbot_positioning to send a new one once it has
-  // updated the internal pose.
-  auto last_pose = pose_state_subscriber.getMessage();
-  last_pose.pose.pose = pose;
-  pose_state_subscriber.setMessage(last_pose);
-
+void setRobotPose(const geometry_msgs::Pose& pose) {
   xbot_positioning::SetPoseSrv pose_srv;
   pose_srv.request.robot_pose = pose;
 
   ros::Rate retry_delay(1);
   bool success = false;
   for (int i = 0; i < 10; i++) {
+    uint64_t pose_before_request;
+    pose_state_subscriber.getMessage(pose_before_request);
     if (positioningClient.call(pose_srv)) {
-      //            ROS_INFO_STREAM("successfully set pose to " << pose);
-      success = true;
-      break;
+      // The service updates xbot_positioning synchronously, but its pose topic and TF are published by the next
+      // positioning update. Do not update our cache optimistically: downstream path planning must only see a pose that
+      // was actually published from the reset positioning state.
+      const ros::Time deadline = ros::Time::now() + ros::Duration(2.0);
+      ros::Rate pose_update_rate(100);
+      while (ros::ok() && ros::Time::now() < deadline) {
+        uint64_t updated_pose_sequence;
+        const auto updated_pose = pose_state_subscriber.getMessage(updated_pose_sequence);
+        const bool received_after_request = updated_pose_sequence > pose_before_request;
+        const double dx = updated_pose.pose.pose.position.x - pose.position.x;
+        const double dy = updated_pose.pose.pose.position.y - pose.position.y;
+
+        tf2::Quaternion requested_orientation;
+        tf2::Quaternion updated_orientation;
+        tf2::fromMsg(pose.orientation, requested_orientation);
+        tf2::fromMsg(updated_pose.pose.pose.orientation, updated_orientation);
+        const double angle_error = requested_orientation.angleShortestPath(updated_orientation);
+
+        if (received_after_request && std::hypot(dx, dy) < 0.02 && std::abs(angle_error) < 0.02) {
+          success = true;
+          break;
+        }
+        pose_update_rate.sleep();
+      }
+      if (success) break;
+      ROS_ERROR_STREAM("Positioning did not publish the requested robot pose in time. Retrying.");
+    } else {
+      ROS_ERROR_STREAM("Error setting robot pose to " << pose << ". Retrying.");
     }
-    ROS_ERROR_STREAM("Error setting robot pose to " << pose << ". Retrying.");
     retry_delay.sleep();
   }
 

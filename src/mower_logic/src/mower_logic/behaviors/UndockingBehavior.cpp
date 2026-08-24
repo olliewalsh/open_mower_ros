@@ -24,7 +24,7 @@ extern xbot_msgs::AbsolutePose getPose();
 extern mower_msgs::Status getStatus();
 extern mower_msgs::Power getPower();
 
-extern void setRobotPose(geometry_msgs::Pose& pose);
+extern void setRobotPose(const geometry_msgs::Pose& pose);
 extern void stopMoving();
 extern bool isGpsGood();
 extern bool setGPS(bool enabled);
@@ -51,7 +51,14 @@ std::string UndockingBehavior::state_name() {
 Behavior* UndockingBehavior::execute() {
   static bool rng_seeding_required = true;
 
-  // get robot's current pose from odometry.
+  ros::Time start_wait_time = ros::Time::now();
+  ros::Rate loop_rate(100);
+  while (ros::ok() && (ros::Time::now() - start_wait_time) < ros::Duration(config.undocking_waiting_time)) {
+    loop_rate.sleep();
+  }
+
+  // Read the pose only after the undocking wait. In particular, this must happen after enter() has finished resetting
+  // and synchronizing the positioning state, so the path and the controller's map -> base_link transform agree.
   xbot_msgs::AbsolutePose pose = getPose();
   tf2::Quaternion quat;
   tf2::fromMsg(pose.pose.pose.orientation, quat);
@@ -62,12 +69,6 @@ Behavior* UndockingBehavior::execute() {
   mbf_msgs::ExePathGoal exePathGoal;
 
   nav_msgs::Path path;
-
-  ros::Time start_wait_time = ros::Time::now();
-  ros::Rate loop_rate(100);
-  while (ros::ok() && (ros::Time::now() - start_wait_time) < ros::Duration(config.undocking_waiting_time)) {
-    loop_rate.sleep();
-  }
 
   geometry_msgs::PoseStamped docking_pose_stamped_front;
   docking_pose_stamped_front.pose = pose.pose.pose;

@@ -24,7 +24,7 @@
 extern void stopMoving();
 extern void stopBlade();
 extern void setGPS(bool enabled);
-extern void setRobotPose(geometry_msgs::Pose& pose);
+extern void setRobotPose(const geometry_msgs::Pose& pose);
 extern void registerActions(std::string prefix, const std::vector<xbot_msgs::ActionInfo>& actions);
 extern ros::Time rain_resume;
 

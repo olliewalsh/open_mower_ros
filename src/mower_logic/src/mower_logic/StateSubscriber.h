@@ -16,6 +16,8 @@ class StateSubscriber {
 
   MESSAGE getMessage();
 
+  MESSAGE getMessage(uint64_t& sequence);
+
   bool hasMessage();
 
   ros::Time getMessageTime();
@@ -28,6 +30,7 @@ class StateSubscriber {
   MESSAGE message_{};
   ros::Time last_message_time_{};
   bool has_message_ = false;
+  uint64_t message_sequence_ = 0;
   ros::Subscriber subscriber_{};
 };
 
@@ -43,6 +46,13 @@ void StateSubscriber<MESSAGE>::Start(ros::NodeHandle* n) {
 template <typename MESSAGE>
 MESSAGE StateSubscriber<MESSAGE>::getMessage() {
   std::lock_guard<std::mutex> lk{message_mutex_};
+  return message_;
+}
+
+template <typename MESSAGE>
+MESSAGE StateSubscriber<MESSAGE>::getMessage(uint64_t& sequence) {
+  std::lock_guard<std::mutex> lk{message_mutex_};
+  sequence = message_sequence_;
   return message_;
 }
 
@@ -64,6 +74,7 @@ void StateSubscriber<MESSAGE>::setMessage(const MESSAGE& message) {
   last_message_time_ = ros::Time::now();
   message_ = message;
   has_message_ = true;
+  ++message_sequence_;
 }
 
 #endif  // STATESUBSCRIBER_H
