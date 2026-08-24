@@ -22,12 +22,14 @@
 #include <mower_msgs/Power.h>
 #include <mower_msgs/Status.h>
 #include <sensor_msgs/Joy.h>
+#include <sensor_msgs/Range.h>
 #include <serial/serial.h>
 #include <xbot_msgs/WheelTick.h>
 #include <xesc_driver/xesc_driver.h>
 #include <xesc_msgs/XescStateStamped.h>
 
 #include <algorithm>
+#include <array>
 #include <bitset>
 #include <cmath>
 #include <cstdint>
@@ -55,6 +57,7 @@ ros::Publisher actual_twist_pub;
 ros::Publisher status_left_esc_pub;
 ros::Publisher status_right_esc_pub;
 ros::Publisher sensor_imu_pub;
+std::array<ros::Publisher, 5> uss_range_pubs;
 
 COBS cobs;
 
@@ -300,6 +303,18 @@ void updateDriveFeedback(const xesc_msgs::XescStateStamped& left_status,
 void publishStatus() {
   mower_msgs::Status status_msg;
   status_msg.stamp = ros::Time::now();
+
+  for (size_t i = 0; i < uss_range_pubs.size(); ++i) {
+    sensor_msgs::Range range_msg;
+    range_msg.header.stamp = status_msg.stamp;
+    range_msg.header.frame_id = "uss_" + std::to_string(i + 1);
+    range_msg.radiation_type = sensor_msgs::Range::ULTRASOUND;
+    range_msg.field_of_view = 0.261799f;  // 15 degrees
+    range_msg.min_range = 0.02f;
+    range_msg.max_range = 4.0f;
+    range_msg.range = last_ll_status.uss_ranges_m[i];
+    uss_range_pubs[i].publish(range_msg);
+  }
 
   if (last_ll_status.status_bitmask & 1) {
     // LL OK, fill the message
@@ -848,6 +863,9 @@ int main(int argc, char** argv) {
   status_pub = n.advertise<mower_msgs::Status>("ll/mower_status", 1);
   sensor_imu_pub = n.advertise<sensor_msgs::Imu>("ll/imu/data_raw", 1);
   power_pub = n.advertise<mower_msgs::Power>("ll/power", 1);
+  for (size_t i = 0; i < uss_range_pubs.size(); ++i) {
+    uss_range_pubs[i] = n.advertise<sensor_msgs::Range>("ll/uss/" + std::to_string(i + 1), 1);
+  }
 
   ros::ServiceServer mow_service = n.advertiseService("ll/_service/mow_enabled", setMowEnabled);
   ros::ServiceServer emergency_service = n.advertiseService("ll/_service/emergency", setEmergencyStop);
