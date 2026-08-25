@@ -47,6 +47,8 @@ class MowingBehavior : public Behavior {
   std::string currentMowingAreaName;
   std::string currentMowingPlanDigest;
   double currentMowingAngleIncrementSum;
+  bool build_outline_approach(const geometry_msgs::PoseStamped& goal, nav_msgs::Path& approach,
+                              geometry_msgs::PoseStamped& staging_pose);
 
  public:
   MowingBehavior();

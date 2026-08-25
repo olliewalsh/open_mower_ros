@@ -294,6 +294,33 @@ void printNavState(int state) {
 }
 
 namespace {
+bool pointInPolygon(double x, double y, const geometry_msgs::Polygon& polygon) {
+  bool inside = false;
+  const auto& points = polygon.points;
+  if (points.size() < 3) return false;
+  for (size_t i = 0, j = points.size() - 1; i < points.size(); j = i++) {
+    const auto& a = points[i];
+    const auto& b = points[j];
+    const bool crosses = ((a.y > y) != (b.y > y)) && (x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x);
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+geometry_msgs::PoseStamped bezierPose(const geometry_msgs::PoseStamped& reference, double u, double p0x, double p0y,
+                                      double p1x, double p1y, double p2x, double p2y, double p3x, double p3y) {
+  const double v = 1.0 - u;
+  geometry_msgs::PoseStamped pose = reference;
+  pose.pose.position.x = v * v * v * p0x + 3 * v * v * u * p1x + 3 * v * u * u * p2x + u * u * u * p3x;
+  pose.pose.position.y = v * v * v * p0y + 3 * v * v * u * p1y + 3 * v * u * u * p2y + u * u * u * p3y;
+  const double dx = 3 * v * v * (p1x - p0x) + 6 * v * u * (p2x - p1x) + 3 * u * u * (p3x - p2x);
+  const double dy = 3 * v * v * (p1y - p0y) + 6 * v * u * (p2y - p1y) + 3 * u * u * (p3y - p2y);
+  tf2::Quaternion q;
+  q.setRPY(0.0, 0.0, atan2(dy, dx));
+  pose.pose.orientation = tf2::toMsg(q);
+  return pose;
+}
+
 // Returns the names of the recovery behaviors configured on move_base_flex
 // (its "recovery_behaviors" param), in order, or an empty list if none are
 // configured. This avoids hardcoding behavior names and makes recovery a no-op
@@ -316,6 +343,70 @@ std::vector<std::string> getConfiguredRecoveryBehaviors() {
   return names;
 }
 }  // namespace
+
+bool MowingBehavior::build_outline_approach(const geometry_msgs::PoseStamped& goal, nav_msgs::Path& approach,
+                                            geometry_msgs::PoseStamped& staging_pose) {
+  mower_map::GetMowingAreaSrv map_srv;
+  map_srv.request.index = currentMowingArea;
+  if (!mapClient.call(map_srv)) {
+    ROS_ERROR_STREAM("MowingBehavior: Could not load area geometry for outline approach validation.");
+    return false;
+  }
+  const auto& area_outline = map_srv.response.area.area;
+  const auto& area_obstacles = map_srv.response.area.obstacles;
+
+  tf2::Quaternion goal_q;
+  tf2::fromMsg(goal.pose.orientation, goal_q);
+  double roll, pitch, yaw;
+  tf2::Matrix3x3(goal_q).getRPY(roll, pitch, yaw);
+  const double tx = cos(yaw);
+  const double ty = sin(yaw);
+  const double length = config.outline_approach_length;
+  const double inset = config.outline_approach_inset;
+  const int sample_count = std::max(3, static_cast<int>(ceil((length + inset) / 0.1)));
+
+  // Try both path normals. The valid side is inside the mowing area and outside every obstacle.
+  for (double side : {1.0, -1.0}) {
+    const double nx = -ty * side;
+    const double ny = tx * side;
+    const double p3x = goal.pose.position.x;
+    const double p3y = goal.pose.position.y;
+    const double p0x = p3x - tx * length + nx * inset;
+    const double p0y = p3y - ty * length + ny * inset;
+    const double handle = length * 0.45;
+    const double p1x = p0x + tx * handle;
+    const double p1y = p0y + ty * handle;
+    const double p2x = p3x - tx * handle;
+    const double p2y = p3y - ty * handle;
+
+    nav_msgs::Path candidate;
+    candidate.header = goal.header;
+    bool valid = true;
+    for (int i = 0; i <= sample_count; ++i) {
+      const double u = static_cast<double>(i) / sample_count;
+      auto pose = bezierPose(goal, u, p0x, p0y, p1x, p1y, p2x, p2y, p3x, p3y);
+      // The last sample is the existing coverage goal and may be exactly on a polygon boundary.
+      if (i != sample_count && !pointInPolygon(pose.pose.position.x, pose.pose.position.y, area_outline)) {
+        valid = false;
+        break;
+      }
+      for (const auto& obstacle : area_obstacles) {
+        if (pointInPolygon(pose.pose.position.x, pose.pose.position.y, obstacle)) {
+          valid = false;
+          break;
+        }
+      }
+      if (!valid) break;
+      candidate.poses.push_back(pose);
+    }
+    if (valid) {
+      approach = candidate;
+      staging_pose = candidate.poses.front();
+      return true;
+    }
+  }
+  return false;
+}
 
 /// @return true if spinup succeeded or spinup is disabled, false if we should abort/exit
 bool MowingBehavior::wait_for_mower_spinup() {
@@ -354,6 +445,7 @@ bool MowingBehavior::wait_for_mower_spinup() {
 bool MowingBehavior::execute_mowing_plan() {
   int first_point_attempt_counter = 0;
   int first_point_trim_counter = 0;
+  double outline_approach_backtrack_distance = 0.0;
   ros::Time paused_time(0.0);
   u_int8_t pause_cause = 0;
 
@@ -452,7 +544,40 @@ bool MowingBehavior::execute_mowing_plan() {
     /////////////////////////////////////////////////////////////////////////////////////////////////////////
     {
       ROS_INFO_STREAM("MowingBehavior: (FIRST POINT)  Moving to path segment starting point");
-      if (path.is_outline && getConfig().add_fake_obstacle) {
+      nav_msgs::Path outline_approach;
+      geometry_msgs::PoseStamped navigation_target = path.path.poses[currentMowingPathIndex];
+      bool use_outline_approach = path.is_outline && config.outline_approach_enabled;
+      if (use_outline_approach &&
+          !build_outline_approach(path.path.poses[currentMowingPathIndex], outline_approach, navigation_target)) {
+        if (currentMowingPathIndex == 0) {
+          ROS_INFO_STREAM(
+              "MowingBehavior: (FIRST POINT) No tangent approach available at the planned outline start; "
+              "using the original start pose.");
+          use_outline_approach = false;
+        } else {
+          const auto& current_position = path.path.poses[currentMowingPathIndex].pose.position;
+          const auto& previous_position = path.path.poses[currentMowingPathIndex - 1].pose.position;
+          const double dx = current_position.x - previous_position.x;
+          const double dy = current_position.y - previous_position.y;
+          const double backtrack_step_distance = hypot(dx, dy);
+          if (outline_approach_backtrack_distance + backtrack_step_distance >
+              config.outline_approach_max_backtrack_distance) {
+            ROS_ERROR_STREAM("MowingBehavior: (FIRST POINT) No safe outline approach found while backtracking "
+                             << outline_approach_backtrack_distance
+                             << "m; aborting rather than skipping unmowed path.");
+            this->abort();
+            return false;
+          }
+          currentMowingPathIndex--;
+          outline_approach_backtrack_distance += backtrack_step_distance;
+          checkpoint();
+          ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) Could not construct a safe outline approach; backtracking to "
+                          << currentMowingPathIndex << " (" << outline_approach_backtrack_distance
+                          << "m total) so already-mowed outline may be repeated.");
+          continue;
+        }
+      }
+      if (path.is_outline && getConfig().add_fake_obstacle && !use_outline_approach) {
         mower_map::SetNavPointSrv set_nav_point_srv;
         set_nav_point_srv.request.nav_pose = path.path.poses[currentMowingPathIndex].pose;
         setNavPointClient.call(set_nav_point_srv);
@@ -460,7 +585,7 @@ bool MowingBehavior::execute_mowing_plan() {
       }
 
       mbf_msgs::MoveBaseGoal moveBaseGoal;
-      moveBaseGoal.target_pose = path.path.poses[currentMowingPathIndex];
+      moveBaseGoal.target_pose = navigation_target;
       moveBaseGoal.controller = "FTCPlanner";
       mbfClient->sendGoal(moveBaseGoal);
       sleep(1);
@@ -529,10 +654,23 @@ bool MowingBehavior::execute_mowing_plan() {
           if (first_point_trim_counter < config.max_first_point_trim_attempts) {
             // We try now to remove the first point so the 2nd, 3rd etc point becomes our target
             // mow path points are offset by 10cm
-            ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) - Attempt "
-                            << first_point_trim_counter << " / " << config.max_first_point_trim_attempts
-                            << " Trimming first point off the beginning of the mow path.");
-            currentMowingPathIndex++;
+            ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) - Attempt " << first_point_trim_counter << " / "
+                                                                       << config.max_first_point_trim_attempts
+                                                                       << " Trying an adjacent path point.");
+            if (path.is_outline) {
+              if (currentMowingPathIndex == 0) {
+                ROS_ERROR_STREAM(
+                    "MowingBehavior: (FIRST POINT) Cannot backtrack before the start of the outline; "
+                    "aborting rather than skipping unmowed path.");
+                this->abort();
+                return false;
+              }
+              currentMowingPathIndex--;
+              ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) Backtracking to outline index "
+                              << currentMowingPathIndex << "; already-mowed path may be repeated.");
+            } else {
+              currentMowingPathIndex++;
+            }
             first_point_trim_counter++;
             first_point_attempt_counter = 0;  // give it another <config.max_first_point_attempts> attempts
             paused = true;
@@ -553,9 +691,59 @@ bool MowingBehavior::execute_mowing_plan() {
       mower_map::ClearNavPointSrv clear_nav_point_srv;
       clearNavPointClient.call(clear_nav_point_srv);
 
+      if (use_outline_approach) {
+        ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Following tangent outline approach with "
+                        << outline_approach.poses.size() << " poses.");
+        mowerEnabled = false;
+        mbf_msgs::ExePathGoal approach_goal;
+        approach_goal.path = outline_approach;
+        approach_goal.angle_tolerance = 5.0 * (M_PI / 180.0);
+        approach_goal.dist_tolerance = 0.1;
+        approach_goal.tolerance_from_action = true;
+        approach_goal.controller = "FTCPlanner";
+        mbfClientExePath->sendGoal(approach_goal);
+
+        actionlib::SimpleClientGoalState approach_status(actionlib::SimpleClientGoalState::PENDING);
+        ros::Rate approach_rate(10);
+        while (ros::ok()) {
+          approach_status = mbfClientExePath->getState();
+          if (approach_status.state_ != actionlib::SimpleClientGoalState::ACTIVE &&
+              approach_status.state_ != actionlib::SimpleClientGoalState::PENDING) {
+            break;
+          }
+          if (aborted || requested_pause_flag || skip_area || skip_path) {
+            mbfClientExePath->cancelAllGoals();
+            break;
+          }
+          approach_rate.sleep();
+        }
+
+        if (skip_area) {
+          publishMowerEvent("AREA_SKIPPED");
+          currentMowingPaths.clear();
+          skip_area = false;
+          return true;
+        }
+        if (skip_path) {
+          skip_path = false;
+          currentMowingPath++;
+          currentMowingPathIndex = 0;
+          return false;
+        }
+        if (aborted || requested_pause_flag) return false;
+        if (approach_status.state_ != actionlib::SimpleClientGoalState::SUCCEEDED) {
+          ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) Tangent outline approach failed with status "
+                          << approach_status.state_ << "; retrying with the mower disabled.");
+          paused = true;
+          update_actions();
+          continue;
+        }
+      }
+
       // we have reached the start pose of the mow area, reset error handling values
       first_point_attempt_counter = 0;
       first_point_trim_counter = 0;
+      outline_approach_backtrack_distance = 0.0;
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////
