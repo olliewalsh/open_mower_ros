@@ -1,8 +1,8 @@
 #ifndef FTC_LOCAL_PLANNER_SIMPLE_PATH_TRACKER_H_
 #define FTC_LOCAL_PLANNER_SIMPLE_PATH_TRACKER_H_
 
-#include <memory>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -38,10 +38,14 @@ private:
   struct Projection
   {
     size_t segment{0};
-    double fraction{0.0}, x{0.0}, y{0.0}, heading{0.0};
+    double fraction{0.0}, x{0.0}, y{0.0}, heading{0.0}, curvature{0.0};
     double cross_track_error{0.0}, heading_error{0.0}, remaining_distance{0.0};
+    bool sharp_corner_ahead{false};
+    double corner_distance{0.0};
   };
+  struct PathSample { double x{0.0}, y{0.0}, heading{0.0}; size_t segment{0}; };
   bool projectToPath(double x, double y, double yaw, Projection& projection) const;
+  PathSample samplePath(double distance) const;
   bool trajectoryIsSafe(double x, double y, double yaw, double linear, double angular,
       std::string& reason) const;
   bool footprintIsSafe(double x, double y, double yaw) const;
@@ -57,6 +61,7 @@ private:
   costmap_2d::Costmap2DROS* costmap_ros_{nullptr};
   std::unique_ptr<base_local_planner::CostmapModel> collision_model_;
   std::vector<geometry_msgs::PoseStamped> plan_;
+  std::vector<double> cumulative_distance_;
   size_t current_index_{0};
   double last_linear_command_{0.0};
   ros::Time last_command_time_;
@@ -69,6 +74,8 @@ private:
   double mowing_speed_{0.38}, minimum_tracking_speed_{0.1}, max_angular_speed_{1.8};
   double max_acceleration_{0.15}, max_deceleration_{0.3}, cross_track_slowdown_gain_{3.0};
   double rotate_threshold_{0.7}, rotate_tolerance_{0.17};
+  double curvature_preview_distance_{0.35}, curvature_angular_fraction_{0.7};
+  double sharp_corner_angle_{1.22}, corner_slowdown_distance_{0.4}, corner_position_tolerance_{0.05};
   double goal_distance_tolerance_{0.1}, goal_angle_tolerance_{0.17}, goal_slowdown_distance_{0.5};
   int projection_search_window_{100};
   bool check_collisions_{true}, unknown_is_obstacle_{true};

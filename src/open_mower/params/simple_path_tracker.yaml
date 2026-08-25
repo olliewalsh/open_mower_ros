@@ -8,6 +8,11 @@ SimplePathTracker:
   max_acceleration: 0.15
   max_deceleration: 0.30
   cross_track_slowdown_gain: 3.0
+  curvature_preview_distance: 0.35
+  curvature_angular_fraction: 0.70
+  sharp_corner_angle: 1.22
+  corner_slowdown_distance: 0.40
+  corner_position_tolerance: 0.05
   rotate_threshold: 0.70
   rotate_tolerance: 0.17
   goal_distance_tolerance: 0.10

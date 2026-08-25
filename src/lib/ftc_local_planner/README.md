@@ -4,7 +4,7 @@ This repository contains a very simple "follow the carrot" local planner impleme
 
 ## SimplePathTracker
 
-`ftc_local_planner/SimplePathTracker` is an alternative MBF controller intended for precise mowing rows. It projects the robot onto the path and creates one angular command from heading and signed cross-track error, avoiding competing lateral and angular PID loops. Forward speed is constrained by tracking error, distance to the goal, acceleration limits, and mower current/RPM.
+`ftc_local_planner/SimplePathTracker` is an alternative MBF controller intended for precise mowing rows and curved perimeter paths. It projects the robot onto the path and creates one angular command from path-curvature feed-forward, heading error, and signed cross-track error, avoiding competing lateral and angular PID loops. Forward speed is constrained by curvature, tracking error, distance to the goal, acceleration limits, and mower current/RPM. Smooth row-end arcs are driven continuously; sharp vertices slow to a stop and rotate in place.
 
 The controller checks the costmap's configured robot footprint at the current pose and along the predicted `(linear, angular)` trajectory. Set the footprint and padding in the standard costmap configuration; no controller-specific polygon is required.
 
