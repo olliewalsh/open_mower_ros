@@ -238,7 +238,7 @@ bool SimplePathTracker::trajectoryIsSafe(double x,double y,double yaw,double lin
 
 bool SimplePathTracker::footprintIsSafe(double x,double y,double yaw) const
 {
-  const auto* layered=costmap_ros_->getLayeredCostmap();
+  auto* layered=costmap_ros_->getLayeredCostmap();
   const double cost=collision_model_->footprintCost(x,y,yaw,costmap_ros_->getRobotFootprint(),layered->getInscribedRadius(),layered->getCircumscribedRadius());
   return cost == -2.0 ? !unknown_is_obstacle_ : cost >= 0.0;
 }
