@@ -4,4 +4,7 @@
       A implementation of a local planner using a FTC algorithmus.
     </description>
   </class>
+  <class name="ftc_local_planner/SimplePathTracker" type="ftc_local_planner::SimplePathTracker" base_class_type="mbf_costmap_core::CostmapController">
+    <description>Stanley path tracker with constrained speed and polygon trajectory collision checking.</description>
+  </class>
 </library>

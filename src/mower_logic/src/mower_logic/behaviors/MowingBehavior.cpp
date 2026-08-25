@@ -35,6 +35,7 @@
 extern ros::ServiceClient mapClient;
 extern ros::ServiceClient pathClient;
 extern ros::ServiceClient pathProgressClient;
+extern std::string mowingController;
 extern ros::ServiceClient setNavPointClient;
 extern ros::ServiceClient clearNavPointClient;
 
@@ -586,7 +587,7 @@ bool MowingBehavior::execute_mowing_plan() {
 
       mbf_msgs::MoveBaseGoal moveBaseGoal;
       moveBaseGoal.target_pose = navigation_target;
-      moveBaseGoal.controller = "FTCPlanner";
+      moveBaseGoal.controller = mowingController;
       mbfClient->sendGoal(moveBaseGoal);
       sleep(1);
       actionlib::SimpleClientGoalState current_status(actionlib::SimpleClientGoalState::PENDING);
@@ -700,7 +701,7 @@ bool MowingBehavior::execute_mowing_plan() {
         approach_goal.angle_tolerance = 5.0 * (M_PI / 180.0);
         approach_goal.dist_tolerance = 0.1;
         approach_goal.tolerance_from_action = true;
-        approach_goal.controller = "FTCPlanner";
+        approach_goal.controller = mowingController;
         mbfClientExePath->sendGoal(approach_goal);
 
         actionlib::SimpleClientGoalState approach_status(actionlib::SimpleClientGoalState::PENDING);
@@ -769,7 +770,7 @@ bool MowingBehavior::execute_mowing_plan() {
       exePathGoal.angle_tolerance = 5.0 * (M_PI / 180.0);
       exePathGoal.dist_tolerance = 0.2;
       exePathGoal.tolerance_from_action = true;
-      exePathGoal.controller = "FTCPlanner";
+      exePathGoal.controller = mowingController;
 
       ROS_INFO_STREAM("MowingBehavior: (MOW) First point reached - Executing mow path with "
                       << path.path.poses.size() << " poses, from index " << exePathStartIndex);

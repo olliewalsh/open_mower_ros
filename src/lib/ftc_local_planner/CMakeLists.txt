@@ -4,9 +4,11 @@ project(ftc_local_planner)
 find_package(catkin REQUIRED
         COMPONENTS
             costmap_2d
+            base_local_planner
             dynamic_reconfigure
             nav_core
             nav_msgs
+            mower_msgs
             pluginlib
             roscpp
 		tf
@@ -56,6 +58,7 @@ catkin_package(
     LIBRARIES ftc_local_planner
     CATKIN_DEPENDS
         dynamic_reconfigure
+        mower_msgs
         pluginlib
         roscpp
 		tf
@@ -69,6 +72,7 @@ catkin_package(
 
 add_library(ftc_local_planner 
 	    src/ftc_planner.cpp
+        src/simple_path_tracker.cpp
         src/oscillation_detector.cpp)
 target_link_libraries(ftc_local_planner ${catkin_LIBRARIES})
 add_dependencies(ftc_local_planner ${catkin_EXPORTED_TARGETS} ${${PROJECT_NAME}_EXPORTED_TARGETS})
@@ -83,7 +87,7 @@ install(TARGETS ftc_local_planner backward_forward_recovery
        LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
        )
        
-install(FILES blp_plugin.xml
+install(FILES mbf_plugin.xml recovery_plugin.xml
     DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
 

@@ -78,6 +78,7 @@ bool current_job_finished = false;
 
 ros::ServiceClient pathClient, mapClient, dockingPointClient, gpsClient, mowClient, emergencyClient, pathProgressClient,
     setNavPointClient, clearNavPointClient, clearMapClient, positioningClient, actionRegistrationClient;
+std::string mowingController = "SimplePathTracker";
 
 ros::NodeHandle* n;
 ros::NodeHandle* paramNh;
@@ -825,8 +826,9 @@ int main(int argc, char** argv) {
 
   dockingPointClient = n->serviceClient<mower_map::GetDockingPointSrv>("mower_map_service/get_docking_point");
 
-  pathProgressClient =
-      n->serviceClient<ftc_local_planner::PlannerGetProgress>("/move_base_flex/FTCPlanner/planner_get_progress");
+  n->param<std::string>("mowing_controller", mowingController, mowingController);
+  pathProgressClient = n->serviceClient<ftc_local_planner::PlannerGetProgress>(
+      "/move_base_flex/" + mowingController + "/planner_get_progress");
 
   setNavPointClient = n->serviceClient<mower_map::SetNavPointSrv>("mower_map_service/set_nav_point");
   clearNavPointClient = n->serviceClient<mower_map::ClearNavPointSrv>("mower_map_service/clear_nav_point");
