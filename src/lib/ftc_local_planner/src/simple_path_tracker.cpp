@@ -31,6 +31,8 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction); LOAD(sharp_corner_angle);
   LOAD(corner_slowdown_distance); LOAD(corner_position_tolerance);
   LOAD(goal_angle_tolerance); LOAD(goal_slowdown_distance); LOAD(projection_search_window);
+  LOAD(projection_initial_allowance);
+  LOAD(projection_velocity_factor);
   LOAD(check_collisions); LOAD(unknown_is_obstacle); LOAD(collision_horizon);
   LOAD(collision_time_step); LOAD(braking_deceleration); LOAD(reaction_time); LOAD(collision_margin);
   LOAD(max_mow_motor_current); LOAD(mow_current_gain); LOAD(min_mow_motor_rpm); LOAD(mow_rpm_gain);
@@ -48,6 +50,8 @@ bool SimplePathTracker::setPlan(const std::vector<geometry_msgs::PoseStamped>& p
 {
   if (plan.size() < 2) { plan_.clear(); state_ = State::FINISHED; return false; }
   plan_ = plan; current_index_ = 0; last_linear_command_ = 0.0;
+  projection_distance_limit_ = projection_initial_allowance_;
+  last_projection_time_ = ros::Time::now();
   cumulative_distance_.assign(plan_.size(), 0.0);
   for (size_t i = 1; i < plan_.size(); ++i)
     cumulative_distance_[i] = cumulative_distance_[i - 1] +
@@ -59,13 +63,20 @@ bool SimplePathTracker::setPlan(const std::vector<geometry_msgs::PoseStamped>& p
 }
 
 uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseStamped& pose,
-    const geometry_msgs::TwistStamped&, geometry_msgs::TwistStamped& command, std::string& message)
+    const geometry_msgs::TwistStamped& velocity, geometry_msgs::TwistStamped& command,
+    std::string& message)
 {
   command.header.stamp = ros::Time::now(); command.header.frame_id = "base_link";
   command.twist = geometry_msgs::Twist();
   if (cancelled_ || state_ == State::FINISHED) return SUCCESS;
   if (plan_.size() < 2) { message = "No valid path"; return INVALID_PATH; }
   const double x = pose.pose.position.x, y = pose.pose.position.y, yaw = yawOf(pose.pose.orientation);
+  const ros::Time projection_now = ros::Time::now();
+  const double projection_dt = std::max(0.0, std::min(0.5,
+      (projection_now - last_projection_time_).toSec()));
+  last_projection_time_ = projection_now;
+  projection_distance_limit_ += projection_velocity_factor_ *
+      std::abs(velocity.twist.linear.x) * projection_dt;
   Projection p;
   if (!projectToPath(x, y, yaw, p)) { message = "Cannot project pose onto path"; return INVALID_PATH; }
   current_index_ = std::max(current_index_, p.segment);
@@ -145,7 +156,13 @@ bool SimplePathTracker::projectToPath(double x, double y, double yaw, Projection
     const auto& a = plan_[i].pose.position; const auto& b = plan_[i + 1].pose.position;
     const double dx = b.x-a.x, dy = b.y-a.y, length2 = dx*dx + dy*dy;
     if (length2 < 1e-10) continue;
-    const double t = std::max(0.0, std::min(1.0, ((x-a.x)*dx + (y-a.y)*dy)/length2));
+    if (cumulative_distance_[i] > projection_distance_limit_)
+      continue;
+    const double segment_length = std::sqrt(length2);
+    const double reachable_fraction = std::min(1.0,
+        (projection_distance_limit_ - cumulative_distance_[i]) / segment_length);
+    const double t = std::max(0.0, std::min(reachable_fraction,
+        ((x-a.x)*dx + (y-a.y)*dy)/length2));
     const double px=a.x+t*dx, py=a.y+t*dy, distance2=(x-px)*(x-px)+(y-py)*(y-py);
     if (distance2 < best) {
       best=distance2; result.segment=i; result.fraction=t; result.x=px; result.y=py;

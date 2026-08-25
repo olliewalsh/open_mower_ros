@@ -19,6 +19,10 @@ SimplePathTracker:
   goal_angle_tolerance: 0.17
   goal_slowdown_distance: 0.50
   projection_search_window: 100
+  # Maximum initial along-path projection. Further progress requires matching
+  # physical robot movement, preventing stationary jumps on closed paths.
+  projection_initial_allowance: 0.50
+  projection_velocity_factor: 1.50
   check_collisions: true
   unknown_is_obstacle: true
   collision_horizon: 2.0

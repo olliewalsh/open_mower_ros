@@ -8,6 +8,8 @@ This repository contains a very simple "follow the carrot" local planner impleme
 
 The controller checks the costmap's configured robot footprint at the current pose and along the predicted `(linear, angular)` trajectory. Set the footprint and padding in the standard costmap configuration; no controller-specific polygon is required.
 
+Path projection is monotonic and limited by integrated measured forward velocity. `projection_initial_allowance` permits a small initial offset, and `projection_velocity_factor` allows for velocity measurement error, while repeated controller updates cannot advance through a closed or spatially adjacent path when the robot is stationary.
+
 Parameters are loaded from `open_mower/params/simple_path_tracker.yaml`. Mower logic selects it by default through the private `mowing_controller` parameter. Set that parameter to `FTCPlanner` to switch mowing back without changing code. Docking continues to use `DockingFTCPlanner`.
 
 Tune in this order:

@@ -63,6 +63,8 @@ private:
   std::vector<geometry_msgs::PoseStamped> plan_;
   std::vector<double> cumulative_distance_;
   size_t current_index_{0};
+  double projection_distance_limit_{0.0};
+  ros::Time last_projection_time_;
   double last_linear_command_{0.0};
   ros::Time last_command_time_;
   mower_msgs::Status mower_status_;
@@ -78,6 +80,8 @@ private:
   double sharp_corner_angle_{1.22}, corner_slowdown_distance_{0.4}, corner_position_tolerance_{0.05};
   double goal_distance_tolerance_{0.1}, goal_angle_tolerance_{0.17}, goal_slowdown_distance_{0.5};
   int projection_search_window_{100};
+  double projection_initial_allowance_{0.5};
+  double projection_velocity_factor_{1.5};
   bool check_collisions_{true}, unknown_is_obstacle_{true};
   double collision_horizon_{2.0}, collision_time_step_{0.1};
   double braking_deceleration_{0.4}, reaction_time_{0.2}, collision_margin_{0.1};
