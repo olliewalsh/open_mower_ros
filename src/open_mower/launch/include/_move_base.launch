@@ -9,6 +9,7 @@
     <rosparam file="$(find open_mower)/params/move_base_flex.yaml" command="load"/>
     <rosparam file="$(find open_mower)/params/ftc_local_planner.yaml" command="load" />
     <rosparam file="$(find open_mower)/params/docking_ftc_local_planner.yaml" command="load" />
+    <rosparam file="$(find open_mower)/params/simple_path_tracker.yaml" command="load" />
     <rosparam file="$(find open_mower)/params/global_planner_params.yaml" command="load" />
   </node>
 
