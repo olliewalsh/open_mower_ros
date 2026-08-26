@@ -14,7 +14,7 @@ PLUGINLIB_EXPORT_CLASS(ftc_local_planner::SimplePathTracker, mbf_costmap_core::C
 
 namespace ftc_local_planner
 {
-namespace { constexpr uint32_t SUCCESS = 0, COLLISION = 104, INVALID_PATH = 110; }
+namespace { constexpr uint32_t SUCCESS = 0, CANCELED = 101, COLLISION = 104, INVALID_PATH = 111; }
 
 void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2d::Costmap2DROS* costmap_ros)
 {
@@ -79,7 +79,8 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   }
   command.header.stamp = ros::Time::now(); command.header.frame_id = "base_link";
   command.twist = geometry_msgs::Twist();
-  if (cancelled_ || state_ == State::FINISHED) return SUCCESS;
+  if (cancelled_) return CANCELED;
+  if (state_ == State::FINISHED) return SUCCESS;
   if (plan_.size() < 2) { message = "No valid path"; return INVALID_PATH; }
   const double x = pose.pose.position.x, y = pose.pose.position.y, yaw = yawOf(pose.pose.orientation);
   if (have_last_projection_pose_) {
