@@ -16,9 +16,9 @@ Lateral feedback is reduced smoothly on curved paths using `effective_cross_trac
 
 The controller checks the costmap's configured robot footprint at the current pose and along the predicted `(linear, angular)` trajectory. Set the footprint and padding in the standard costmap configuration; no controller-specific polygon is required.
 
-Path projection is monotonic and limited by measured pose-to-pose travel. `projection_initial_allowance` permits a small initial offset, `projection_distance_factor` allows for localization and path-geometry error, `projection_pose_deadband` rejects stationary pose noise, and `projection_max_pose_step` limits the effect of localization jumps. Repeated controller updates cannot advance through a closed or spatially adjacent path when the robot is stationary.
+Path projection is monotonic and each update is limited by measured pose-to-pose travel. `projection_initial_allowance` permits a small initial offset, `projection_distance_factor` allows for localization and path-geometry error, `projection_pose_deadband` rejects stationary pose noise, and `projection_max_pose_step` limits the effect of localization jumps. Unused allowance is discarded rather than accumulated, preventing later closed or spatially adjacent loops from becoming eligible early.
 
-If the projected path is exhausted while the mower remains outside `goal_distance_tolerance`, the controller commands zero for `goal_position_timeout` seconds and then returns MBF `MISSED_GOAL` instead of remaining active indefinitely. The timeout uses ROS time so simulation and bag playback remain deterministic.
+If the projected path is exhausted while the mower remains outside `goal_distance_tolerance`, the controller rotates toward and drives to the endpoint. It returns MBF `MISSED_GOAL` only after goal distance stops improving for `goal_position_timeout` seconds. The timeout uses ROS time so simulation and bag playback remain deterministic.
 
 Parameters are loaded from `open_mower/params/simple_path_tracker.yaml`. Mower logic selects it by default through the private `mowing_controller` parameter. Set that parameter to `FTCPlanner` to switch mowing back without changing code. Docking continues to use `DockingFTCPlanner`.
 

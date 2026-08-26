@@ -71,6 +71,7 @@ private:
   std::vector<double> cumulative_distance_;
   size_t current_index_{0};
   double projection_distance_limit_{0.0};
+  double last_projected_path_distance_{0.0};
   bool have_last_projection_pose_{false};
   double last_projection_x_{0.0}, last_projection_y_{0.0};
   bool goal_miss_active_{false};

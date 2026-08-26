@@ -61,6 +61,7 @@ bool SimplePathTracker::setPlan(const std::vector<geometry_msgs::PoseStamped>& p
   if (plan.size() < 2) { plan_.clear(); state_ = State::FINISHED; return false; }
   plan_ = plan; current_index_ = 0; last_linear_command_ = 0.0;
   projection_distance_limit_ = projection_initial_allowance_;
+  last_projected_path_distance_ = 0.0;
   have_last_projection_pose_ = false;
   goal_miss_active_ = false;
   best_goal_distance_ = std::numeric_limits<double>::infinity();
@@ -91,13 +92,15 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   const double x = pose.pose.position.x, y = pose.pose.position.y, yaw = yawOf(pose.pose.orientation);
   if (have_last_projection_pose_) {
     const double pose_step = std::hypot(x - last_projection_x_, y - last_projection_y_);
-    if (pose_step >= std::max(0.0, projection_pose_deadband_))
-      projection_distance_limit_ += std::max(0.0, projection_distance_factor_) *
-          std::min(pose_step, std::max(0.0, projection_max_pose_step_));
+    const double accepted_step = pose_step >= std::max(0.0, projection_pose_deadband_) ?
+        std::min(pose_step, std::max(0.0, projection_max_pose_step_)) : 0.0;
+    projection_distance_limit_ = last_projected_path_distance_ +
+        std::max(0.0, projection_distance_factor_) * accepted_step;
   }
   last_projection_x_ = x; last_projection_y_ = y; have_last_projection_pose_ = true;
   Projection p;
   if (!projectToPath(x, y, yaw, p)) { message = "Cannot project pose onto path"; return INVALID_PATH; }
+  last_projected_path_distance_ = p.path_distance;
   std_msgs::Float64 diagnostic;
   diagnostic.data = p.cross_track_error; cross_track_error_publisher_.publish(diagnostic);
   diagnostic.data = p.heading_error; heading_error_publisher_.publish(diagnostic);
@@ -235,12 +238,16 @@ bool SimplePathTracker::projectToPath(double x, double y, double yaw, Projection
     const auto& a = plan_[i].pose.position; const auto& b = plan_[i + 1].pose.position;
     const double dx = b.x-a.x, dy = b.y-a.y, length2 = dx*dx + dy*dy;
     if (length2 < 1e-10) continue;
+    if (cumulative_distance_[i + 1] < last_projected_path_distance_)
+      continue;
     if (cumulative_distance_[i] > projection_distance_limit_)
       continue;
     const double segment_length = std::sqrt(length2);
+    const double minimum_fraction = std::max(0.0, std::min(1.0,
+        (last_projected_path_distance_ - cumulative_distance_[i]) / segment_length));
     const double reachable_fraction = std::min(1.0,
         (projection_distance_limit_ - cumulative_distance_[i]) / segment_length);
-    const double t = std::max(0.0, std::min(reachable_fraction,
+    const double t = std::max(minimum_fraction, std::min(reachable_fraction,
         ((x-a.x)*dx + (y-a.y)*dy)/length2));
     const double px=a.x+t*dx, py=a.y+t*dy, distance2=(x-px)*(x-px)+(y-py)*(y-py);
     if (distance2 < best) {
