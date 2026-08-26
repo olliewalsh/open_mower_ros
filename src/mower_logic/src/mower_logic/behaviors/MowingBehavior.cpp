@@ -446,6 +446,7 @@ bool MowingBehavior::wait_for_mower_spinup() {
 bool MowingBehavior::execute_mowing_plan() {
   int first_point_attempt_counter = 0;
   int first_point_trim_counter = 0;
+  int outline_approach_attempt_counter = 0;
   double outline_approach_backtrack_distance = 0.0;
   ros::Time paused_time(0.0);
   u_int8_t pause_cause = 0;
@@ -733,12 +734,22 @@ bool MowingBehavior::execute_mowing_plan() {
         }
         if (aborted || requested_pause_flag) return false;
         if (approach_status.state_ != actionlib::SimpleClientGoalState::SUCCEEDED) {
+          outline_approach_attempt_counter++;
+          if (outline_approach_attempt_counter >= config.max_outline_approach_attempts) {
+            ROS_ERROR_STREAM("MowingBehavior: (FIRST POINT) Tangent outline approach failed with status "
+                             << approach_status.state_ << " after " << outline_approach_attempt_counter
+                             << " attempts; aborting mowing.");
+            this->abort();
+            return false;
+          }
           ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) Tangent outline approach failed with status "
-                          << approach_status.state_ << "; retrying with the mower disabled.");
+                          << approach_status.state_ << "; retrying (" << outline_approach_attempt_counter << " / "
+                          << config.max_outline_approach_attempts << ").");
           paused = true;
           update_actions();
           continue;
         }
+        outline_approach_attempt_counter = 0;
       }
 
       // we have reached the start pose of the mow area, reset error handling values
