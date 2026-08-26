@@ -67,7 +67,8 @@ private:
   std::vector<double> cumulative_distance_;
   size_t current_index_{0};
   double projection_distance_limit_{0.0};
-  ros::Time last_projection_time_;
+  bool have_last_projection_pose_{false};
+  double last_projection_x_{0.0}, last_projection_y_{0.0};
   double last_linear_command_{0.0};
   ros::Time last_command_time_;
   mower_msgs::Status mower_status_;
@@ -84,7 +85,8 @@ private:
   double goal_distance_tolerance_{0.1}, goal_angle_tolerance_{0.17}, goal_slowdown_distance_{0.5};
   int projection_search_window_{100};
   double projection_initial_allowance_{0.5};
-  double projection_velocity_factor_{1.5};
+  double projection_distance_factor_{1.5};
+  double projection_pose_deadband_{0.002}, projection_max_pose_step_{0.25};
   bool check_collisions_{true}, unknown_is_obstacle_{true};
   double collision_horizon_{2.0}, collision_time_step_{0.1};
   double braking_deceleration_{0.4}, reaction_time_{0.2}, collision_margin_{0.1};
