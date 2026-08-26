@@ -3,6 +3,9 @@ SimplePathTracker:
   # may be changed while the controller is running.
   heading_gain: 2.0
   cross_track_gain: 2.0
+  # Reduce lateral feedback on curves: gain / (1 + scale * abs(curvature)).
+  # Set to 0.0 to disable curvature-dependent scaling.
+  cross_track_curvature_scale: 0.25
   softening_speed: 0.1
   mowing_speed: 0.38
   minimum_tracking_speed: 0.10

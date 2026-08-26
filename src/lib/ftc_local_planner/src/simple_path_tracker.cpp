@@ -25,7 +25,7 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   ros::NodeHandle nh("~/" + name_);
   parameter_nh_.reset(new ros::NodeHandle(nh));
 #define LOAD(p) nh.param(#p, p##_, p##_)
-  LOAD(heading_gain); LOAD(cross_track_gain); LOAD(softening_speed);
+  LOAD(heading_gain); LOAD(cross_track_gain); LOAD(cross_track_curvature_scale); LOAD(softening_speed);
   LOAD(mowing_speed); LOAD(minimum_tracking_speed); LOAD(max_angular_speed);
   LOAD(max_acceleration); LOAD(max_deceleration); LOAD(cross_track_slowdown_gain);
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
@@ -168,8 +168,10 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
       const ros::Time now = ros::Time::now(); double dt = (now - last_command_time_).toSec(); last_command_time_ = now;
       if (!std::isfinite(dt) || dt <= 0 || dt > 1) dt = 0.1;
       const double linear = applyAccelerationLimit(target, dt);
+      const double effective_cross_track_gain = cross_track_gain_ /
+          (1.0 + std::max(0.0, cross_track_curvature_scale_) * std::abs(p.curvature));
       const double angular = linear * p.curvature + heading_gain_ * p.heading_error -
-          std::atan2(cross_track_gain_ * p.cross_track_error,
+          std::atan2(effective_cross_track_gain * p.cross_track_error,
                      std::abs(linear) + softening_speed_);
       command.twist.linear.x = linear;
       command.twist.angular.z = std::max(-max_angular_speed_, std::min(max_angular_speed_, angular));
@@ -305,7 +307,7 @@ void SimplePathTracker::refreshParameters(bool cached)
   if (cached) parameter_nh_->getParamCached(#p, p##_); \
   else parameter_nh_->param(#p, p##_, p##_); \
 } while (false)
-  LOAD(heading_gain); LOAD(cross_track_gain); LOAD(softening_speed);
+  LOAD(heading_gain); LOAD(cross_track_gain); LOAD(cross_track_curvature_scale); LOAD(softening_speed);
   LOAD(mowing_speed); LOAD(minimum_tracking_speed); LOAD(max_angular_speed);
   LOAD(max_acceleration); LOAD(max_deceleration); LOAD(cross_track_slowdown_gain);
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
