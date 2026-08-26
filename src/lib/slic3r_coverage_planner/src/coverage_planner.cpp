@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 #include "ExPolygon.hpp"
@@ -145,6 +146,59 @@ Points cubicTransition(const Point &previous, const Point &start, const Point &e
         result.emplace_back(scale_(x), scale_(y));
     }
     return result;
+}
+
+struct TransitionQuality {
+    double score{std::numeric_limits<double>::infinity()};
+    bool has_inflection{false};
+};
+
+TransitionQuality transitionQuality(const Point &start, const Points &curve,
+                                    const Point &end, const Point &next) {
+    Points samples;
+    samples.reserve(curve.size() + 3);
+    samples.push_back(start);
+    samples.insert(samples.end(), curve.begin(), curve.end());
+    samples.push_back(end);
+    samples.push_back(next);
+
+    TransitionQuality quality;
+    double peak_curvature = 0.0;
+    double total_turn = 0.0;
+    int previous_sign = 0;
+    for (size_t i = 1; i + 1 < samples.size(); ++i) {
+        const double ax = unscale(samples[i].x - samples[i - 1].x);
+        const double ay = unscale(samples[i].y - samples[i - 1].y);
+        const double bx = unscale(samples[i + 1].x - samples[i].x);
+        const double by = unscale(samples[i + 1].y - samples[i].y);
+        const double first_length = std::hypot(ax, ay);
+        const double second_length = std::hypot(bx, by);
+        if (first_length < 1e-6 || second_length < 1e-6) continue;
+        const double turn = normalizedAngle(std::atan2(by, bx) - std::atan2(ay, ax));
+        const double curvature = std::abs(turn) / (0.5 * (first_length + second_length));
+        peak_curvature = std::max(peak_curvature, curvature);
+        total_turn += std::abs(turn);
+        if (std::abs(turn) > 0.5 * M_PI / 180.0) {
+            const int sign = turn > 0.0 ? 1 : -1;
+            if (previous_sign != 0 && sign != previous_sign) quality.has_inflection = true;
+            previous_sign = sign;
+        }
+    }
+    quality.score = peak_curvature + 0.25 * total_turn;
+    return quality;
+}
+
+bool transitionIsSafe(const Point &start, const Points &curve, const Point &end,
+                      const Polygon &boundary) {
+    Point intersection;
+    Point previous = start;
+    for (const auto &point: curve) {
+        Line segment(previous, point);
+        if (boundary.intersection(segment, &intersection)) return false;
+        previous = point;
+    }
+    Line final_segment(previous, end);
+    return !boundary.intersection(final_segment, &intersection);
 }
 }  // namespace
 
@@ -370,12 +424,6 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
                 }
             }
 
-            // In order to smooth the transition we skip some points (think spiral movement of the mower).
-            // Check, that the skip did not break the path (cross the outer poly during transition).
-            // If it's fine, use the smoothed path, otherwise use the shortest point to split.
-            int smooth_transition_idx = (closest_idx + 6) % points.size();
-            bool allow_curved_transition = true;
-
             const Polygon *next_outer_poly;
             if (i < group.size() - 1) {
                 next_outer_poly = &group[i + 1];
@@ -383,36 +431,38 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
                 // we are in the outermost line, use outline for collision check
                 next_outer_poly = &outline_poly;
             }
-            Line connection(points[smooth_transition_idx], lastPoint);
-            Point intersection_pt{};
-            if (next_outer_poly->intersection(connection, &intersection_pt)) {
-                // intersection, we need to transition at closest point
-                smooth_transition_idx = closest_idx;
-                allow_curved_transition = false;
-            }
-
-            if (smooth_transition_idx > 0) {
-                std::rotate(points.begin(), points.begin() + smooth_transition_idx, points.end());
-            }
-            if (allow_curved_transition && has_previous_point && points.size() > 1) {
-                auto transition = cubicTransition(previousPoint, lastPoint, points[0], points[1]);
-                Point curve_previous = lastPoint;
-                for (const auto &curve_point: transition) {
-                    Line curve_segment(curve_previous, curve_point);
-                    if (next_outer_poly->intersection(curve_segment, &intersection_pt)) {
-                        transition.clear();
-                        break;
+            int selected_idx = closest_idx;
+            Points selected_transition;
+            TransitionQuality selected_quality;
+            bool selected_without_inflection = false;
+            if (has_previous_point && points.size() > 1) {
+                const int candidate_count = std::min<int>(11, points.size() - 1);
+                for (int offset = 0; offset < candidate_count; ++offset) {
+                    const int candidate_idx = (closest_idx + offset) % points.size();
+                    const int next_idx = (candidate_idx + 1) % points.size();
+                    auto transition = cubicTransition(previousPoint, lastPoint,
+                                                      points[candidate_idx], points[next_idx]);
+                    if (transition.empty() || !transitionIsSafe(lastPoint, transition,
+                                                                points[candidate_idx], *next_outer_poly))
+                        continue;
+                    const auto quality = transitionQuality(lastPoint, transition,
+                                                           points[candidate_idx], points[next_idx]);
+                    const bool candidate_without_inflection = !quality.has_inflection;
+                    const bool prefer = candidate_without_inflection && !selected_without_inflection;
+                    if (selected_transition.empty() || prefer ||
+                        (candidate_without_inflection == selected_without_inflection &&
+                         quality.score < selected_quality.score)) {
+                        selected_idx = candidate_idx;
+                        selected_transition = transition;
+                        selected_quality = quality;
+                        selected_without_inflection = candidate_without_inflection;
                     }
-                    curve_previous = curve_point;
                 }
-                if (!transition.empty()) {
-                    Line final_curve_segment(curve_previous, points[0]);
-                    if (next_outer_poly->intersection(final_curve_segment, &intersection_pt))
-                        transition.clear();
-                }
-                if (!transition.empty())
-                    points.insert(points.begin(), transition.begin(), transition.end());
             }
+            if (selected_idx > 0)
+                std::rotate(points.begin(), points.begin() + selected_idx, points.end());
+            if (!selected_transition.empty())
+                points.insert(points.begin(), selected_transition.begin(), selected_transition.end());
         }
 
         for (auto &pt: points) {
