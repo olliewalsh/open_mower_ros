@@ -18,6 +18,13 @@ All `SimplePathTracker` parameters are refreshed from the ROS parameter server o
 rosparam set /move_base_flex/SimplePathTracker/heading_gain 2.5
 ```
 
+The controller publishes scalar tracking diagnostics for time-series tools such as PlotJuggler:
+
+- `cross_track_error` (metres, signed)
+- `heading_error` (radians, signed)
+- `path_curvature` (inverse metres, signed)
+- `remaining_distance` (metres along the path)
+
 Tune in this order:
 
 1. Set `mowing_speed`, acceleration limits, and angular speed limits.

@@ -14,6 +14,7 @@
 #include <mower_msgs/Status.h>
 #include <nav_msgs/Path.h>
 #include <ros/ros.h>
+#include <std_msgs/Float64.h>
 #include <tf2_ros/buffer.h>
 
 #include "ftc_local_planner/PlannerGetProgress.h"
@@ -73,6 +74,8 @@ private:
   ros::Time last_command_time_;
   mower_msgs::Status mower_status_;
   ros::Publisher plan_publisher_, tracking_point_publisher_;
+  ros::Publisher cross_track_error_publisher_, heading_error_publisher_;
+  ros::Publisher path_curvature_publisher_, remaining_distance_publisher_;
   ros::ServiceServer progress_server_;
   ros::Subscriber status_subscriber_;
 

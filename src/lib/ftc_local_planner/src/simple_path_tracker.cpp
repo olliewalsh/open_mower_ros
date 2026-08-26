@@ -41,6 +41,10 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   last_parameter_refresh_ = ros::WallTime::now();
   plan_publisher_ = nh.advertise<nav_msgs::Path>("global_plan", 1, true);
   tracking_point_publisher_ = nh.advertise<geometry_msgs::PoseStamped>("tracking_point", 1);
+  cross_track_error_publisher_ = nh.advertise<std_msgs::Float64>("cross_track_error", 1);
+  heading_error_publisher_ = nh.advertise<std_msgs::Float64>("heading_error", 1);
+  path_curvature_publisher_ = nh.advertise<std_msgs::Float64>("path_curvature", 1);
+  remaining_distance_publisher_ = nh.advertise<std_msgs::Float64>("remaining_distance", 1);
   progress_server_ = nh.advertiseService("planner_get_progress", &SimplePathTracker::getProgress, this);
   status_subscriber_ = nh.subscribe<mower_msgs::Status>("/ll/mower_status", 1,
       &SimplePathTracker::statusReceived, this, ros::TransportHints().tcpNoDelay(true));
@@ -87,6 +91,11 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   last_projection_x_ = x; last_projection_y_ = y; have_last_projection_pose_ = true;
   Projection p;
   if (!projectToPath(x, y, yaw, p)) { message = "Cannot project pose onto path"; return INVALID_PATH; }
+  std_msgs::Float64 diagnostic;
+  diagnostic.data = p.cross_track_error; cross_track_error_publisher_.publish(diagnostic);
+  diagnostic.data = p.heading_error; heading_error_publisher_.publish(diagnostic);
+  diagnostic.data = p.curvature; path_curvature_publisher_.publish(diagnostic);
+  diagnostic.data = p.remaining_distance; remaining_distance_publisher_.publish(diagnostic);
   current_index_ = std::max(current_index_, p.segment);
   geometry_msgs::PoseStamped point = pose; point.pose.position.x = p.x; point.pose.position.y = p.y;
   tf2::Quaternion q; q.setRPY(0, 0, p.heading); point.pose.orientation = tf2::toMsg(q);
