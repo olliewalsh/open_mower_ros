@@ -98,6 +98,12 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         std::max(0.0, projection_distance_factor_) * accepted_step;
   }
   last_projection_x_ = x; last_projection_y_ = y; have_last_projection_pose_ = true;
+  if (current_index_ < cumulative_distance_.size()) {
+    last_projected_path_distance_ = std::max(
+        last_projected_path_distance_, cumulative_distance_[current_index_]);
+    projection_distance_limit_ = std::max(
+        projection_distance_limit_, last_projected_path_distance_);
+  }
   Projection p;
   if (!projectToPath(x, y, yaw, p)) { message = "Cannot project pose onto path"; return INVALID_PATH; }
   last_projected_path_distance_ = p.path_distance;
@@ -188,6 +194,8 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
       if (p.sharp_corner_ahead) {
         if (p.corner_distance <= corner_position_tolerance_) {
           current_index_ = std::min(p.segment + 1, plan_.size() - 2);
+          last_projected_path_distance_ = cumulative_distance_[p.segment + 1];
+          projection_distance_limit_ = last_projected_path_distance_;
           state_ = State::PRE_ROTATE;
           last_linear_command_ = 0.0;
           target = 0.0;
