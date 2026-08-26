@@ -6,6 +6,10 @@
 
 #include <boost/range/adaptor/reversed.hpp>
 
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
 #include "ExPolygon.hpp"
 #include "Polyline.hpp"
 #include "Fill/FillRectilinear.hpp"
@@ -26,6 +30,123 @@
 
 bool visualize_plan;
 ros::Publisher marker_array_publisher;
+
+namespace {
+constexpr double kSourceSpacing = 0.05;
+constexpr double kMaxStraightSpacing = 0.50;
+constexpr double kMaxChordError = 0.01;
+constexpr double kMaxHeadingChange = 5.0 * M_PI / 180.0;
+
+double pointDistance(const geometry_msgs::Point &a, const geometry_msgs::Point &b) {
+    return std::hypot(b.x - a.x, b.y - a.y);
+}
+
+double normalizedAngle(double angle) {
+    return std::atan2(std::sin(angle), std::cos(angle));
+}
+
+double pointLineDistance(const geometry_msgs::Point &point, const geometry_msgs::Point &start,
+                         const geometry_msgs::Point &end) {
+    const double dx = end.x - start.x;
+    const double dy = end.y - start.y;
+    const double length_squared = dx * dx + dy * dy;
+    if (length_squared < 1e-12) return pointDistance(point, start);
+    const double t = std::max(0.0, std::min(1.0,
+            ((point.x - start.x) * dx + (point.y - start.y) * dy) / length_squared));
+    geometry_msgs::Point projection;
+    projection.x = start.x + t * dx;
+    projection.y = start.y + t * dy;
+    return pointDistance(point, projection);
+}
+
+void updatePathOrientations(nav_msgs::Path &path) {
+    if (path.poses.size() < 2) return;
+    for (size_t i = 0; i < path.poses.size(); ++i) {
+        const auto &before = path.poses[i == 0 ? 0 : i - 1].pose.position;
+        const auto &after = path.poses[i + 1 < path.poses.size() ? i + 1 : i].pose.position;
+        const double yaw = std::atan2(after.y - before.y, after.x - before.x);
+        tf2::Quaternion orientation;
+        orientation.setRPY(0.0, 0.0, yaw);
+        path.poses[i].pose.orientation = tf2::toMsg(orientation);
+    }
+}
+
+void adaptivelySimplifyPath(nav_msgs::Path &path) {
+    if (path.poses.size() < 3) {
+        updatePathOrientations(path);
+        return;
+    }
+
+    std::vector<geometry_msgs::PoseStamped> unique;
+    unique.reserve(path.poses.size());
+    for (const auto &pose: path.poses) {
+        if (unique.empty() || pointDistance(unique.back().pose.position, pose.pose.position) > 1e-5)
+            unique.push_back(pose);
+    }
+    if (unique.size() < 3) {
+        path.poses = unique;
+        updatePathOrientations(path);
+        return;
+    }
+
+    std::vector<geometry_msgs::PoseStamped> simplified;
+    simplified.reserve(unique.size());
+    size_t anchor = 0;
+    simplified.push_back(unique.front());
+    while (anchor + 1 < unique.size()) {
+        size_t best = anchor + 1;
+        for (size_t candidate = anchor + 2; candidate < unique.size(); ++candidate) {
+            const auto &start = unique[anchor].pose.position;
+            const auto &end = unique[candidate].pose.position;
+            if (pointDistance(start, end) > kMaxStraightSpacing) break;
+
+            double max_error = 0.0;
+            for (size_t i = anchor + 1; i < candidate; ++i)
+                max_error = std::max(max_error, pointLineDistance(unique[i].pose.position, start, end));
+
+            const auto &first = unique[anchor + 1].pose.position;
+            const auto &penultimate = unique[candidate - 1].pose.position;
+            const double entry_heading = std::atan2(first.y - start.y, first.x - start.x);
+            const double exit_heading = std::atan2(end.y - penultimate.y, end.x - penultimate.x);
+            if (max_error > kMaxChordError ||
+                std::abs(normalizedAngle(exit_heading - entry_heading)) > kMaxHeadingChange)
+                break;
+            best = candidate;
+        }
+        simplified.push_back(unique[best]);
+        anchor = best;
+    }
+    path.poses = simplified;
+    updatePathOrientations(path);
+}
+
+Points cubicTransition(const Point &previous, const Point &start, const Point &end, const Point &next) {
+    const double sx = unscale(start.x), sy = unscale(start.y);
+    const double ex = unscale(end.x), ey = unscale(end.y);
+    double in_x = sx - unscale(previous.x), in_y = sy - unscale(previous.y);
+    double out_x = unscale(next.x) - ex, out_y = unscale(next.y) - ey;
+    const double in_length = std::hypot(in_x, in_y);
+    const double out_length = std::hypot(out_x, out_y);
+    const double chord = std::hypot(ex - sx, ey - sy);
+    Points result;
+    if (in_length < 1e-6 || out_length < 1e-6 || chord < 1e-6) return result;
+    in_x /= in_length; in_y /= in_length;
+    out_x /= out_length; out_y /= out_length;
+    const double control_distance = std::min(0.30, chord * 0.45);
+    const double c1x = sx + in_x * control_distance, c1y = sy + in_y * control_distance;
+    const double c2x = ex - out_x * control_distance, c2y = ey - out_y * control_distance;
+    const int steps = std::max(2, static_cast<int>(std::ceil(
+            (chord + 2.0 * control_distance) / kSourceSpacing)));
+    for (int i = 1; i < steps; ++i) {
+        const double t = static_cast<double>(i) / steps;
+        const double u = 1.0 - t;
+        const double x = u*u*u*sx + 3*u*u*t*c1x + 3*u*t*t*c2x + t*t*t*ex;
+        const double y = u*u*u*sy + 3*u*u*t*c1y + 3*u*t*t*c2y + t*t*t*ey;
+        result.emplace_back(scale_(x), scale_(y));
+    }
+    return result;
+}
+}  // namespace
 
 
 void
@@ -217,9 +338,11 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
     path.path.header = header;
 
     Point lastPoint;
+    Point previousPoint;
+    bool has_previous_point = false;
     bool is_first_point = true;
     for (int i = 0; i < group.size(); i++) {
-        auto points = group[i].equally_spaced_points(scale_(0.1));
+        auto points = group[i].equally_spaced_points(scale_(kSourceSpacing));
         if (points.size() < 2) {
             ROS_INFO("Skipping single dot");
             continue;
@@ -250,7 +373,8 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
             // In order to smooth the transition we skip some points (think spiral movement of the mower).
             // Check, that the skip did not break the path (cross the outer poly during transition).
             // If it's fine, use the smoothed path, otherwise use the shortest point to split.
-            int smooth_transition_idx = (closest_idx + 3) % points.size();
+            int smooth_transition_idx = (closest_idx + 6) % points.size();
+            bool allow_curved_transition = true;
 
             const Polygon *next_outer_poly;
             if (i < group.size() - 1) {
@@ -264,10 +388,30 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
             if (next_outer_poly->intersection(connection, &intersection_pt)) {
                 // intersection, we need to transition at closest point
                 smooth_transition_idx = closest_idx;
+                allow_curved_transition = false;
             }
 
             if (smooth_transition_idx > 0) {
                 std::rotate(points.begin(), points.begin() + smooth_transition_idx, points.end());
+            }
+            if (allow_curved_transition && has_previous_point && points.size() > 1) {
+                auto transition = cubicTransition(previousPoint, lastPoint, points[0], points[1]);
+                Point curve_previous = lastPoint;
+                for (const auto &curve_point: transition) {
+                    Line curve_segment(curve_previous, curve_point);
+                    if (next_outer_poly->intersection(curve_segment, &intersection_pt)) {
+                        transition.clear();
+                        break;
+                    }
+                    curve_previous = curve_point;
+                }
+                if (!transition.empty()) {
+                    Line final_curve_segment(curve_previous, points[0]);
+                    if (next_outer_poly->intersection(final_curve_segment, &intersection_pt))
+                        transition.clear();
+                }
+                if (!transition.empty())
+                    points.insert(points.begin(), transition.begin(), transition.end());
             }
         }
 
@@ -293,6 +437,8 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
             pose.pose.position.y = unscale(lastPoint.y);
             pose.pose.position.z = 0;
             path.path.poses.push_back(pose);
+            previousPoint = lastPoint;
+            has_previous_point = true;
             lastPoint = pt;
         }
     }
@@ -310,6 +456,7 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
     pose.pose.position.y = unscale(lastPoint.y);
     pose.pose.position.z = 0;
     path.path.poses.push_back(pose);
+    adaptivelySimplifyPath(path.path);
 
     if (areaLastPoint != nullptr) {
         *areaLastPoint = lastPoint;
@@ -583,6 +730,7 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
         auto path = determinePathForOutline(header, outline_poly, group, true, nullptr);
         if (!path.path.poses.empty()) {
             std::reverse(path.path.poses.begin(), path.path.poses.end());
+            updatePathOrientations(path.path);
             res.paths.push_back(path);
         }
     }
@@ -597,7 +745,7 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
             line.remove_duplicate_points();
 
 
-            auto equally_spaced_points = line.equally_spaced_points(scale_(0.1));
+            auto equally_spaced_points = line.equally_spaced_points(scale_(kSourceSpacing));
             if (equally_spaced_points.size() < 2) {
                 ROS_INFO("Skipping single dot");
                 continue;
@@ -635,6 +783,8 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
             pose.pose.position.y = unscale(lastPoint->y);
             pose.pose.position.z = 0;
             path.path.poses.push_back(pose);
+
+            adaptivelySimplifyPath(path.path);
 
             res.paths.push_back(path);
         }
