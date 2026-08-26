@@ -14,7 +14,7 @@ PLUGINLIB_EXPORT_CLASS(ftc_local_planner::SimplePathTracker, mbf_costmap_core::C
 
 namespace ftc_local_planner
 {
-namespace { constexpr uint32_t SUCCESS = 0, CANCELED = 101, COLLISION = 104, INVALID_PATH = 111; }
+namespace { constexpr uint32_t SUCCESS = 0, CANCELED = 101, COLLISION = 104, MISSED_GOAL = 107, INVALID_PATH = 111; }
 
 void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2d::Costmap2DROS* costmap_ros)
 {
@@ -31,7 +31,8 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
   LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction); LOAD(sharp_corner_angle);
   LOAD(corner_slowdown_distance); LOAD(corner_position_tolerance);
-  LOAD(goal_angle_tolerance); LOAD(goal_slowdown_distance); LOAD(projection_search_window);
+  LOAD(goal_angle_tolerance); LOAD(goal_slowdown_distance); LOAD(goal_position_timeout);
+  LOAD(projection_search_window);
   LOAD(projection_initial_allowance);
   LOAD(projection_distance_factor); LOAD(projection_pose_deadband); LOAD(projection_max_pose_step);
   LOAD(check_collisions); LOAD(unknown_is_obstacle); LOAD(collision_horizon);
@@ -58,6 +59,7 @@ bool SimplePathTracker::setPlan(const std::vector<geometry_msgs::PoseStamped>& p
   plan_ = plan; current_index_ = 0; last_linear_command_ = 0.0;
   projection_distance_limit_ = projection_initial_allowance_;
   have_last_projection_pose_ = false;
+  goal_miss_active_ = false;
   cumulative_distance_.assign(plan_.size(), 0.0);
   for (size_t i = 1; i < plan_.size(); ++i)
     cumulative_distance_[i] = cumulative_distance_[i - 1] +
@@ -111,13 +113,29 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   if (state_ == State::TRACKING) {
     if (goal_distance <= goal_distance_tolerance_ &&
         p.remaining_distance <= goal_distance_tolerance_) {
+      goal_miss_active_ = false;
       state_ = State::FINAL_ROTATE;
       last_linear_command_ = 0;
     }
+    else if (p.remaining_distance <= goal_distance_tolerance_) {
+      last_linear_command_ = 0.0;
+      if (!goal_miss_active_) {
+        goal_miss_active_ = true;
+        goal_miss_started_ = ros::Time::now();
+      }
+      if ((ros::Time::now() - goal_miss_started_).toSec() >=
+          std::max(0.0, goal_position_timeout_)) {
+        message = "Path exhausted with goal distance " + std::to_string(goal_distance) +
+            " m, tolerance " + std::to_string(goal_distance_tolerance_) + " m";
+        return MISSED_GOAL;
+      }
+    }
     else if (std::abs(p.heading_error) > rotate_threshold_) {
+      goal_miss_active_ = false;
       state_ = State::PRE_ROTATE; last_linear_command_ = 0;
       command.twist.angular.z = std::max(-max_angular_speed_, std::min(max_angular_speed_, heading_gain_ * p.heading_error));
     } else {
+      goal_miss_active_ = false;
       const double heading_scale = std::pow(std::max(0.0, std::cos(p.heading_error)), 2);
       const double tracking_scale = heading_scale / (1.0 + cross_track_slowdown_gain_ * std::abs(p.cross_track_error));
       double target = mowing_speed_ * tracking_scale;
@@ -293,7 +311,8 @@ void SimplePathTracker::refreshParameters(bool cached)
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
   LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction); LOAD(sharp_corner_angle);
   LOAD(corner_slowdown_distance); LOAD(corner_position_tolerance);
-  LOAD(goal_angle_tolerance); LOAD(goal_slowdown_distance); LOAD(projection_search_window);
+  LOAD(goal_angle_tolerance); LOAD(goal_slowdown_distance); LOAD(goal_position_timeout);
+  LOAD(projection_search_window);
   LOAD(projection_initial_allowance); LOAD(projection_distance_factor);
   LOAD(projection_pose_deadband); LOAD(projection_max_pose_step);
   LOAD(check_collisions); LOAD(unknown_is_obstacle); LOAD(collision_horizon);

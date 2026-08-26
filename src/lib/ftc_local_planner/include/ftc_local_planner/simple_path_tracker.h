@@ -70,6 +70,8 @@ private:
   double projection_distance_limit_{0.0};
   bool have_last_projection_pose_{false};
   double last_projection_x_{0.0}, last_projection_y_{0.0};
+  bool goal_miss_active_{false};
+  ros::Time goal_miss_started_;
   double last_linear_command_{0.0};
   ros::Time last_command_time_;
   mower_msgs::Status mower_status_;
@@ -86,6 +88,7 @@ private:
   double curvature_preview_distance_{0.35}, curvature_angular_fraction_{0.7};
   double sharp_corner_angle_{1.22}, corner_slowdown_distance_{0.4}, corner_position_tolerance_{0.05};
   double goal_distance_tolerance_{0.1}, goal_angle_tolerance_{0.17}, goal_slowdown_distance_{0.5};
+  double goal_position_timeout_{2.0};
   int projection_search_window_{100};
   double projection_initial_allowance_{0.5};
   double projection_distance_factor_{1.5};

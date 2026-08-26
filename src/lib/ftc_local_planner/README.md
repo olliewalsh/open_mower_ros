@@ -10,6 +10,8 @@ The controller checks the costmap's configured robot footprint at the current po
 
 Path projection is monotonic and limited by measured pose-to-pose travel. `projection_initial_allowance` permits a small initial offset, `projection_distance_factor` allows for localization and path-geometry error, `projection_pose_deadband` rejects stationary pose noise, and `projection_max_pose_step` limits the effect of localization jumps. Repeated controller updates cannot advance through a closed or spatially adjacent path when the robot is stationary.
 
+If the projected path is exhausted while the mower remains outside `goal_distance_tolerance`, the controller commands zero for `goal_position_timeout` seconds and then returns MBF `MISSED_GOAL` instead of remaining active indefinitely. The timeout uses ROS time so simulation and bag playback remain deterministic.
+
 Parameters are loaded from `open_mower/params/simple_path_tracker.yaml`. Mower logic selects it by default through the private `mowing_controller` parameter. Set that parameter to `FTCPlanner` to switch mowing back without changing code. Docking continues to use `DockingFTCPlanner`.
 
 All `SimplePathTracker` parameters are refreshed from the ROS parameter server once per second, using roscpp's local parameter cache. They can therefore be tuned while the controller is running, for example:
