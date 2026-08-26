@@ -1,4 +1,6 @@
 SimplePathTracker:
+  # Parameters are refreshed from the ROS parameter server once per second and
+  # may be changed while the controller is running.
   heading_gain: 2.0
   cross_track_gain: 2.0
   softening_speed: 0.1

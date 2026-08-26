@@ -23,6 +23,7 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   costmap_ros_ = costmap_ros;
   collision_model_.reset(new base_local_planner::CostmapModel(*costmap_ros_->getCostmap()));
   ros::NodeHandle nh("~/" + name_);
+  parameter_nh_.reset(new ros::NodeHandle(nh));
 #define LOAD(p) nh.param(#p, p##_, p##_)
   LOAD(heading_gain); LOAD(cross_track_gain); LOAD(softening_speed);
   LOAD(mowing_speed); LOAD(minimum_tracking_speed); LOAD(max_angular_speed);
@@ -37,6 +38,7 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   LOAD(collision_time_step); LOAD(braking_deceleration); LOAD(reaction_time); LOAD(collision_margin);
   LOAD(max_mow_motor_current); LOAD(mow_current_gain); LOAD(min_mow_motor_rpm); LOAD(mow_rpm_gain);
 #undef LOAD
+  last_parameter_refresh_ = ros::WallTime::now();
   plan_publisher_ = nh.advertise<nav_msgs::Path>("global_plan", 1, true);
   tracking_point_publisher_ = nh.advertise<geometry_msgs::PoseStamped>("tracking_point", 1);
   progress_server_ = nh.advertiseService("planner_get_progress", &SimplePathTracker::getProgress, this);
@@ -66,6 +68,11 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
     const geometry_msgs::TwistStamped& velocity, geometry_msgs::TwistStamped& command,
     std::string& message)
 {
+  const ros::WallTime now = ros::WallTime::now();
+  if ((now - last_parameter_refresh_).toSec() >= 1.0) {
+    refreshParameters(true);
+    last_parameter_refresh_ = now;
+  }
   command.header.stamp = ros::Time::now(); command.header.frame_id = "base_link";
   command.twist = geometry_msgs::Twist();
   if (cancelled_ || state_ == State::FINISHED) return SUCCESS;
@@ -258,6 +265,25 @@ bool SimplePathTracker::footprintIsSafe(double x,double y,double yaw) const
   auto* layered=costmap_ros_->getLayeredCostmap();
   const double cost=collision_model_->footprintCost(x,y,yaw,costmap_ros_->getRobotFootprint(),layered->getInscribedRadius(),layered->getCircumscribedRadius());
   return cost == -2.0 ? !unknown_is_obstacle_ : cost >= 0.0;
+}
+void SimplePathTracker::refreshParameters(bool cached)
+{
+#define LOAD(p) do { \
+  if (cached) parameter_nh_->getParamCached(#p, p##_); \
+  else parameter_nh_->param(#p, p##_, p##_); \
+} while (false)
+  LOAD(heading_gain); LOAD(cross_track_gain); LOAD(softening_speed);
+  LOAD(mowing_speed); LOAD(minimum_tracking_speed); LOAD(max_angular_speed);
+  LOAD(max_acceleration); LOAD(max_deceleration); LOAD(cross_track_slowdown_gain);
+  LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
+  LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction); LOAD(sharp_corner_angle);
+  LOAD(corner_slowdown_distance); LOAD(corner_position_tolerance);
+  LOAD(goal_angle_tolerance); LOAD(goal_slowdown_distance); LOAD(projection_search_window);
+  LOAD(projection_initial_allowance); LOAD(projection_velocity_factor);
+  LOAD(check_collisions); LOAD(unknown_is_obstacle); LOAD(collision_horizon);
+  LOAD(collision_time_step); LOAD(braking_deceleration); LOAD(reaction_time); LOAD(collision_margin);
+  LOAD(max_mow_motor_current); LOAD(mow_current_gain); LOAD(min_mow_motor_rpm); LOAD(mow_rpm_gain);
+#undef LOAD
 }
 double SimplePathTracker::applyAccelerationLimit(double target,double dt){last_linear_command_=std::max(last_linear_command_-max_deceleration_*dt,std::min(last_linear_command_+max_acceleration_*dt,target));return last_linear_command_;}
 bool SimplePathTracker::getProgress(PlannerGetProgressRequest&,PlannerGetProgressResponse& response){response.index=uint32_t(current_index_);return true;}

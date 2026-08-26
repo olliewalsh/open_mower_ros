@@ -12,6 +12,12 @@ Path projection is monotonic and limited by integrated measured forward velocity
 
 Parameters are loaded from `open_mower/params/simple_path_tracker.yaml`. Mower logic selects it by default through the private `mowing_controller` parameter. Set that parameter to `FTCPlanner` to switch mowing back without changing code. Docking continues to use `DockingFTCPlanner`.
 
+All `SimplePathTracker` parameters are refreshed from the ROS parameter server once per second, using roscpp's local parameter cache. They can therefore be tuned while the controller is running, for example:
+
+```bash
+rosparam set /move_base_flex/SimplePathTracker/heading_gain 2.5
+```
+
 Tune in this order:
 
 1. Set `mowing_speed`, acceleration limits, and angular speed limits.

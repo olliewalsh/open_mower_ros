@@ -50,6 +50,7 @@ private:
       std::string& reason) const;
   bool footprintIsSafe(double x, double y, double yaw) const;
   double applyAccelerationLimit(double target, double dt);
+  void refreshParameters(bool cached);
   bool getProgress(PlannerGetProgressRequest&, PlannerGetProgressResponse& response);
   void statusReceived(const mower_msgs::Status::ConstPtr& status);
   static double yawOf(const geometry_msgs::Quaternion& orientation);
@@ -58,6 +59,8 @@ private:
   bool initialized_{false}, cancelled_{false};
   State state_{State::FINISHED};
   std::string name_;
+  std::unique_ptr<ros::NodeHandle> parameter_nh_;
+  ros::WallTime last_parameter_refresh_;
   costmap_2d::Costmap2DROS* costmap_ros_{nullptr};
   std::unique_ptr<base_local_planner::CostmapModel> collision_model_;
   std::vector<geometry_msgs::PoseStamped> plan_;
