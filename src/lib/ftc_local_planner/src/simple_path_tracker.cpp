@@ -99,7 +99,11 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
     else command.twist.angular.z = std::max(-max_angular_speed_, std::min(max_angular_speed_, heading_gain_ * p.heading_error));
   }
   if (state_ == State::TRACKING) {
-    if (goal_distance <= goal_distance_tolerance_) { state_ = State::FINAL_ROTATE; last_linear_command_ = 0; }
+    if (goal_distance <= goal_distance_tolerance_ &&
+        p.remaining_distance <= goal_distance_tolerance_) {
+      state_ = State::FINAL_ROTATE;
+      last_linear_command_ = 0;
+    }
     else if (std::abs(p.heading_error) > rotate_threshold_) {
       state_ = State::PRE_ROTATE; last_linear_command_ = 0;
       command.twist.angular.z = std::max(-max_angular_speed_, std::min(max_angular_speed_, heading_gain_ * p.heading_error));
