@@ -25,6 +25,7 @@ class SimplePathTracker : public mbf_costmap_core::CostmapController
 {
 public:
   SimplePathTracker() = default;
+  explicit SimplePathTracker(bool pure_pursuit) : pure_pursuit_(pure_pursuit) {}
   ~SimplePathTracker() override = default;
   void initialize(std::string name, tf2_ros::Buffer* tf, costmap_2d::Costmap2DROS* costmap_ros) override;
   bool setPlan(const std::vector<geometry_msgs::PoseStamped>& plan) override;
@@ -39,7 +40,7 @@ private:
   struct Projection
   {
     size_t segment{0};
-    double fraction{0.0}, x{0.0}, y{0.0}, heading{0.0}, curvature{0.0};
+    double fraction{0.0}, path_distance{0.0}, x{0.0}, y{0.0}, heading{0.0}, curvature{0.0};
     double cross_track_error{0.0}, heading_error{0.0}, remaining_distance{0.0};
     bool sharp_corner_ahead{false};
     double corner_distance{0.0};
@@ -58,6 +59,7 @@ private:
   static double normalizeAngle(double angle);
 
   bool initialized_{false}, cancelled_{false};
+  const bool pure_pursuit_{false};
   State state_{State::FINISHED};
   std::string name_;
   std::unique_ptr<ros::NodeHandle> parameter_nh_;
@@ -87,6 +89,7 @@ private:
   double max_acceleration_{0.15}, max_deceleration_{0.3}, cross_track_slowdown_gain_{3.0};
   double rotate_threshold_{0.7}, rotate_tolerance_{0.17};
   double curvature_preview_distance_{0.35}, curvature_angular_fraction_{0.7};
+  double minimum_lookahead_{0.15}, maximum_lookahead_{0.35}, lookahead_time_{0.4};
   double sharp_corner_angle_{1.22}, corner_slowdown_distance_{0.4}, corner_position_tolerance_{0.05};
   double goal_distance_tolerance_{0.1}, goal_angle_tolerance_{0.17}, goal_slowdown_distance_{0.5};
   double goal_position_timeout_{2.0};
@@ -99,6 +102,12 @@ private:
   double braking_deceleration_{0.4}, reaction_time_{0.2}, collision_margin_{0.1};
   double max_mow_motor_current_{6.0}, mow_current_gain_{0.125};
   double min_mow_motor_rpm_{2000.0}, mow_rpm_gain_{0.0002};
+};
+
+class PurePursuitTracker : public SimplePathTracker
+{
+public:
+  PurePursuitTracker() : SimplePathTracker(true) {}
 };
 }  // namespace ftc_local_planner
 #endif

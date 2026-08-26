@@ -11,6 +11,7 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 PLUGINLIB_EXPORT_CLASS(ftc_local_planner::SimplePathTracker, mbf_costmap_core::CostmapController)
+PLUGINLIB_EXPORT_CLASS(ftc_local_planner::PurePursuitTracker, mbf_costmap_core::CostmapController)
 
 namespace ftc_local_planner
 {
@@ -29,7 +30,8 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   LOAD(mowing_speed); LOAD(minimum_tracking_speed); LOAD(max_angular_speed);
   LOAD(max_acceleration); LOAD(max_deceleration); LOAD(cross_track_slowdown_gain);
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
-  LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction); LOAD(sharp_corner_angle);
+  LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction);
+  LOAD(minimum_lookahead); LOAD(maximum_lookahead); LOAD(lookahead_time); LOAD(sharp_corner_angle);
   LOAD(corner_slowdown_distance); LOAD(corner_position_tolerance);
   LOAD(goal_angle_tolerance); LOAD(goal_slowdown_distance); LOAD(goal_position_timeout);
   LOAD(projection_search_window);
@@ -50,7 +52,8 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   status_subscriber_ = nh.subscribe<mower_msgs::Status>("/ll/mower_status", 1,
       &SimplePathTracker::statusReceived, this, ros::TransportHints().tcpNoDelay(true));
   initialized_ = true;
-  ROS_INFO_STREAM("SimplePathTracker '" << name_ << "' initialized");
+  ROS_INFO_STREAM((pure_pursuit_ ? "PurePursuitTracker '" : "SimplePathTracker '")
+      << name_ << "' initialized");
 }
 
 bool SimplePathTracker::setPlan(const std::vector<geometry_msgs::PoseStamped>& plan)
@@ -100,6 +103,19 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   diagnostic.data = p.curvature; path_curvature_publisher_.publish(diagnostic);
   diagnostic.data = p.remaining_distance; remaining_distance_publisher_.publish(diagnostic);
   current_index_ = std::max(current_index_, p.segment);
+  double control_curvature = p.curvature;
+  if (pure_pursuit_) {
+    const double minimum = std::max(0.01, minimum_lookahead_);
+    const double maximum = std::max(minimum, maximum_lookahead_);
+    const double lookahead = std::max(minimum, std::min(maximum,
+        minimum + std::max(0.0, lookahead_time_) * std::abs(last_linear_command_)));
+    const PathSample target = samplePath(p.path_distance + lookahead);
+    const double dx = target.x - x, dy = target.y - y;
+    const double distance2 = dx * dx + dy * dy;
+    const double lateral = -std::sin(yaw) * dx + std::cos(yaw) * dy;
+    control_curvature = distance2 > 1e-8 ? 2.0 * lateral / distance2 : 0.0;
+    if (p.sharp_corner_ahead) control_curvature = 0.0;
+  }
   geometry_msgs::PoseStamped point = pose; point.pose.position.x = p.x; point.pose.position.y = p.y;
   tf2::Quaternion q; q.setRPY(0, 0, p.heading); point.pose.orientation = tf2::toMsg(q);
   tracking_point_publisher_.publish(point);
@@ -143,9 +159,9 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         target = 0.0;
       else if (p.remaining_distance >= goal_slowdown_distance_)
         target = std::max(minimum_tracking_speed_, target);
-      if (std::abs(p.curvature) > 1e-6)
+      if (std::abs(control_curvature) > 1e-6)
         target = std::min(target, curvature_angular_fraction_ * max_angular_speed_ /
-            std::abs(p.curvature));
+            std::abs(control_curvature));
       if (p.sharp_corner_ahead) {
         if (p.corner_distance <= corner_position_tolerance_) {
           current_index_ = std::min(p.segment + 1, plan_.size() - 2);
@@ -170,7 +186,8 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
       const double linear = applyAccelerationLimit(target, dt);
       const double effective_cross_track_gain = cross_track_gain_ /
           (1.0 + std::max(0.0, cross_track_curvature_scale_) * std::abs(p.curvature));
-      const double angular = linear * p.curvature + heading_gain_ * p.heading_error -
+      const double angular = pure_pursuit_ ? linear * control_curvature :
+          linear * p.curvature + heading_gain_ * p.heading_error -
           std::atan2(effective_cross_track_gain * p.cross_track_error,
                      std::abs(linear) + softening_speed_);
       command.twist.linear.x = linear;
@@ -216,6 +233,7 @@ bool SimplePathTracker::projectToPath(double x, double y, double yaw, Projection
       cumulative_distance_[result.segment];
   const double path_distance = cumulative_distance_[result.segment] +
       result.fraction * segment_length;
+  result.path_distance = path_distance;
   const double half_preview = std::max(0.02, curvature_preview_distance_ * 0.5);
   const PathSample behind = samplePath(path_distance - half_preview);
   const PathSample ahead = samplePath(path_distance + half_preview);
@@ -311,7 +329,8 @@ void SimplePathTracker::refreshParameters(bool cached)
   LOAD(mowing_speed); LOAD(minimum_tracking_speed); LOAD(max_angular_speed);
   LOAD(max_acceleration); LOAD(max_deceleration); LOAD(cross_track_slowdown_gain);
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
-  LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction); LOAD(sharp_corner_angle);
+  LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction);
+  LOAD(minimum_lookahead); LOAD(maximum_lookahead); LOAD(lookahead_time); LOAD(sharp_corner_angle);
   LOAD(corner_slowdown_distance); LOAD(corner_position_tolerance);
   LOAD(goal_angle_tolerance); LOAD(goal_slowdown_distance); LOAD(goal_position_timeout);
   LOAD(projection_search_window);

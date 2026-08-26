@@ -2,6 +2,12 @@
 
 This repository contains a very simple "follow the carrot" local planner implementation.
 
+## PurePursuitTracker
+
+`ftc_local_planner/PurePursuitTracker` uses the same projection, safety, speed regulation, sharp-corner handling, endpoint behavior, diagnostics, and MBF integration as `SimplePathTracker`, but generates its tracking angular command from an adaptive pure-pursuit lookahead point. Configure it in `open_mower/params/pure_pursuit_tracker.yaml` and select it with the mower logic `mowing_controller` parameter set to `PurePursuitTracker`.
+
+The lookahead distance is `clamp(minimum_lookahead + lookahead_time * commanded_speed, minimum_lookahead, maximum_lookahead)`. Shorter lookahead follows tight geometry more closely; longer lookahead is smoother.
+
 ## SimplePathTracker
 
 `ftc_local_planner/SimplePathTracker` is an alternative MBF controller intended for precise mowing rows and curved perimeter paths. It projects the robot onto the path and creates one angular command from path-curvature feed-forward, heading error, and signed cross-track error, avoiding competing lateral and angular PID loops. Forward speed is constrained by curvature, tracking error, distance to the goal, acceleration limits, and mower current/RPM. Smooth row-end arcs are driven continuously; sharp vertices slow to a stop and rotate in place.

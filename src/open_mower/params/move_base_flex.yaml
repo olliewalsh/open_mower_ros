@@ -9,6 +9,8 @@ controllers:
     type: ftc_local_planner/FTCPlanner
   - name: SimplePathTracker
     type: ftc_local_planner/SimplePathTracker
+  - name: PurePursuitTracker
+    type: ftc_local_planner/PurePursuitTracker
 
 recovery_behaviors:
   - name: BackwardForwardRecovery

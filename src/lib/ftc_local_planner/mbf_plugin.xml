@@ -7,4 +7,7 @@
   <class name="ftc_local_planner/SimplePathTracker" type="ftc_local_planner::SimplePathTracker" base_class_type="mbf_costmap_core::CostmapController">
     <description>Stanley path tracker with constrained speed and polygon trajectory collision checking.</description>
   </class>
+  <class name="ftc_local_planner/PurePursuitTracker" type="ftc_local_planner::PurePursuitTracker" base_class_type="mbf_costmap_core::CostmapController">
+    <description>Adaptive pure-pursuit path tracker with constrained speed and polygon trajectory collision checking.</description>
+  </class>
 </library>

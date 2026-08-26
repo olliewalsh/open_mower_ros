@@ -1,0 +1,46 @@
+PurePursuitTracker:
+  # Parameters are refreshed from the ROS parameter server once per second and
+  # may be changed while the controller is running.
+  heading_gain: 2.0
+  mowing_speed: 0.25
+  minimum_tracking_speed: 0.10
+  max_angular_speed: 1.8
+  max_acceleration: 0.15
+  max_deceleration: 0.30
+  cross_track_slowdown_gain: 3.0
+  curvature_preview_distance: 0.35
+  curvature_angular_fraction: 0.50
+  # Adaptive pure-pursuit lookahead: min + lookahead_time * commanded speed.
+  minimum_lookahead: 0.15
+  maximum_lookahead: 0.35
+  lookahead_time: 0.40
+  sharp_corner_angle: 0.52
+  corner_slowdown_distance: 0.40
+  corner_position_tolerance: 0.10
+  rotate_threshold: 0.70
+  rotate_tolerance: 0.17
+  goal_distance_tolerance: 0.20
+  goal_angle_tolerance: 0.17
+  goal_slowdown_distance: 0.50
+  # Return MISSED_GOAL if the path is exhausted outside the position tolerance.
+  goal_position_timeout: 2.0
+  projection_search_window: 100
+  # Maximum initial along-path projection. Further progress requires matching
+  # physical robot movement, preventing stationary jumps on closed paths.
+  projection_initial_allowance: 0.50
+  # Scale measured pose travel to allow for localization noise and path geometry.
+  projection_distance_factor: 1.50
+  # Ignore smaller pose changes and cap large localization jumps (metres/update).
+  projection_pose_deadband: 0.002
+  projection_max_pose_step: 0.25
+  check_collisions: true
+  unknown_is_obstacle: true
+  collision_horizon: 2.0
+  collision_time_step: 0.10
+  braking_deceleration: 0.40
+  reaction_time: 0.20
+  collision_margin: 0.10
+  max_mow_motor_current: 6.0
+  mow_current_gain: 0.125
+  min_mow_motor_rpm: 2000.0
+  mow_rpm_gain: 0.0002
