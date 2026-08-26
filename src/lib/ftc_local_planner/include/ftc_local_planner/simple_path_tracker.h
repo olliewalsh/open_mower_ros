@@ -2,6 +2,7 @@
 #define FTC_LOCAL_PLANNER_SIMPLE_PATH_TRACKER_H_
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -74,6 +75,7 @@ private:
   double last_projection_x_{0.0}, last_projection_y_{0.0};
   bool goal_miss_active_{false};
   ros::Time goal_miss_started_;
+  double best_goal_distance_{std::numeric_limits<double>::infinity()};
   double last_linear_command_{0.0};
   ros::Time last_command_time_;
   mower_msgs::Status mower_status_;

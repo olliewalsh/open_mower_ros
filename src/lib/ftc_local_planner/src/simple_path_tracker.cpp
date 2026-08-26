@@ -63,6 +63,7 @@ bool SimplePathTracker::setPlan(const std::vector<geometry_msgs::PoseStamped>& p
   projection_distance_limit_ = projection_initial_allowance_;
   have_last_projection_pose_ = false;
   goal_miss_active_ = false;
+  best_goal_distance_ = std::numeric_limits<double>::infinity();
   cumulative_distance_.assign(plan_.size(), 0.0);
   for (size_t i = 1; i < plan_.size(); ++i)
     cumulative_distance_[i] = cumulative_distance_[i - 1] +
@@ -134,16 +135,35 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
       last_linear_command_ = 0;
     }
     else if (p.remaining_distance <= goal_distance_tolerance_) {
-      last_linear_command_ = 0.0;
-      if (!goal_miss_active_) {
+      const double goal_heading = std::atan2(goal.y - y, goal.x - x);
+      const double goal_heading_error = normalizeAngle(goal_heading - yaw);
+      if (!goal_miss_active_ || goal_distance + 0.01 < best_goal_distance_) {
         goal_miss_active_ = true;
         goal_miss_started_ = ros::Time::now();
+        best_goal_distance_ = goal_distance;
       }
       if ((ros::Time::now() - goal_miss_started_).toSec() >=
           std::max(0.0, goal_position_timeout_)) {
-        message = "Path exhausted with goal distance " + std::to_string(goal_distance) +
+        message = "Final approach stalled with goal distance " + std::to_string(goal_distance) +
             " m, tolerance " + std::to_string(goal_distance_tolerance_) + " m";
         return MISSED_GOAL;
+      }
+      if (std::abs(goal_heading_error) > rotate_tolerance_) {
+        goal_miss_started_ = ros::Time::now();
+        last_linear_command_ = 0.0;
+        command.twist.angular.z = std::max(-max_angular_speed_,
+            std::min(max_angular_speed_, heading_gain_ * goal_heading_error));
+      } else {
+        const double braking_distance = std::max(0.0, goal_distance - goal_distance_tolerance_);
+        const double target = std::min(mowing_speed_,
+            std::sqrt(2.0 * max_deceleration_ * braking_distance));
+        const ros::Time command_time = ros::Time::now();
+        double dt = (command_time - last_command_time_).toSec();
+        last_command_time_ = command_time;
+        if (!std::isfinite(dt) || dt <= 0 || dt > 1) dt = 0.1;
+        command.twist.linear.x = applyAccelerationLimit(target, dt);
+        command.twist.angular.z = std::max(-max_angular_speed_,
+            std::min(max_angular_speed_, heading_gain_ * goal_heading_error));
       }
     }
     else if (std::abs(p.heading_error) > rotate_threshold_) {
