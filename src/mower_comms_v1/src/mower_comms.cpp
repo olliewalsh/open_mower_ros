@@ -126,6 +126,15 @@ bool right_status_pending = false;
 xesc_msgs::XescStateStamped pending_left_status{};
 xesc_msgs::XescStateStamped pending_right_status{};
 geometry_msgs::TwistStamped measured_twist_msg{};
+constexpr size_t SPEED_WINDOW_SAMPLES = 3;
+std::array<int32_t, SPEED_WINDOW_SAMPLES> speed_window_left_ticks{};
+std::array<int32_t, SPEED_WINDOW_SAMPLES> speed_window_right_ticks{};
+std::array<float, SPEED_WINDOW_SAMPLES> speed_window_dt{};
+int32_t speed_window_left_sum = 0;
+int32_t speed_window_right_sum = 0;
+float speed_window_dt_sum = 0.0f;
+size_t speed_window_index = 0;
+size_t speed_window_count = 0;
 
 std::mutex ll_status_mutex;
 struct ll_status last_ll_status = {0};
@@ -143,6 +152,14 @@ bool isEscConnected(const xesc_msgs::XescStateStamped& status) {
          status.state.connection_state == xesc_msgs::XescState::XESC_CONNECTION_STATE_CONNECTED_INCOMPATIBLE_FW;
 }
 
+void resetSpeedMeasurementWindow() {
+  speed_window_left_sum = 0;
+  speed_window_right_sum = 0;
+  speed_window_dt_sum = 0.0f;
+  speed_window_index = 0;
+  speed_window_count = 0;
+}
+
 void resetDriveController() {
   desired_speed_l = 0.0f;
   desired_speed_r = 0.0f;
@@ -150,6 +167,7 @@ void resetDriveController() {
   speed_r = 0.0f;
   left_wheel_controller.Reset();
   right_wheel_controller.Reset();
+  resetSpeedMeasurementWindow();
 }
 
 void updateDriveDuty(float dt) {
@@ -246,8 +264,27 @@ void processDriveStatusPair(const xesc_msgs::XescStateStamped& left_status,
     if (dt > 0.0f && wheel_ticks_per_m > 0.0 && wheel_distance_m > 0.0) {
       const int32_t d_left = static_cast<int32_t>(left_status.state.tacho - last_ticks_l);
       const int32_t d_right = static_cast<int32_t>(right_status.state.tacho - last_ticks_r);
-      const float measured_speed_l = static_cast<float>(d_left) / (dt * static_cast<float>(wheel_ticks_per_m));
-      const float measured_speed_r = -static_cast<float>(d_right) / (dt * static_cast<float>(wheel_ticks_per_m));
+
+      if (speed_window_count == SPEED_WINDOW_SAMPLES) {
+        speed_window_left_sum -= speed_window_left_ticks[speed_window_index];
+        speed_window_right_sum -= speed_window_right_ticks[speed_window_index];
+        speed_window_dt_sum -= speed_window_dt[speed_window_index];
+      } else {
+        speed_window_count++;
+      }
+
+      speed_window_left_ticks[speed_window_index] = d_left;
+      speed_window_right_ticks[speed_window_index] = d_right;
+      speed_window_dt[speed_window_index] = dt;
+      speed_window_left_sum += d_left;
+      speed_window_right_sum += d_right;
+      speed_window_dt_sum += dt;
+      speed_window_index = (speed_window_index + 1) % SPEED_WINDOW_SAMPLES;
+
+      const float measured_speed_l =
+          static_cast<float>(speed_window_left_sum) / (speed_window_dt_sum * static_cast<float>(wheel_ticks_per_m));
+      const float measured_speed_r =
+          -static_cast<float>(speed_window_right_sum) / (speed_window_dt_sum * static_cast<float>(wheel_ticks_per_m));
 
       left_wheel_controller.SetMeasuredSpeed(measured_speed_l);
       right_wheel_controller.SetMeasuredSpeed(measured_speed_r);
