@@ -121,6 +121,24 @@ void adaptivelySimplifyPath(nav_msgs::Path &path) {
     updatePathOrientations(path);
 }
 
+Points subdivideStraightSegments(const Points &vertices) {
+    Points result;
+    if (vertices.empty()) return result;
+    result.push_back(vertices.front());
+    for (size_t i = 1; i < vertices.size(); ++i) {
+        const Point &start = vertices[i - 1];
+        const Point &end = vertices[i];
+        const double length = std::hypot(unscale(end.x - start.x), unscale(end.y - start.y));
+        const int segments = std::max(1, static_cast<int>(std::ceil(length / kMaxStraightSpacing)));
+        for (int segment = 1; segment <= segments; ++segment) {
+            const double fraction = static_cast<double>(segment) / segments;
+            result.emplace_back(start.x + static_cast<coord_t>((end.x - start.x) * fraction),
+                                start.y + static_cast<coord_t>((end.y - start.y) * fraction));
+        }
+    }
+    return result;
+}
+
 Points cubicTransition(const Point &previous, const Point &start, const Point &end, const Point &next) {
     const double sx = unscale(start.x), sy = unscale(start.y);
     const double ex = unscale(end.x), ey = unscale(end.y);
@@ -795,15 +813,15 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
             line.remove_duplicate_points();
 
 
-            auto equally_spaced_points = line.equally_spaced_points(scale_(kSourceSpacing));
-            if (equally_spaced_points.size() < 2) {
+            auto path_points = subdivideStraightSegments(line.points);
+            if (path_points.size() < 2) {
                 ROS_INFO("Skipping single dot");
                 continue;
             }
-            ROS_INFO_STREAM("Got " << equally_spaced_points.size() << " points");
+            ROS_INFO_STREAM("Got " << path_points.size() << " points");
 
             Point *lastPoint = nullptr;
-            for (auto &pt: equally_spaced_points) {
+            for (auto &pt: path_points) {
                 if (lastPoint == nullptr) {
                     lastPoint = &pt;
                     continue;
@@ -834,7 +852,7 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
             pose.pose.position.z = 0;
             path.path.poses.push_back(pose);
 
-            adaptivelySimplifyPath(path.path);
+            updatePathOrientations(path.path);
 
             res.paths.push_back(path);
         }
