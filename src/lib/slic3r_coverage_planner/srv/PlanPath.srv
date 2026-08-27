@@ -4,6 +4,8 @@ uint8 fill_type
 float64 angle
 float64 distance
 float64 outer_offset
+float64 outline_approach_length
+float64 outline_approach_inset
 uint8 outline_count
 uint8 outline_overlap_count
 bool skip_area_outline

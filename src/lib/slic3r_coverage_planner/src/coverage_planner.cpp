@@ -218,6 +218,47 @@ bool transitionIsSafe(const Point &start, const Points &curve, const Point &end,
     Line final_segment(previous, end);
     return !boundary.intersection(final_segment, &intersection);
 }
+
+// Returns the largest approach scale that fits at this directed path point.
+double outlineApproachScale(const Point &goal, const Point &next, const Polygon &area,
+                            const Polygons &obstacles, double configured_length,
+                            double configured_inset) {
+    const double gx = unscale(goal.x), gy = unscale(goal.y);
+    double tx = unscale(next.x - goal.x), ty = unscale(next.y - goal.y);
+    const double tangent_length = std::hypot(tx, ty);
+    if (tangent_length < 1e-6) return 0.0;
+    tx /= tangent_length;
+    ty /= tangent_length;
+    const double requested_length = configured_length > 0.0 ? configured_length : 1.5;
+    const double requested_inset = configured_inset > 0.0 ? configured_inset : 0.4;
+    for (double scale : {1.0, 0.75, 0.5, 0.25}) {
+        const double length = std::max(0.5, requested_length * scale);
+        const double inset = std::max(0.1, requested_inset * scale);
+        const int samples = std::max(3, static_cast<int>(std::ceil((length + inset) / 0.1)));
+        for (double side : {1.0, -1.0}) {
+            const double nx = -ty * side, ny = tx * side;
+            const double p0x = gx - tx * length + nx * inset;
+            const double p0y = gy - ty * length + ny * inset;
+            const double handle = length * 0.45;
+            const double p1x = p0x + tx * handle, p1y = p0y + ty * handle;
+            const double p2x = gx - tx * handle, p2y = gy - ty * handle;
+            bool valid = true;
+            for (int sample = 0; sample < samples; ++sample) {
+                const double u = static_cast<double>(sample) / samples;
+                const double v = 1.0 - u;
+                const Point point(scale_(v*v*v*p0x + 3*v*v*u*p1x + 3*v*u*u*p2x + u*u*u*gx),
+                                  scale_(v*v*v*p0y + 3*v*v*u*p1y + 3*v*u*u*p2y + u*u*u*gy));
+                if (!area.contains(point)) { valid = false; break; }
+                for (const auto &obstacle : obstacles) {
+                    if (obstacle.contains(point)) { valid = false; break; }
+                }
+                if (!valid) break;
+            }
+            if (valid) return scale;
+        }
+    }
+    return 0.0;
+}
 }  // namespace
 
 
@@ -404,7 +445,10 @@ void traverse_from_right(std::vector<PerimeterGeneratorLoop> &contours, std::vec
     }
 }
 
-slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, Slic3r::Polygon &outline_poly, Slic3r::Polygons &group, bool isObstacle, Point *areaLastPoint) {
+slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, Slic3r::Polygon &outline_poly,
+                                                        const Polygons &obstacles, Slic3r::Polygons &group,
+                                                        bool isObstacle, double approach_length,
+                                                        double approach_inset, Point *areaLastPoint) {
     slic3r_coverage_planner::Path path;
     path.is_outline = true;
     path.path.header = header;
@@ -420,6 +464,40 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
             continue;
         }
         ROS_INFO_STREAM("Got " << points.size() << " points");
+
+        if (is_first_point && !isObstacle) {
+            double best_scale = 0.0;
+            int best_idx = 0;
+            for (int idx = 0; idx < points.size(); ++idx) {
+                const int next_idx = (idx + 1) % points.size();
+                const double scale = outlineApproachScale(points[idx], points[next_idx], outline_poly,
+                                                          obstacles, approach_length, approach_inset);
+                if (scale > best_scale) {
+                    best_scale = scale;
+                    best_idx = idx;
+                }
+            }
+            if (best_idx > 0) std::rotate(points.begin(), points.begin() + best_idx, points.end());
+            if (best_scale > 0.0)
+                ROS_INFO_STREAM("Selected area outline start with approach scale " << best_scale);
+        }
+        else if (is_first_point && isObstacle && group.size() == 1) {
+            double best_scale = 0.0;
+            int best_idx = 0;
+            for (int idx = 0; idx < points.size(); ++idx) {
+                const int start_idx = (idx + points.size() - 1) % points.size();
+                const int start_next_idx = (start_idx + points.size() - 1) % points.size();
+                const double scale = outlineApproachScale(points[start_idx], points[start_next_idx], outline_poly,
+                                                          obstacles, approach_length, approach_inset);
+                if (scale > best_scale) {
+                    best_scale = scale;
+                    best_idx = idx;
+                }
+            }
+            if (best_idx > 0) std::rotate(points.begin(), points.begin() + best_idx, points.end());
+            if (best_scale > 0.0)
+                ROS_INFO_STREAM("Selected obstacle outline start with approach scale " << best_scale);
+        }
 
         if (!is_first_point) {
             // Find a good transition point between the loops.
@@ -454,7 +532,9 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
             TransitionQuality selected_quality;
             bool selected_without_inflection = false;
             if (has_previous_point && points.size() > 1) {
-                const int candidate_count = std::min<int>(11, points.size() - 1);
+                const bool selecting_obstacle_start = isObstacle && i == static_cast<int>(group.size()) - 1;
+                const int candidate_count = selecting_obstacle_start ? points.size() : std::min<int>(11, points.size() - 1);
+                double selected_approach_scale = 0.0;
                 for (int offset = 0; offset < candidate_count; ++offset) {
                     const int candidate_idx = (closest_idx + offset) % points.size();
                     const int next_idx = (candidate_idx + 1) % points.size();
@@ -465,15 +545,26 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
                         continue;
                     const auto quality = transitionQuality(lastPoint, transition,
                                                            points[candidate_idx], points[next_idx]);
+                    double approach_scale = 0.0;
+                    if (selecting_obstacle_start) {
+                        const int start_idx = (candidate_idx + points.size() - 1) % points.size();
+                        const int start_next_idx = (start_idx + points.size() - 1) % points.size();
+                        approach_scale = outlineApproachScale(points[start_idx], points[start_next_idx], outline_poly,
+                                                             obstacles, approach_length, approach_inset);
+                        if (approach_scale <= 0.0) continue;
+                    }
                     const bool candidate_without_inflection = !quality.has_inflection;
+                    const bool prefer_approach = approach_scale > selected_approach_scale;
                     const bool prefer = candidate_without_inflection && !selected_without_inflection;
-                    if (selected_transition.empty() || prefer ||
-                        (candidate_without_inflection == selected_without_inflection &&
-                         quality.score < selected_quality.score)) {
+                    if (selected_transition.empty() || prefer_approach ||
+                        (approach_scale == selected_approach_scale && (prefer ||
+                         (candidate_without_inflection == selected_without_inflection &&
+                         quality.score < selected_quality.score)))) {
                         selected_idx = candidate_idx;
                         selected_transition = transition;
                         selected_quality = quality;
                         selected_without_inflection = candidate_without_inflection;
+                        selected_approach_scale = approach_scale;
                     }
                 }
             }
@@ -751,7 +842,7 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
 
     Point areaLastPoint;
     for (auto &group: area_outlines) {
-        auto path = determinePathForOutline(header, outline_poly, group, false, &areaLastPoint);
+        auto path = determinePathForOutline(header, outline_poly, expoly.holes, group, false, req.outline_approach_length, req.outline_approach_inset, &areaLastPoint);
         if (!path.path.poses.empty()) {
             res.paths.push_back(path);
         }
@@ -795,7 +886,7 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
     // In order to make the mower approach the obstacle, we will reverse the path later.
     for (auto &group: ordered_obstacle_outlines) {
         // Reverse here to make the mower approach the obstacle instead of starting close to the obstacle
-        auto path = determinePathForOutline(header, outline_poly, group, true, nullptr);
+        auto path = determinePathForOutline(header, outline_poly, expoly.holes, group, true, req.outline_approach_length, req.outline_approach_inset, nullptr);
         if (!path.path.poses.empty()) {
             std::reverse(path.path.poses.begin(), path.path.poses.end());
             updatePathOrientations(path.path);
