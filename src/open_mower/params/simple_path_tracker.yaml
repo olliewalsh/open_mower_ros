@@ -1,23 +1,23 @@
 SimplePathTracker:
   # Parameters are refreshed from the ROS parameter server once per second and
   # may be changed while the controller is running.
-  heading_gain: 2.0
-  cross_track_gain: 2.0
+  heading_gain: 4.5
+  cross_track_gain: 4.0
   # Reduce lateral feedback on curves: gain / (1 + scale * abs(curvature)).
   # Set to 0.0 to disable curvature-dependent scaling.
-  cross_track_curvature_scale: 0.25
-  softening_speed: 0.1
-  mowing_speed: 0.38
+  cross_track_curvature_scale: 0.30
+  softening_speed: 0.15
+  mowing_speed: 0.40
   minimum_tracking_speed: 0.10
   max_angular_speed: 1.8
   max_acceleration: 0.15
   max_deceleration: 0.30
-  cross_track_slowdown_gain: 3.0
-  curvature_preview_distance: 0.35
-  curvature_angular_fraction: 0.70
-  sharp_corner_angle: 1.22
+  cross_track_slowdown_gain: 4.0
+  curvature_preview_distance: 0.15
+  curvature_angular_fraction: 0.30
+  sharp_corner_angle: 0.52
   corner_slowdown_distance: 0.40
-  corner_position_tolerance: 0.05
+  corner_position_tolerance: 0.07
   rotate_threshold: 0.70
   rotate_tolerance: 0.17
   goal_distance_tolerance: 0.10
@@ -25,10 +25,10 @@ SimplePathTracker:
   goal_slowdown_distance: 0.50
   # Return MISSED_GOAL if the path is exhausted outside the position tolerance.
   goal_position_timeout: 2.0
-  projection_search_window: 100
+  projection_search_window: 20
   # Maximum initial along-path projection. Further progress requires matching
   # physical robot movement, preventing stationary jumps on closed paths.
-  projection_initial_allowance: 0.50
+  projection_initial_allowance: 0.25
   # Scale each measured pose step; unused projection allowance is not accumulated.
   projection_distance_factor: 1.50
   # Ignore smaller pose changes and cap large localization jumps (metres/update).
