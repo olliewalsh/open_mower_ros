@@ -32,6 +32,7 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
   LOAD(rotate_progress_timeout); LOAD(rotate_progress_angle);
   LOAD(rotate_escape_distance); LOAD(rotate_escape_speed); LOAD(rotate_escape_timeout); LOAD(rotate_escape_attempts);
+  LOAD(tracking_progress_timeout); LOAD(tracking_progress_distance); LOAD(tracking_progress_min_speed);
   LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction);
   LOAD(minimum_lookahead); LOAD(maximum_lookahead); LOAD(lookahead_time); LOAD(sharp_corner_angle);
   LOAD(turnaround_angle_threshold); LOAD(turnaround_preview_distance);
@@ -69,6 +70,7 @@ bool SimplePathTracker::setPlan(const std::vector<geometry_msgs::PoseStamped>& p
   goal_miss_active_ = false;
   best_goal_distance_ = std::numeric_limits<double>::infinity();
   resetRotationProgress();
+  resetTrackingProgress();
   rotate_escape_attempt_count_ = 0;
   cumulative_distance_.assign(plan_.size(), 0.0);
   for (size_t i = 1; i < plan_.size(); ++i)
@@ -298,6 +300,17 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
       !trajectoryIsSafe(x, y, yaw, command.twist.linear.x, command.twist.angular.z, message)) {
     command.twist = geometry_msgs::Twist(); last_linear_command_ = 0; return COLLISION;
   }
+  const bool normal_tracking = state_ == State::TRACKING &&
+      std::abs(command.twist.linear.x) >= std::max(0.0, tracking_progress_min_speed_);
+  if (!normal_tracking) {
+    resetTrackingProgress();
+  } else if (trackingHasStalled(p.path_distance, control_time)) {
+    command.twist = geometry_msgs::Twist();
+    last_linear_command_ = 0.0;
+    message = "Tracking stalled with no path progress for " +
+        std::to_string(std::max(0.0, tracking_progress_timeout_)) + " s";
+    return MISSED_GOAL;
+  }
   return SUCCESS;
 }
 
@@ -485,6 +498,30 @@ bool SimplePathTracker::rotationHasStalled(double heading_error, const ros::Time
       (now - rotate_progress_started_).toSec() >= rotate_progress_timeout_;
 }
 
+void SimplePathTracker::resetTrackingProgress()
+{
+  tracking_progress_active_ = false;
+  tracking_progress_reference_distance_ = 0.0;
+  tracking_progress_started_ = ros::Time();
+}
+
+bool SimplePathTracker::trackingHasStalled(double path_distance, const ros::Time& now)
+{
+  if (!tracking_progress_active_ || now < tracking_progress_started_) {
+    tracking_progress_active_ = true;
+    tracking_progress_reference_distance_ = path_distance;
+    tracking_progress_started_ = now;
+    return false;
+  }
+  if (path_distance >= tracking_progress_reference_distance_ +
+                       std::max(0.0, tracking_progress_distance_)) {
+    tracking_progress_reference_distance_ = path_distance;
+    tracking_progress_started_ = now;
+  }
+  return tracking_progress_timeout_ > 0.0 &&
+      (now - tracking_progress_started_).toSec() >= tracking_progress_timeout_;
+}
+
 void SimplePathTracker::refreshParameters(bool cached)
 {
 #define LOAD(p) do { \
@@ -497,6 +534,7 @@ void SimplePathTracker::refreshParameters(bool cached)
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
   LOAD(rotate_progress_timeout); LOAD(rotate_progress_angle);
   LOAD(rotate_escape_distance); LOAD(rotate_escape_speed); LOAD(rotate_escape_timeout); LOAD(rotate_escape_attempts);
+  LOAD(tracking_progress_timeout); LOAD(tracking_progress_distance); LOAD(tracking_progress_min_speed);
   LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction);
   LOAD(minimum_lookahead); LOAD(maximum_lookahead); LOAD(lookahead_time); LOAD(sharp_corner_angle);
   LOAD(turnaround_angle_threshold); LOAD(turnaround_preview_distance);
