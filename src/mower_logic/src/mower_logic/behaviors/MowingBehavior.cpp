@@ -362,48 +362,56 @@ bool MowingBehavior::build_outline_approach(const geometry_msgs::PoseStamped& go
   tf2::Matrix3x3(goal_q).getRPY(roll, pitch, yaw);
   const double tx = cos(yaw);
   const double ty = sin(yaw);
-  const double length = config.outline_approach_length;
-  const double inset = config.outline_approach_inset;
-  const int sample_count = std::max(3, static_cast<int>(ceil((length + inset) / 0.1)));
+  // Try the configured geometry first, then progressively reduce it for outlines in
+  // narrow gaps between an obstacle and the area perimeter.
+  for (double scale : {1.0, 0.75, 0.5, 0.25}) {
+    const double length = std::max(0.5, config.outline_approach_length * scale);
+    const double inset = std::max(0.1, config.outline_approach_inset * scale);
+    const int sample_count = std::max(3, static_cast<int>(ceil((length + inset) / 0.1)));
 
-  // Try both path normals. The valid side is inside the mowing area and outside every obstacle.
-  for (double side : {1.0, -1.0}) {
-    const double nx = -ty * side;
-    const double ny = tx * side;
-    const double p3x = goal.pose.position.x;
-    const double p3y = goal.pose.position.y;
-    const double p0x = p3x - tx * length + nx * inset;
-    const double p0y = p3y - ty * length + ny * inset;
-    const double handle = length * 0.45;
-    const double p1x = p0x + tx * handle;
-    const double p1y = p0y + ty * handle;
-    const double p2x = p3x - tx * handle;
-    const double p2y = p3y - ty * handle;
+    // Try both path normals. The valid side is inside the mowing area and outside every obstacle.
+    for (double side : {1.0, -1.0}) {
+      const double nx = -ty * side;
+      const double ny = tx * side;
+      const double p3x = goal.pose.position.x;
+      const double p3y = goal.pose.position.y;
+      const double p0x = p3x - tx * length + nx * inset;
+      const double p0y = p3y - ty * length + ny * inset;
+      const double handle = length * 0.45;
+      const double p1x = p0x + tx * handle;
+      const double p1y = p0y + ty * handle;
+      const double p2x = p3x - tx * handle;
+      const double p2y = p3y - ty * handle;
 
-    nav_msgs::Path candidate;
-    candidate.header = goal.header;
-    bool valid = true;
-    for (int i = 0; i <= sample_count; ++i) {
-      const double u = static_cast<double>(i) / sample_count;
-      auto pose = bezierPose(goal, u, p0x, p0y, p1x, p1y, p2x, p2y, p3x, p3y);
-      // The last sample is the existing coverage goal and may be exactly on a polygon boundary.
-      if (i != sample_count && !pointInPolygon(pose.pose.position.x, pose.pose.position.y, area_outline)) {
-        valid = false;
-        break;
-      }
-      for (const auto& obstacle : area_obstacles) {
-        if (pointInPolygon(pose.pose.position.x, pose.pose.position.y, obstacle)) {
+      nav_msgs::Path candidate;
+      candidate.header = goal.header;
+      bool valid = true;
+      for (int i = 0; i <= sample_count; ++i) {
+        const double u = static_cast<double>(i) / sample_count;
+        auto pose = bezierPose(goal, u, p0x, p0y, p1x, p1y, p2x, p2y, p3x, p3y);
+        // The last sample is the existing coverage goal and may be exactly on a polygon boundary.
+        if (i != sample_count && !pointInPolygon(pose.pose.position.x, pose.pose.position.y, area_outline)) {
           valid = false;
           break;
         }
+        for (const auto& obstacle : area_obstacles) {
+          if (pointInPolygon(pose.pose.position.x, pose.pose.position.y, obstacle)) {
+            valid = false;
+            break;
+          }
+        }
+        if (!valid) break;
+        candidate.poses.push_back(pose);
       }
-      if (!valid) break;
-      candidate.poses.push_back(pose);
-    }
-    if (valid) {
-      approach = candidate;
-      staging_pose = candidate.poses.front();
-      return true;
+      if (valid) {
+        if (scale < 1.0) {
+          ROS_INFO_STREAM("MowingBehavior: Using reduced tangent outline approach (length " << length << "m, inset "
+                                                                                            << inset << "m).");
+        }
+        approach = candidate;
+        staging_pose = candidate.poses.front();
+        return true;
+      }
     }
   }
   return false;
