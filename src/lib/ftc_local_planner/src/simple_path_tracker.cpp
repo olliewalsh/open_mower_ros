@@ -32,6 +32,7 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
   LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction);
   LOAD(minimum_lookahead); LOAD(maximum_lookahead); LOAD(lookahead_time); LOAD(sharp_corner_angle);
+  LOAD(turnaround_angle_threshold); LOAD(turnaround_preview_distance);
   LOAD(corner_slowdown_distance); LOAD(corner_position_tolerance);
   LOAD(goal_angle_tolerance); LOAD(goal_slowdown_distance); LOAD(goal_position_timeout);
   LOAD(projection_search_window);
@@ -289,23 +290,53 @@ bool SimplePathTracker::projectToPath(double x, double y, double yaw, Projection
   for(size_t i=result.segment+1;i+1<plan_.size();++i)
     result.remaining_distance+=std::hypot(plan_[i+1].pose.position.x-plan_[i].pose.position.x,plan_[i+1].pose.position.y-plan_[i].pose.position.y);
   result.corner_distance = std::hypot(end.x - result.x, end.y - result.y);
+  const double current_heading = std::atan2(
+      end.y - plan_[result.segment].pose.position.y,
+      end.x - plan_[result.segment].pose.position.x);
   if (result.segment + 2 < plan_.size()) {
     const auto& next = plan_[result.segment + 2].pose.position;
     const double next_dx = next.x - end.x, next_dy = next.y - end.y;
     if (std::hypot(next_dx, next_dy) > 1e-6) {
-      const double current_heading = std::atan2(
-          end.y - plan_[result.segment].pose.position.y,
-          end.x - plan_[result.segment].pose.position.x);
       result.sharp_corner_ahead = std::abs(normalizeAngle(
           std::atan2(next_dy, next_dx) - current_heading)) >= sharp_corner_angle_;
-      if (result.sharp_corner_ahead) {
-        result.heading = current_heading;
-        result.heading_error = normalizeAngle(result.heading - yaw);
-        result.cross_track_error = -std::sin(result.heading) * (x - result.x) +
-            std::cos(result.heading) * (y - result.y);
-        result.curvature = 0.0;
-      }
     }
+  }
+  if (!result.sharp_corner_ahead) {
+    double accumulated_turn = 0.0;
+    double previous_heading = current_heading;
+    double vertex_distance = result.corner_distance;
+    double first_turn_distance = 0.0;
+    bool have_first_turn = false;
+    for (size_t segment = result.segment + 1; segment + 1 < plan_.size(); ++segment) {
+      if (vertex_distance > std::max(0.0, turnaround_preview_distance_)) break;
+      const auto& a = plan_[segment].pose.position;
+      const auto& b = plan_[segment + 1].pose.position;
+      const double dx = b.x - a.x, dy = b.y - a.y;
+      const double length = std::hypot(dx, dy);
+      if (length > 1e-6) {
+        const double heading = std::atan2(dy, dx);
+        const double turn = normalizeAngle(heading - previous_heading);
+        if (!have_first_turn && std::abs(turn) > 0.05) {
+          first_turn_distance = vertex_distance;
+          have_first_turn = true;
+        }
+        accumulated_turn += turn;
+        previous_heading = heading;
+        if (have_first_turn && std::abs(accumulated_turn) >= turnaround_angle_threshold_) {
+          result.sharp_corner_ahead = true;
+          result.corner_distance = first_turn_distance;
+          break;
+        }
+      }
+      vertex_distance += length;
+    }
+  }
+  if (result.sharp_corner_ahead) {
+    result.heading = current_heading;
+    result.heading_error = normalizeAngle(result.heading - yaw);
+    result.cross_track_error = -std::sin(result.heading) * (x - result.x) +
+        std::cos(result.heading) * (y - result.y);
+    result.curvature = 0.0;
   }
   return true;
 }
@@ -366,6 +397,7 @@ void SimplePathTracker::refreshParameters(bool cached)
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
   LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction);
   LOAD(minimum_lookahead); LOAD(maximum_lookahead); LOAD(lookahead_time); LOAD(sharp_corner_angle);
+  LOAD(turnaround_angle_threshold); LOAD(turnaround_preview_distance);
   LOAD(corner_slowdown_distance); LOAD(corner_position_tolerance);
   LOAD(goal_angle_tolerance); LOAD(goal_slowdown_distance); LOAD(goal_position_timeout);
   LOAD(projection_search_window);

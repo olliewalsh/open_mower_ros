@@ -93,7 +93,8 @@ private:
   double rotate_threshold_{0.7}, rotate_tolerance_{0.17};
   double curvature_preview_distance_{0.35}, curvature_angular_fraction_{0.7};
   double minimum_lookahead_{0.15}, maximum_lookahead_{0.35}, lookahead_time_{0.4};
-  double sharp_corner_angle_{1.22}, corner_slowdown_distance_{0.4}, corner_position_tolerance_{0.05};
+  double sharp_corner_angle_{1.22}, turnaround_angle_threshold_{2.1}, turnaround_preview_distance_{1.5};
+  double corner_slowdown_distance_{0.4}, corner_position_tolerance_{0.05};
   double goal_distance_tolerance_{0.1}, goal_angle_tolerance_{0.17}, goal_slowdown_distance_{0.5};
   double goal_position_timeout_{2.0};
   int projection_search_window_{100};

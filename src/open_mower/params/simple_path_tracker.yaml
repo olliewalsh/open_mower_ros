@@ -16,6 +16,10 @@ SimplePathTracker:
   curvature_preview_distance: 0.15
   curvature_angular_fraction: 0.30
   sharp_corner_angle: 0.52
+  # Treat a large cumulative heading reversal within this distance as a turnaround,
+  # braking for its first vertex even when that individual corner is shallow.
+  turnaround_angle_threshold: 2.10
+  turnaround_preview_distance: 1.50
   corner_slowdown_distance: 0.40
   corner_position_tolerance: 0.07
   rotate_threshold: 0.70
