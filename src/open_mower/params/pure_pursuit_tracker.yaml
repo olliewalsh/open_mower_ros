@@ -23,6 +23,14 @@ PurePursuitTracker:
   corner_position_tolerance: 0.10
   rotate_threshold: 0.70
   rotate_tolerance: 0.17
+  # If an in-place turn makes no meaningful heading progress, move a short
+  # collision-checked distance to regain traction and retry once.
+  rotate_progress_timeout: 5.0
+  rotate_progress_angle: 0.05
+  rotate_escape_distance: 0.10
+  rotate_escape_speed: 0.10
+  rotate_escape_timeout: 5.0
+  rotate_escape_attempts: 1
   goal_distance_tolerance: 0.20
   goal_angle_tolerance: 0.17
   goal_slowdown_distance: 0.50

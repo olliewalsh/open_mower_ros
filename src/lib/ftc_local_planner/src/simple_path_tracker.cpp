@@ -30,6 +30,8 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   LOAD(mowing_speed); LOAD(minimum_tracking_speed); LOAD(max_angular_speed);
   LOAD(max_acceleration); LOAD(max_deceleration); LOAD(cross_track_slowdown_gain);
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
+  LOAD(rotate_progress_timeout); LOAD(rotate_progress_angle);
+  LOAD(rotate_escape_distance); LOAD(rotate_escape_speed); LOAD(rotate_escape_timeout); LOAD(rotate_escape_attempts);
   LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction);
   LOAD(minimum_lookahead); LOAD(maximum_lookahead); LOAD(lookahead_time); LOAD(sharp_corner_angle);
   LOAD(turnaround_angle_threshold); LOAD(turnaround_preview_distance);
@@ -66,6 +68,8 @@ bool SimplePathTracker::setPlan(const std::vector<geometry_msgs::PoseStamped>& p
   have_last_projection_pose_ = false;
   goal_miss_active_ = false;
   best_goal_distance_ = std::numeric_limits<double>::infinity();
+  resetRotationProgress();
+  rotate_escape_attempt_count_ = 0;
   cumulative_distance_.assign(plan_.size(), 0.0);
   for (size_t i = 1; i < plan_.size(); ++i)
     cumulative_distance_[i] = cumulative_distance_[i - 1] +
@@ -132,10 +136,58 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   tracking_point_publisher_.publish(point);
   const auto& goal = plan_.back().pose.position;
   const double goal_distance = std::hypot(goal.x - x, goal.y - y);
+  const ros::Time control_time = ros::Time::now();
 
   if (state_ == State::PRE_ROTATE) {
-    if (std::abs(p.heading_error) <= rotate_tolerance_) state_ = State::TRACKING;
-    else command.twist.angular.z = std::max(-max_angular_speed_, std::min(max_angular_speed_, heading_gain_ * p.heading_error));
+    if (std::abs(p.heading_error) <= rotate_tolerance_) {
+      state_ = State::TRACKING;
+      resetRotationProgress();
+      rotate_escape_attempt_count_ = 0;
+    } else if (rotationHasStalled(p.heading_error, control_time)) {
+      if (rotate_escape_attempt_count_ >= std::max(0, rotate_escape_attempts_)) {
+        message = "Rotation stalled after escape recovery";
+        return MISSED_GOAL;
+      }
+      const double distance = std::max(0.0, rotate_escape_distance_);
+      const bool forward_safe = distance > 0.0 && straightEscapeIsSafe(x, y, yaw, distance);
+      const bool reverse_safe = distance > 0.0 && straightEscapeIsSafe(x, y, yaw, -distance);
+      if (!forward_safe && !reverse_safe) {
+        message = "Rotation stalled and no collision-free escape is available";
+        return COLLISION;
+      }
+      rotate_escape_direction_ = forward_safe ? 1.0 : -1.0;
+      rotate_escape_start_x_ = x;
+      rotate_escape_start_y_ = y;
+      rotate_escape_started_ = control_time;
+      rotate_escape_attempt_count_++;
+      resetRotationProgress();
+      state_ = State::ROTATE_ESCAPE;
+      last_linear_command_ = 0.0;
+      ROS_WARN_STREAM("SimplePathTracker: rotation stalled; escaping "
+          << (rotate_escape_direction_ > 0.0 ? "forward" : "in reverse"));
+    } else {
+      command.twist.angular.z = std::max(-max_angular_speed_,
+          std::min(max_angular_speed_, heading_gain_ * p.heading_error));
+    }
+  }
+  if (state_ == State::ROTATE_ESCAPE) {
+    const double travelled = std::hypot(x - rotate_escape_start_x_, y - rotate_escape_start_y_);
+    if (travelled >= std::max(0.0, rotate_escape_distance_)) {
+      state_ = State::PRE_ROTATE;
+      resetRotationProgress();
+      last_linear_command_ = 0.0;
+    } else if ((control_time - rotate_escape_started_).toSec() >=
+               std::max(0.0, rotate_escape_timeout_)) {
+      message = "Rotation escape stalled after moving " + std::to_string(travelled) + " m";
+      return MISSED_GOAL;
+    } else {
+      const double remaining = std::max(0.0, rotate_escape_distance_ - travelled);
+      if (!straightEscapeIsSafe(x, y, yaw, rotate_escape_direction_ * remaining)) {
+        message = "Rotation escape path became unsafe";
+        return COLLISION;
+      }
+      command.twist.linear.x = rotate_escape_direction_ * std::max(0.0, rotate_escape_speed_);
+    }
   }
   if (state_ == State::TRACKING) {
     if (goal_distance <= goal_distance_tolerance_ &&
@@ -179,6 +231,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
     else if (std::abs(p.heading_error) > rotate_threshold_) {
       goal_miss_active_ = false;
       state_ = State::PRE_ROTATE; last_linear_command_ = 0;
+      resetRotationProgress();
       command.twist.angular.z = std::max(-max_angular_speed_, std::min(max_angular_speed_, heading_gain_ * p.heading_error));
     } else {
       goal_miss_active_ = false;
@@ -198,6 +251,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
           last_projected_path_distance_ = cumulative_distance_[p.segment + 1];
           projection_distance_limit_ = last_projected_path_distance_;
           state_ = State::PRE_ROTATE;
+          resetRotationProgress();
           last_linear_command_ = 0.0;
           target = 0.0;
         } else if (p.corner_distance < corner_slowdown_distance_) {
@@ -228,11 +282,20 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   }
   if (state_ == State::FINAL_ROTATE) {
     const double error = normalizeAngle(yawOf(plan_.back().pose.orientation) - yaw);
-    if (std::abs(error) <= goal_angle_tolerance_) state_ = State::FINISHED;
-    else command.twist.angular.z = std::max(-max_angular_speed_, std::min(max_angular_speed_, heading_gain_ * error));
+    if (std::abs(error) <= goal_angle_tolerance_) {
+      state_ = State::FINISHED;
+      resetRotationProgress();
+    } else if (rotationHasStalled(error, control_time)) {
+      message = "Final rotation stalled";
+      return MISSED_GOAL;
+    } else {
+      command.twist.angular.z = std::max(-max_angular_speed_,
+          std::min(max_angular_speed_, heading_gain_ * error));
+    }
   }
   if (state_ == State::FINISHED) command.twist = geometry_msgs::Twist();
-  if (!trajectoryIsSafe(x, y, yaw, command.twist.linear.x, command.twist.angular.z, message)) {
+  if (state_ != State::ROTATE_ESCAPE &&
+      !trajectoryIsSafe(x, y, yaw, command.twist.linear.x, command.twist.angular.z, message)) {
     command.twist = geometry_msgs::Twist(); last_linear_command_ = 0; return COLLISION;
   }
   return SUCCESS;
@@ -379,12 +442,49 @@ bool SimplePathTracker::trajectoryIsSafe(double x,double y,double yaw,double lin
   return true;
 }
 
+bool SimplePathTracker::straightEscapeIsSafe(double x, double y, double yaw, double distance) const
+{
+  if (!footprintIsSafe(x, y, yaw)) return false;
+  const int steps = std::max(1, static_cast<int>(std::ceil(std::abs(distance) / 0.02)));
+  const double step = distance / steps;
+  for (int i = 0; i < steps; ++i) {
+    x += step * std::cos(yaw);
+    y += step * std::sin(yaw);
+    if (!footprintIsSafe(x, y, yaw)) return false;
+  }
+  return true;
+}
+
 bool SimplePathTracker::footprintIsSafe(double x,double y,double yaw) const
 {
   auto* layered=costmap_ros_->getLayeredCostmap();
   const double cost=collision_model_->footprintCost(x,y,yaw,costmap_ros_->getRobotFootprint(),layered->getInscribedRadius(),layered->getCircumscribedRadius());
   return cost == -2.0 ? !unknown_is_obstacle_ : cost >= 0.0;
 }
+void SimplePathTracker::resetRotationProgress()
+{
+  rotate_progress_active_ = false;
+  best_rotate_error_ = std::numeric_limits<double>::infinity();
+  rotate_progress_started_ = ros::Time();
+}
+
+bool SimplePathTracker::rotationHasStalled(double heading_error, const ros::Time& now)
+{
+  const double error = std::abs(heading_error);
+  if (!rotate_progress_active_ || now < rotate_progress_started_) {
+    rotate_progress_active_ = true;
+    best_rotate_error_ = error;
+    rotate_progress_started_ = now;
+    return false;
+  }
+  if (error <= best_rotate_error_ - std::max(0.0, rotate_progress_angle_)) {
+    best_rotate_error_ = error;
+    rotate_progress_started_ = now;
+  }
+  return rotate_progress_timeout_ > 0.0 &&
+      (now - rotate_progress_started_).toSec() >= rotate_progress_timeout_;
+}
+
 void SimplePathTracker::refreshParameters(bool cached)
 {
 #define LOAD(p) do { \
@@ -395,6 +495,8 @@ void SimplePathTracker::refreshParameters(bool cached)
   LOAD(mowing_speed); LOAD(minimum_tracking_speed); LOAD(max_angular_speed);
   LOAD(max_acceleration); LOAD(max_deceleration); LOAD(cross_track_slowdown_gain);
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
+  LOAD(rotate_progress_timeout); LOAD(rotate_progress_angle);
+  LOAD(rotate_escape_distance); LOAD(rotate_escape_speed); LOAD(rotate_escape_timeout); LOAD(rotate_escape_attempts);
   LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction);
   LOAD(minimum_lookahead); LOAD(maximum_lookahead); LOAD(lookahead_time); LOAD(sharp_corner_angle);
   LOAD(turnaround_angle_threshold); LOAD(turnaround_preview_distance);

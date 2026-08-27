@@ -37,7 +37,7 @@ public:
   bool cancel() override;
 
 private:
-  enum class State { PRE_ROTATE, TRACKING, FINAL_ROTATE, FINISHED };
+  enum class State { PRE_ROTATE, ROTATE_ESCAPE, TRACKING, FINAL_ROTATE, FINISHED };
   struct Projection
   {
     size_t segment{0};
@@ -51,7 +51,10 @@ private:
   PathSample samplePath(double distance) const;
   bool trajectoryIsSafe(double x, double y, double yaw, double linear, double angular,
       std::string& reason) const;
+  bool straightEscapeIsSafe(double x, double y, double yaw, double distance) const;
   bool footprintIsSafe(double x, double y, double yaw) const;
+  void resetRotationProgress();
+  bool rotationHasStalled(double heading_error, const ros::Time& now);
   double applyAccelerationLimit(double target, double dt);
   void refreshParameters(bool cached);
   bool getProgress(PlannerGetProgressRequest&, PlannerGetProgressResponse& response);
@@ -79,6 +82,13 @@ private:
   double best_goal_distance_{std::numeric_limits<double>::infinity()};
   double last_linear_command_{0.0};
   ros::Time last_command_time_;
+  bool rotate_progress_active_{false};
+  double best_rotate_error_{std::numeric_limits<double>::infinity()};
+  ros::Time rotate_progress_started_;
+  double rotate_escape_start_x_{0.0}, rotate_escape_start_y_{0.0};
+  double rotate_escape_direction_{1.0};
+  ros::Time rotate_escape_started_;
+  int rotate_escape_attempt_count_{0};
   mower_msgs::Status mower_status_;
   ros::Publisher plan_publisher_, tracking_point_publisher_;
   ros::Publisher cross_track_error_publisher_, heading_error_publisher_;
@@ -91,6 +101,9 @@ private:
   double mowing_speed_{0.38}, minimum_tracking_speed_{0.1}, max_angular_speed_{1.8};
   double max_acceleration_{0.15}, max_deceleration_{0.3}, cross_track_slowdown_gain_{3.0};
   double rotate_threshold_{0.7}, rotate_tolerance_{0.17};
+  double rotate_progress_timeout_{5.0}, rotate_progress_angle_{0.05};
+  double rotate_escape_distance_{0.1}, rotate_escape_speed_{0.1}, rotate_escape_timeout_{5.0};
+  int rotate_escape_attempts_{1};
   double curvature_preview_distance_{0.35}, curvature_angular_fraction_{0.7};
   double minimum_lookahead_{0.15}, maximum_lookahead_{0.35}, lookahead_time_{0.4};
   double sharp_corner_angle_{1.22}, turnaround_angle_threshold_{2.1}, turnaround_preview_distance_{1.5};
