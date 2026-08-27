@@ -706,7 +706,6 @@ bool MowingBehavior::execute_mowing_plan() {
       if (use_outline_approach) {
         ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Following tangent outline approach with "
                         << outline_approach.poses.size() << " poses.");
-        mowerEnabled = false;
         mbf_msgs::ExePathGoal approach_goal;
         approach_goal.path = outline_approach;
         approach_goal.angle_tolerance = 5.0 * (M_PI / 180.0);
