@@ -5,7 +5,7 @@ SimplePathTracker:
   cross_track_gain: 4.0
   # Reduce lateral feedback on curves: gain / (1 + scale * abs(curvature)).
   # Set to 0.0 to disable curvature-dependent scaling.
-  cross_track_curvature_scale: 0.30
+  cross_track_curvature_scale: 0.15
   softening_speed: 0.15
   mowing_speed: 0.40
   minimum_tracking_speed: 0.10
