@@ -30,6 +30,7 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   LOAD(mowing_speed); LOAD(minimum_tracking_speed); LOAD(max_angular_speed);
   LOAD(boundary_slowdown_distance); LOAD(boundary_minimum_speed);
   LOAD(max_acceleration); LOAD(max_deceleration); LOAD(cross_track_slowdown_gain);
+  LOAD(max_angular_acceleration); LOAD(max_angular_deceleration);
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
   LOAD(rotate_progress_timeout); LOAD(rotate_progress_angle);
   LOAD(rotate_escape_distance); LOAD(rotate_escape_speed); LOAD(rotate_escape_timeout); LOAD(rotate_escape_attempts);
@@ -67,7 +68,7 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
 bool SimplePathTracker::setPlan(const std::vector<geometry_msgs::PoseStamped>& plan)
 {
   if (plan.size() < 2) { plan_.clear(); state_ = State::FINISHED; return false; }
-  plan_ = plan; current_index_ = 0; last_linear_command_ = 0.0;
+  plan_ = plan; current_index_ = 0; last_linear_command_ = 0.0; last_angular_command_ = 0.0;
   projection_distance_limit_ = projection_initial_allowance_;
   last_projected_path_distance_ = 0.0;
   have_last_projection_pose_ = false;
@@ -145,6 +146,9 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   const auto& goal = plan_.back().pose.position;
   const double goal_distance = std::hypot(goal.x - x, goal.y - y);
   const ros::Time control_time = ros::Time::now();
+  double command_dt = (control_time - last_command_time_).toSec();
+  last_command_time_ = control_time;
+  if (!std::isfinite(command_dt) || command_dt <= 0 || command_dt > 1) command_dt = 0.1;
 
   if (state_ == State::PRE_ROTATE) {
     if (std::abs(p.heading_error) <= rotate_tolerance_) {
@@ -227,11 +231,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         const double braking_distance = std::max(0.0, goal_distance - goal_distance_tolerance_);
         const double target = std::min(mowing_speed_,
             std::sqrt(2.0 * max_deceleration_ * braking_distance));
-        const ros::Time command_time = ros::Time::now();
-        double dt = (command_time - last_command_time_).toSec();
-        last_command_time_ = command_time;
-        if (!std::isfinite(dt) || dt <= 0 || dt > 1) dt = 0.1;
-        command.twist.linear.x = applyAccelerationLimit(target, dt);
+        command.twist.linear.x = applyAccelerationLimit(target, command_dt);
         command.twist.angular.z = std::max(-max_angular_speed_,
             std::min(max_angular_speed_, heading_gain_ * goal_heading_error));
       }
@@ -311,9 +311,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         const double boundary_speed = minimum_speed + scale * (normal_speed - minimum_speed);
         target = std::min(target, boundary_speed);
       }
-      const ros::Time now = ros::Time::now(); double dt = (now - last_command_time_).toSec(); last_command_time_ = now;
-      if (!std::isfinite(dt) || dt <= 0 || dt > 1) dt = 0.1;
-      const double linear = applyAccelerationLimit(target, dt);
+      const double linear = applyAccelerationLimit(target, command_dt);
       const double effective_cross_track_gain = cross_track_gain_ /
           (1.0 + std::max(0.0, cross_track_curvature_scale_) * std::abs(p.curvature));
       const double angular = pure_pursuit_ ? linear * control_curvature :
@@ -337,10 +335,33 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
           std::min(max_angular_speed_, heading_gain_ * error));
     }
   }
-  if (state_ == State::FINISHED) command.twist = geometry_msgs::Twist();
+  if (state_ == State::FINISHED) {
+    command.twist = geometry_msgs::Twist();
+    last_angular_command_ = 0.0;
+  } else if (state_ == State::ROTATE_ESCAPE) {
+    // Do not carry a rotation command into the straight collision-recovery movement.
+    command.twist.angular.z = 0.0;
+    last_angular_command_ = 0.0;
+  } else {
+    const double requested_angular = command.twist.angular.z;
+    const double limited_angular = applyAngularAccelerationLimit(requested_angular, command_dt);
+    if (state_ == State::TRACKING && std::abs(command.twist.linear.x) > 1e-6) {
+      double linear_scale = 1.0;
+      if (requested_angular * limited_angular < 0.0 ||
+          (std::abs(requested_angular) <= 1e-6 && std::abs(limited_angular) > 1e-6)) {
+        linear_scale = 0.0;
+      } else if (std::abs(requested_angular) > 1e-6 &&
+                 std::abs(limited_angular) < std::abs(requested_angular)) {
+        linear_scale = std::abs(limited_angular / requested_angular);
+      }
+      command.twist.linear.x *= linear_scale;
+      last_linear_command_ = command.twist.linear.x;
+    }
+    command.twist.angular.z = limited_angular;
+  }
   if (state_ != State::ROTATE_ESCAPE &&
       !trajectoryIsSafe(x, y, yaw, command.twist.linear.x, command.twist.angular.z, message)) {
-    command.twist = geometry_msgs::Twist(); last_linear_command_ = 0; return COLLISION;
+    command.twist = geometry_msgs::Twist(); last_linear_command_ = 0; last_angular_command_ = 0; return COLLISION;
   }
   const bool normal_tracking = state_ == State::TRACKING &&
       std::abs(command.twist.linear.x) >= std::max(0.0, tracking_progress_min_speed_);
@@ -349,6 +370,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   } else if (trackingHasStalled(p.path_distance, control_time)) {
     command.twist = geometry_msgs::Twist();
     last_linear_command_ = 0.0;
+    last_angular_command_ = 0.0;
     message = "Tracking stalled with no path progress for " +
         std::to_string(std::max(0.0, tracking_progress_timeout_)) + " s";
     return MISSED_GOAL;
@@ -362,6 +384,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
     if (motionHasStalled(x, y, yaw, motion_commanded, control_time)) {
       command.twist = geometry_msgs::Twist();
       last_linear_command_ = 0.0;
+      last_angular_command_ = 0.0;
       message = "Controller stalled with no position or heading progress for " +
           std::to_string(std::max(0.0, motion_progress_timeout_)) + " s";
       return MISSED_GOAL;
@@ -656,6 +679,7 @@ void SimplePathTracker::refreshParameters(bool cached)
   LOAD(mowing_speed); LOAD(minimum_tracking_speed); LOAD(max_angular_speed);
   LOAD(boundary_slowdown_distance); LOAD(boundary_minimum_speed);
   LOAD(max_acceleration); LOAD(max_deceleration); LOAD(cross_track_slowdown_gain);
+  LOAD(max_angular_acceleration); LOAD(max_angular_deceleration);
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
   LOAD(rotate_progress_timeout); LOAD(rotate_progress_angle);
   LOAD(rotate_escape_distance); LOAD(rotate_escape_speed); LOAD(rotate_escape_timeout); LOAD(rotate_escape_attempts);
@@ -677,10 +701,41 @@ void SimplePathTracker::refreshParameters(bool cached)
 #undef LOAD
 }
 double SimplePathTracker::applyAccelerationLimit(double target,double dt){last_linear_command_=std::max(last_linear_command_-max_deceleration_*dt,std::min(last_linear_command_+max_acceleration_*dt,target));return last_linear_command_;}
+double SimplePathTracker::applyAngularAccelerationLimit(double target,double dt)
+{
+  const double acceleration = std::max(0.0, max_angular_acceleration_);
+  const double deceleration = std::max(0.0, max_angular_deceleration_);
+  if (!std::isfinite(target) || !std::isfinite(dt) || dt <= 0.0) return last_angular_command_;
+
+  if (last_angular_command_ * target < 0.0) {
+    if (deceleration <= 0.0) {
+      last_angular_command_ = target;
+      return last_angular_command_;
+    }
+    const double time_to_zero = std::abs(last_angular_command_) / deceleration;
+    if (dt <= time_to_zero) {
+      last_angular_command_ -= std::copysign(deceleration * dt, last_angular_command_);
+      return last_angular_command_;
+    }
+    last_angular_command_ = 0.0;
+    dt -= time_to_zero;
+  }
+
+  const bool accelerating = std::abs(target) > std::abs(last_angular_command_);
+  const double rate = accelerating ? acceleration : deceleration;
+  if (rate <= 0.0) {
+    last_angular_command_ = target;
+    return last_angular_command_;
+  }
+  const double maximum_change = rate * dt;
+  last_angular_command_ = std::max(last_angular_command_ - maximum_change,
+      std::min(last_angular_command_ + maximum_change, target));
+  return last_angular_command_;
+}
 bool SimplePathTracker::getProgress(PlannerGetProgressRequest&,PlannerGetProgressResponse& response){response.index=uint32_t(current_index_);return true;}
 void SimplePathTracker::statusReceived(const mower_msgs::Status::ConstPtr& status){mower_status_=*status;}
 double SimplePathTracker::yawOf(const geometry_msgs::Quaternion& orientation){tf2::Quaternion q;tf2::fromMsg(orientation,q);double r,p,y;tf2::Matrix3x3(q).getRPY(r,p,y);return y;}
 double SimplePathTracker::normalizeAngle(double angle){return std::atan2(std::sin(angle),std::cos(angle));}
 bool SimplePathTracker::isGoalReached(double,double){return state_==State::FINISHED&&!cancelled_;}
-bool SimplePathTracker::cancel(){cancelled_=true;state_=State::FINISHED;last_linear_command_=0;resetMotionProgress();return true;}
+bool SimplePathTracker::cancel(){cancelled_=true;state_=State::FINISHED;last_linear_command_=0;last_angular_command_=0;resetMotionProgress();return true;}
 }  // namespace ftc_local_planner

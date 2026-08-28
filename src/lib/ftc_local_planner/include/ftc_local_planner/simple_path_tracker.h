@@ -62,6 +62,7 @@ private:
   void resetMotionProgress();
   bool motionHasStalled(double x, double y, double yaw, bool motion_commanded, const ros::Time& now);
   double applyAccelerationLimit(double target, double dt);
+  double applyAngularAccelerationLimit(double target, double dt);
   void refreshParameters(bool cached);
   bool getProgress(PlannerGetProgressRequest&, PlannerGetProgressResponse& response);
   void statusReceived(const mower_msgs::Status::ConstPtr& status);
@@ -86,7 +87,7 @@ private:
   bool goal_miss_active_{false};
   ros::Time goal_miss_started_;
   double best_goal_distance_{std::numeric_limits<double>::infinity()};
-  double last_linear_command_{0.0};
+  double last_linear_command_{0.0}, last_angular_command_{0.0};
   ros::Time last_command_time_;
   bool rotate_progress_active_{false};
   double best_rotate_error_{std::numeric_limits<double>::infinity()};
@@ -114,6 +115,7 @@ private:
   double mowing_speed_{0.38}, minimum_tracking_speed_{0.1}, max_angular_speed_{1.8};
   double boundary_slowdown_distance_{0.0}, boundary_minimum_speed_{0.2};
   double max_acceleration_{0.15}, max_deceleration_{0.3}, cross_track_slowdown_gain_{3.0};
+  double max_angular_acceleration_{2.0}, max_angular_deceleration_{3.0};
   double rotate_threshold_{0.7}, rotate_tolerance_{0.17};
   double rotate_progress_timeout_{5.0}, rotate_progress_angle_{0.05};
   double rotate_escape_distance_{0.1}, rotate_escape_speed_{0.1}, rotate_escape_timeout_{5.0};
