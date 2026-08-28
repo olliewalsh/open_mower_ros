@@ -24,6 +24,7 @@
 
 #include <EmergencyServiceInterfaceBase.hpp>
 #include <cmath>
+#include <limits>
 
 #include "../StateSubscriber.h"
 #include "mower_logic/CheckPoint.h"
@@ -222,7 +223,9 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
 
   slic3r_coverage_planner::PlanPath pathSrv;
   pathSrv.request.angle = angle;
-  pathSrv.request.outline_count = overrideOrGlobal(area.outline_count, config.outline_count, -1);
+  const int outline_count = std::max(0, overrideOrGlobal(area.outline_count, config.outline_count, -1));
+  const double outline_approach_boundary_buffer = config.tool_width * outline_count;
+  pathSrv.request.outline_count = outline_count;
   pathSrv.request.outline_overlap_count =
       overrideOrGlobal(area.outline_overlap_count, config.outline_overlap_count, -1);
   pathSrv.request.outline = area.area;
@@ -231,7 +234,7 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
   pathSrv.request.outer_offset = std::isnan(area.outline_offset) ? config.outline_offset : area.outline_offset;
   pathSrv.request.distance = config.tool_width;
   pathSrv.request.outline_approach_length = config.outline_approach_length;
-  pathSrv.request.outline_approach_inset = config.outline_approach_inset;
+  pathSrv.request.outline_approach_inset = std::max(config.outline_approach_inset, outline_approach_boundary_buffer);
   if (!pathClient.call(pathSrv)) {
     ROS_ERROR_STREAM("MowingBehavior: Error during coverage planning");
     return false;
@@ -310,6 +313,25 @@ bool pointInPolygon(double x, double y, const geometry_msgs::Polygon& polygon) {
   return inside;
 }
 
+double distanceToPolygonBoundary(double x, double y, const geometry_msgs::Polygon& polygon) {
+  const auto& points = polygon.points;
+  if (points.size() < 2) return 0.0;
+  double distance = std::numeric_limits<double>::infinity();
+  for (size_t i = 0, j = points.size() - 1; i < points.size(); j = i++) {
+    const double dx = points[i].x - points[j].x;
+    const double dy = points[i].y - points[j].y;
+    const double length_squared = dx * dx + dy * dy;
+    const double fraction =
+        length_squared > 0.0
+            ? std::max(0.0, std::min(1.0, ((x - points[j].x) * dx + (y - points[j].y) * dy) / length_squared))
+            : 0.0;
+    const double closest_x = points[j].x + fraction * dx;
+    const double closest_y = points[j].y + fraction * dy;
+    distance = std::min(distance, std::hypot(x - closest_x, y - closest_y));
+  }
+  return distance;
+}
+
 geometry_msgs::PoseStamped bezierPose(const geometry_msgs::PoseStamped& reference, double u, double p0x, double p0y,
                                       double p1x, double p1y, double p2x, double p2y, double p3x, double p3y) {
   const double v = 1.0 - u;
@@ -357,6 +379,9 @@ bool MowingBehavior::build_outline_approach(const geometry_msgs::PoseStamped& go
   }
   const auto& area_outline = map_srv.response.area.area;
   const auto& area_obstacles = map_srv.response.area.obstacles;
+  const int outline_count = std::max(
+      0, map_srv.response.area.outline_count >= 0 ? map_srv.response.area.outline_count : config.outline_count);
+  const double boundary_buffer = config.tool_width * outline_count;
 
   tf2::Quaternion goal_q;
   tf2::fromMsg(goal.pose.orientation, goal_q);
@@ -364,11 +389,11 @@ bool MowingBehavior::build_outline_approach(const geometry_msgs::PoseStamped& go
   tf2::Matrix3x3(goal_q).getRPY(roll, pitch, yaw);
   const double tx = cos(yaw);
   const double ty = sin(yaw);
-  // Try the configured geometry first, then progressively reduce it for outlines in
-  // narrow gaps between an obstacle and the area perimeter.
+  // Try the configured geometry first, then progressively reduce its length in
+  // narrow gaps. Never reduce the staging-point boundary clearance.
   for (double scale : {1.0, 0.75, 0.5, 0.25}) {
     const double length = std::max(0.5, config.outline_approach_length * scale);
-    const double inset = std::max(0.1, config.outline_approach_inset * scale);
+    const double inset = std::max(boundary_buffer, std::max(0.1, config.outline_approach_inset * scale));
     const int sample_count = std::max(3, static_cast<int>(ceil((length + inset) / 0.1)));
 
     // Try both path normals. The valid side is inside the mowing area and outside every obstacle.
@@ -379,6 +404,10 @@ bool MowingBehavior::build_outline_approach(const geometry_msgs::PoseStamped& go
       const double p3y = goal.pose.position.y;
       const double p0x = p3x - tx * length + nx * inset;
       const double p0y = p3y - ty * length + ny * inset;
+      if (!pointInPolygon(p0x, p0y, area_outline) ||
+          distanceToPolygonBoundary(p0x, p0y, area_outline) + 1e-6 < boundary_buffer) {
+        continue;
+      }
       const double handle = length * 0.45;
       const double p1x = p0x + tx * handle;
       const double p1y = p0y + ty * handle;
