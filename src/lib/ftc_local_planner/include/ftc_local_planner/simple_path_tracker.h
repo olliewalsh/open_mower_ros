@@ -57,6 +57,8 @@ private:
   bool rotationHasStalled(double heading_error, const ros::Time& now);
   void resetTrackingProgress();
   bool trackingHasStalled(double path_distance, const ros::Time& now);
+  void resetMotionProgress();
+  bool motionHasStalled(double x, double y, double yaw, bool motion_commanded, const ros::Time& now);
   double applyAccelerationLimit(double target, double dt);
   void refreshParameters(bool cached);
   bool getProgress(PlannerGetProgressRequest&, PlannerGetProgressResponse& response);
@@ -94,6 +96,10 @@ private:
   bool tracking_progress_active_{false};
   double tracking_progress_reference_distance_{0.0};
   ros::Time tracking_progress_started_;
+  bool motion_progress_active_{false};
+  double motion_progress_reference_x_{0.0}, motion_progress_reference_y_{0.0};
+  double motion_progress_reference_yaw_{0.0};
+  ros::Time motion_progress_started_;
   mower_msgs::Status mower_status_;
   ros::Publisher plan_publisher_, tracking_point_publisher_;
   ros::Publisher cross_track_error_publisher_, heading_error_publisher_;
@@ -111,6 +117,8 @@ private:
   int rotate_escape_attempts_{1};
   double tracking_progress_timeout_{5.0}, tracking_progress_distance_{0.05};
   double tracking_progress_min_speed_{0.05};
+  double motion_progress_timeout_{10.0}, motion_progress_distance_{0.03}, motion_progress_angle_{0.05};
+  double motion_progress_min_linear_{0.05}, motion_progress_min_angular_{0.1};
   double curvature_preview_distance_{0.35}, curvature_angular_fraction_{0.7};
   double minimum_lookahead_{0.15}, maximum_lookahead_{0.35}, lookahead_time_{0.4};
   double sharp_corner_angle_{1.22}, turnaround_angle_threshold_{2.1}, turnaround_preview_distance_{1.5};

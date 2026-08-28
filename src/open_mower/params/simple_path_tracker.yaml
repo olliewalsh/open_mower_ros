@@ -37,6 +37,12 @@ SimplePathTracker:
   tracking_progress_timeout: 5.0
   tracking_progress_distance: 0.05
   tracking_progress_min_speed: 0.05
+  # Final backstop across tracking, rotation, and escape state changes.
+  motion_progress_timeout: 10.0
+  motion_progress_distance: 0.03
+  motion_progress_angle: 0.05
+  motion_progress_min_linear: 0.05
+  motion_progress_min_angular: 0.10
   goal_distance_tolerance: 0.10
   goal_angle_tolerance: 0.17
   goal_slowdown_distance: 0.50
