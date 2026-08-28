@@ -8,6 +8,9 @@ SimplePathTracker:
   cross_track_curvature_scale: 0.15
   softening_speed: 0.15
   mowing_speed: 0.40
+  # Reduce speed smoothly near lethal or unknown local-costmap cells.
+  boundary_slowdown_distance: 0.20
+  boundary_minimum_speed: 0.20
   minimum_tracking_speed: 0.10
   max_angular_speed: 1.8
   max_acceleration: 0.15

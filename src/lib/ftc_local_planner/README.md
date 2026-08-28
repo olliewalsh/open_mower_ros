@@ -14,6 +14,8 @@ The lookahead distance is `clamp(minimum_lookahead + lookahead_time * commanded_
 
 Lateral feedback is reduced smoothly on curved paths using `effective_cross_track_gain = cross_track_gain / (1 + cross_track_curvature_scale * abs(curvature))`. This preserves full lateral correction on straight mowing rows while allowing curvature feed-forward to dominate tight turns. Set `cross_track_curvature_scale` to zero to disable the scaling.
 
+`boundary_slowdown_distance` optionally caps tracking speed near lethal costmap cells (and unknown cells when `unknown_is_obstacle` is enabled). The cap changes linearly from `boundary_minimum_speed` at zero clearance to `mowing_speed` at the configured distance. Set the distance to zero to disable it.
+
 The controller checks the costmap's configured robot footprint at the current pose and along the predicted `(linear, angular)` trajectory. Set the footprint and padding in the standard costmap configuration; no controller-specific polygon is required.
 
 Path projection is monotonic and each update is limited by measured pose-to-pose travel. `projection_initial_allowance` permits a small initial offset, `projection_distance_factor` allows for localization and path-geometry error, `projection_pose_deadband` rejects stationary pose noise, and `projection_max_pose_step` limits the effect of localization jumps. Unused allowance is discarded rather than accumulated, preventing later closed or spatially adjacent loops from becoming eligible early.

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <base_local_planner/costmap_model.h>
+#include <costmap_2d/cost_values.h>
 #include <costmap_2d/costmap_2d_ros.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/TwistStamped.h>
@@ -53,6 +54,7 @@ private:
       std::string& reason) const;
   bool straightEscapeIsSafe(double x, double y, double yaw, double distance) const;
   bool footprintIsSafe(double x, double y, double yaw) const;
+  double obstacleClearance(double x, double y, double maximum_distance) const;
   void resetRotationProgress();
   bool rotationHasStalled(double heading_error, const ros::Time& now);
   void resetTrackingProgress();
@@ -110,6 +112,7 @@ private:
   double heading_gain_{2.0}, cross_track_gain_{2.0}, cross_track_curvature_scale_{0.25};
   double softening_speed_{0.1};
   double mowing_speed_{0.38}, minimum_tracking_speed_{0.1}, max_angular_speed_{1.8};
+  double boundary_slowdown_distance_{0.0}, boundary_minimum_speed_{0.2};
   double max_acceleration_{0.15}, max_deceleration_{0.3}, cross_track_slowdown_gain_{3.0};
   double rotate_threshold_{0.7}, rotate_tolerance_{0.17};
   double rotate_progress_timeout_{5.0}, rotate_progress_angle_{0.05};

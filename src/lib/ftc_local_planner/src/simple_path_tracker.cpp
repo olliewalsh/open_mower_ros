@@ -28,6 +28,7 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
 #define LOAD(p) nh.param(#p, p##_, p##_)
   LOAD(heading_gain); LOAD(cross_track_gain); LOAD(cross_track_curvature_scale); LOAD(softening_speed);
   LOAD(mowing_speed); LOAD(minimum_tracking_speed); LOAD(max_angular_speed);
+  LOAD(boundary_slowdown_distance); LOAD(boundary_minimum_speed);
   LOAD(max_acceleration); LOAD(max_deceleration); LOAD(cross_track_slowdown_gain);
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
   LOAD(rotate_progress_timeout); LOAD(rotate_progress_angle);
@@ -275,6 +276,15 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         target = std::min(target, std::max(minimum_tracking_speed_, mowing_speed_ - amps * mow_current_gain_));
         target = std::min(target, std::max(minimum_tracking_speed_, mowing_speed_ - rpm * mow_rpm_gain_));
       }
+      const double boundary_distance = std::max(0.0, boundary_slowdown_distance_);
+      if (boundary_distance > 0.0) {
+        const double clearance = obstacleClearance(x, y, boundary_distance);
+        const double scale = std::max(0.0, std::min(1.0, clearance / boundary_distance));
+        const double normal_speed = std::max(0.0, mowing_speed_);
+        const double minimum_speed = std::min(normal_speed, std::max(0.0, boundary_minimum_speed_));
+        const double boundary_speed = minimum_speed + scale * (normal_speed - minimum_speed);
+        target = std::min(target, boundary_speed);
+      }
       const ros::Time now = ros::Time::now(); double dt = (now - last_command_time_).toSec(); last_command_time_ = now;
       if (!std::isfinite(dt) || dt <= 0 || dt > 1) dt = 0.1;
       const double linear = applyAccelerationLimit(target, dt);
@@ -494,6 +504,34 @@ bool SimplePathTracker::footprintIsSafe(double x,double y,double yaw) const
   const double cost=collision_model_->footprintCost(x,y,yaw,costmap_ros_->getRobotFootprint(),layered->getInscribedRadius(),layered->getCircumscribedRadius());
   return cost == -2.0 ? !unknown_is_obstacle_ : cost >= 0.0;
 }
+
+double SimplePathTracker::obstacleClearance(double x, double y, double maximum_distance) const
+{
+  auto* costmap = costmap_ros_->getCostmap();
+  unsigned int center_x, center_y;
+  if (!costmap->worldToMap(x, y, center_x, center_y)) return 0.0;
+  const double resolution = costmap->getResolution();
+  const int radius = static_cast<int>(std::ceil(std::max(0.0, maximum_distance) / resolution));
+  double clearance = std::max(0.0, maximum_distance);
+  for (int dy = -radius; dy <= radius; ++dy) {
+    for (int dx = -radius; dx <= radius; ++dx) {
+      const int cell_x = static_cast<int>(center_x) + dx;
+      const int cell_y = static_cast<int>(center_y) + dy;
+      if (cell_x < 0 || cell_y < 0 || cell_x >= static_cast<int>(costmap->getSizeInCellsX()) ||
+          cell_y >= static_cast<int>(costmap->getSizeInCellsY()))
+        continue;
+      const unsigned char cost = costmap->getCost(cell_x, cell_y);
+      if (cost != costmap_2d::LETHAL_OBSTACLE &&
+          !(unknown_is_obstacle_ && cost == costmap_2d::NO_INFORMATION))
+        continue;
+      double cell_world_x, cell_world_y;
+      costmap->mapToWorld(cell_x, cell_y, cell_world_x, cell_world_y);
+      clearance = std::min(clearance, std::hypot(x - cell_world_x, y - cell_world_y));
+    }
+  }
+  return clearance;
+}
+
 void SimplePathTracker::resetRotationProgress()
 {
   rotate_progress_active_ = false;
@@ -590,6 +628,7 @@ void SimplePathTracker::refreshParameters(bool cached)
 } while (false)
   LOAD(heading_gain); LOAD(cross_track_gain); LOAD(cross_track_curvature_scale); LOAD(softening_speed);
   LOAD(mowing_speed); LOAD(minimum_tracking_speed); LOAD(max_angular_speed);
+  LOAD(boundary_slowdown_distance); LOAD(boundary_minimum_speed);
   LOAD(max_acceleration); LOAD(max_deceleration); LOAD(cross_track_slowdown_gain);
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
   LOAD(rotate_progress_timeout); LOAD(rotate_progress_angle);
