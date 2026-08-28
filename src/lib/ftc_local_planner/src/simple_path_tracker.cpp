@@ -262,7 +262,10 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         } else if (p.corner_distance < corner_slowdown_distance_) {
           const double braking_distance = std::max(0.0,
               p.corner_distance - corner_position_tolerance_);
-          target = std::min(target, std::sqrt(2.0 * max_deceleration_ * braking_distance));
+          const double braking_speed = std::sqrt(
+              2.0 * std::max(0.0, max_deceleration_) * braking_distance);
+          target = std::min(target,
+              std::max(std::max(0.0, minimum_tracking_speed_), braking_speed));
         }
       }
       if (p.remaining_distance < goal_slowdown_distance_) target *= std::max(0.0, p.remaining_distance / goal_slowdown_distance_);
@@ -547,8 +550,11 @@ void SimplePathTracker::resetMotionProgress()
 
 bool SimplePathTracker::motionHasStalled(double x, double y, double yaw, bool motion_commanded, const ros::Time& now)
 {
+  if (!motion_commanded) {
+    resetMotionProgress();
+    return false;
+  }
   if (!motion_progress_active_) {
-    if (!motion_commanded) return false;
     motion_progress_active_ = true;
     motion_progress_reference_x_ = x;
     motion_progress_reference_y_ = y;
