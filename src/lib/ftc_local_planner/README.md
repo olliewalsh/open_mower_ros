@@ -24,6 +24,8 @@ The controller checks the costmap's configured robot footprint at the current po
 
 Path projection is monotonic and each update is limited by measured pose-to-pose travel. `projection_initial_allowance` permits a small initial offset, `projection_distance_factor` allows for localization and path-geometry error, `projection_pose_deadband` rejects stationary pose noise, and `projection_max_pose_step` limits the effect of localization jumps. Unused allowance is discarded rather than accumulated, preventing later closed or spatially adjacent loops from becoming eligible early.
 
+Projection scans only segments whose cumulative start distance is within the adaptive distance limit, making the search independent of path-point density. Beyond the immediate successor, `projection_heading_tolerance` rejects segments whose direction differs too much from the current segment, preventing a nearby closing or transition segment from winning solely by Euclidean distance. Set the tolerance to zero to disable this continuity check.
+
 If the projected path is exhausted while the mower remains outside `goal_distance_tolerance`, the controller rotates toward and drives to the endpoint. It returns MBF `MISSED_GOAL` only after goal distance stops improving for `goal_position_timeout` seconds. The timeout uses ROS time so simulation and bag playback remain deterministic.
 
 Parameters are loaded from `open_mower/params/simple_path_tracker.yaml`. Mower logic selects it by default through the private `mowing_controller` parameter. Set that parameter to `FTCPlanner` to switch mowing back without changing code. Docking continues to use `DockingFTCPlanner`.

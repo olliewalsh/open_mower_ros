@@ -42,9 +42,9 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   LOAD(turnaround_angle_threshold); LOAD(turnaround_preview_distance);
   LOAD(corner_slowdown_distance); LOAD(corner_position_tolerance);
   LOAD(goal_angle_tolerance); LOAD(goal_slowdown_distance); LOAD(goal_position_timeout);
-  LOAD(projection_search_window);
   LOAD(projection_initial_allowance);
   LOAD(projection_distance_factor); LOAD(projection_pose_deadband); LOAD(projection_max_pose_step);
+  LOAD(projection_heading_tolerance);
   LOAD(check_collisions); LOAD(unknown_is_obstacle); LOAD(collision_horizon);
   LOAD(collision_time_step); LOAD(braking_deceleration); LOAD(reaction_time); LOAD(collision_margin);
   LOAD(max_mow_motor_current); LOAD(mow_current_gain); LOAD(min_mow_motor_rpm); LOAD(mow_rpm_gain);
@@ -396,15 +396,35 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
 bool SimplePathTracker::projectToPath(double x, double y, double yaw, Projection& result) const
 {
   const size_t first = current_index_;
-  const size_t last = std::min(plan_.size() - 2, first + size_t(std::max(1, projection_search_window_)));
+  double reference_heading = 0.0;
+  bool have_reference_heading = false;
+  size_t reference_segment = first;
+  for (size_t i = first; i + 1 < plan_.size(); ++i) {
+    if (cumulative_distance_[i] > projection_distance_limit_) break;
+    const auto& a = plan_[i].pose.position;
+    const auto& b = plan_[i + 1].pose.position;
+    const double dx = b.x - a.x, dy = b.y - a.y;
+    if (dx * dx + dy * dy > 1e-10) {
+      reference_heading = std::atan2(dy, dx);
+      reference_segment = i;
+      have_reference_heading = true;
+      break;
+    }
+  }
   double best = std::numeric_limits<double>::infinity();
-  for (size_t i = first; i <= last; ++i) {
+  for (size_t i = first; i + 1 < plan_.size(); ++i) {
+    if (cumulative_distance_[i] > projection_distance_limit_) break;
     const auto& a = plan_[i].pose.position; const auto& b = plan_[i + 1].pose.position;
     const double dx = b.x-a.x, dy = b.y-a.y, length2 = dx*dx + dy*dy;
     if (length2 < 1e-10) continue;
-    if (cumulative_distance_[i + 1] < last_projected_path_distance_)
+    // Keep the immediate successor eligible so projection can advance normally
+    // through an ordinary corner. Do not skip across it onto a nearby folded
+    // segment whose direction is discontinuous with the active segment.
+    if (i > reference_segment + 1 && have_reference_heading && projection_heading_tolerance_ > 0.0 &&
+        std::abs(normalizeAngle(std::atan2(dy, dx) - reference_heading)) > projection_heading_tolerance_) {
       continue;
-    if (cumulative_distance_[i] > projection_distance_limit_)
+    }
+    if (cumulative_distance_[i + 1] < last_projected_path_distance_)
       continue;
     const double segment_length = std::sqrt(length2);
     const double minimum_fraction = std::max(0.0, std::min(1.0,
@@ -691,9 +711,9 @@ void SimplePathTracker::refreshParameters(bool cached)
   LOAD(turnaround_angle_threshold); LOAD(turnaround_preview_distance);
   LOAD(corner_slowdown_distance); LOAD(corner_position_tolerance);
   LOAD(goal_angle_tolerance); LOAD(goal_slowdown_distance); LOAD(goal_position_timeout);
-  LOAD(projection_search_window);
   LOAD(projection_initial_allowance); LOAD(projection_distance_factor);
   LOAD(projection_pose_deadband); LOAD(projection_max_pose_step);
+  LOAD(projection_heading_tolerance);
   LOAD(check_collisions); LOAD(unknown_is_obstacle); LOAD(collision_horizon);
   LOAD(collision_time_step); LOAD(braking_deceleration); LOAD(reaction_time); LOAD(collision_margin);
   LOAD(max_mow_motor_current); LOAD(mow_current_gain); LOAD(min_mow_motor_rpm); LOAD(mow_rpm_gain);

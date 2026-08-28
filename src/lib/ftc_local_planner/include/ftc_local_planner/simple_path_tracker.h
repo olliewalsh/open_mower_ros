@@ -130,9 +130,9 @@ private:
   double corner_slowdown_distance_{0.4}, corner_position_tolerance_{0.05};
   double goal_distance_tolerance_{0.1}, goal_angle_tolerance_{0.17}, goal_slowdown_distance_{0.5};
   double goal_position_timeout_{2.0};
-  int projection_search_window_{100};
   double projection_initial_allowance_{0.5};
   double projection_distance_factor_{1.5};
+  double projection_heading_tolerance_{0.52};
   double projection_pose_deadband_{0.002}, projection_max_pose_step_{0.25};
   bool check_collisions_{true}, unknown_is_obstacle_{true};
   double collision_horizon_{2.0}, collision_time_step_{0.1};

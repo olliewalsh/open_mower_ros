@@ -54,7 +54,9 @@ SimplePathTracker:
   goal_slowdown_distance: 0.50
   # Return MISSED_GOAL if the path is exhausted outside the position tolerance.
   goal_position_timeout: 2.0
-  projection_search_window: 20
+  # Reject non-adjacent future segments that turn farther than this tolerance
+  # (radians) from the current path segment.
+  projection_heading_tolerance: 0.52
   # Maximum initial along-path projection. Further progress requires matching
   # physical robot movement, preventing stationary jumps on closed paths.
   projection_initial_allowance: 0.25
