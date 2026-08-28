@@ -486,6 +486,9 @@ bool MowingBehavior::execute_mowing_plan() {
   int first_point_attempt_counter = 0;
   int first_point_trim_counter = 0;
   int outline_approach_attempt_counter = 0;
+  int failed_path = -1;
+  int failed_path_index = -1;
+  int failed_path_attempts = 0;
   double outline_approach_backtrack_distance = 0.0;
   ros::Time paused_time(0.0);
   u_int8_t pause_cause = 0;
@@ -884,6 +887,10 @@ bool MowingBehavior::execute_mowing_plan() {
       // Only skip/trim if goal execution began
       if (current_status.state_ != actionlib::SimpleClientGoalState::PENDING &&
           current_status.state_ != actionlib::SimpleClientGoalState::RECALLED) {
+        const int finalIndex = getCurrentMowPathIndex();
+        if (finalIndex != -1) {
+          currentMowingPathIndex = std::max(currentMowingPathIndex, exePathStartIndex + finalIndex);
+        }
         ROS_INFO_STREAM(">> MowingBehavior: (MOW) PlannerGetProgress currentMowingPathIndex = "
                         << currentMowingPathIndex << " of " << path.path.poses.size());
         printNavState(current_status.state_);
@@ -901,9 +908,27 @@ bool MowingBehavior::execute_mowing_plan() {
         } else {
           // we didnt drive all points in the mow path, so we wait for GPS or execute the recovery behaviors.
 
-          // currentMowingPathIndex might be 0 if we never consumed one of the points, we advance at least 1 point
-          if (currentMowingPathIndex == 0) currentMowingPathIndex++;
           if (!requested_pause_flag) {
+            if (failed_path == currentMowingPath && failed_path_index == currentMowingPathIndex) {
+              failed_path_attempts++;
+            } else {
+              failed_path = currentMowingPath;
+              failed_path_index = currentMowingPathIndex;
+              failed_path_attempts = 1;
+            }
+            if (failed_path_attempts > config.max_mow_path_retries) {
+              ROS_WARN_STREAM("MowingBehavior: (MOW) Planner failed at path index "
+                              << currentMowingPathIndex << " after " << config.max_mow_path_retries
+                              << " retries; advancing one pose.");
+              currentMowingPathIndex++;
+              failed_path = -1;
+              failed_path_index = -1;
+              failed_path_attempts = 0;
+            } else {
+              ROS_WARN_STREAM("MowingBehavior: (MOW) Planner failed at path index "
+                              << currentMowingPathIndex << "; retry " << failed_path_attempts << " / "
+                              << config.max_mow_path_retries << ".");
+            }
             // Path following failed (not a user-requested pause/abort). ExePath, unlike the
             // MoveBase action, never invokes MBF recovery on its own, so trigger it explicitly
             // here. Mirror MBF's move_base behavior: run each configured recovery behavior in
