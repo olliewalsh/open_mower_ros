@@ -219,6 +219,13 @@ bool transitionIsSafe(const Point &start, const Points &curve, const Point &end,
     return !boundary.intersection(final_segment, &intersection);
 }
 
+double distanceToPolygonBoundary(const Point &point, const Polygon &polygon) {
+    double distance = std::numeric_limits<double>::infinity();
+    for (const auto &line: polygon.lines())
+        distance = std::min(distance, unscale(line.distance_to(point)));
+    return distance;
+}
+
 // Returns the largest approach scale that fits at this directed path point.
 double outlineApproachScale(const Point &goal, const Point &next, const Polygon &area,
                             const Polygons &obstacles, double configured_length,
@@ -239,6 +246,19 @@ double outlineApproachScale(const Point &goal, const Point &next, const Polygon 
             const double nx = -ty * side, ny = tx * side;
             const double p0x = gx - tx * length + nx * inset;
             const double p0y = gy - ty * length + ny * inset;
+            const Point staging_point(scale_(p0x), scale_(p0y));
+            if (!area.contains(staging_point) ||
+                distanceToPolygonBoundary(staging_point, area) + 1e-6 < requested_inset)
+                continue;
+            bool staging_point_clear = true;
+            for (const auto &obstacle : obstacles) {
+                if (obstacle.contains(staging_point) ||
+                    distanceToPolygonBoundary(staging_point, obstacle) + 1e-6 < requested_inset) {
+                    staging_point_clear = false;
+                    break;
+                }
+            }
+            if (!staging_point_clear) continue;
             const double handle = length * 0.45;
             const double p1x = p0x + tx * handle, p1y = p0y + ty * handle;
             const double p2x = gx - tx * handle, p2y = gy - ty * handle;

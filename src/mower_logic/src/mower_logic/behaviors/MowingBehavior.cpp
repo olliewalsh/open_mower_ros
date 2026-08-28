@@ -408,6 +408,15 @@ bool MowingBehavior::build_outline_approach(const geometry_msgs::PoseStamped& go
           distanceToPolygonBoundary(p0x, p0y, area_outline) + 1e-6 < boundary_buffer) {
         continue;
       }
+      bool staging_pose_clear = true;
+      for (const auto& obstacle : area_obstacles) {
+        if (pointInPolygon(p0x, p0y, obstacle) ||
+            distanceToPolygonBoundary(p0x, p0y, obstacle) + 1e-6 < boundary_buffer) {
+          staging_pose_clear = false;
+          break;
+        }
+      }
+      if (!staging_pose_clear) continue;
       const double handle = length * 0.45;
       const double p1x = p0x + tx * handle;
       const double p1y = p0y + ty * handle;
