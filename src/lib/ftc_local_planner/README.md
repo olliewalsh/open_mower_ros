@@ -16,6 +16,8 @@ Lateral feedback is reduced smoothly on curved paths using `effective_cross_trac
 
 `boundary_slowdown_distance` optionally caps tracking speed near lethal costmap cells (and unknown cells when `unknown_is_obstacle` is enabled). The cap changes linearly from `boundary_minimum_speed` at zero clearance to `mowing_speed` at the configured distance. Set the distance to zero to disable it.
 
+Mower current and RPM speed limits use asymmetric first-order filtering. `mow_load_filter_attack_time_constant` controls the fast response to increasing load, while `mow_load_filter_release_time_constant` controls the smoother recovery as load falls. Set either time constant to zero to disable filtering in that direction.
+
 The controller checks the costmap's configured robot footprint at the current pose and along the predicted `(linear, angular)` trajectory. Set the footprint and padding in the standard costmap configuration; no controller-specific polygon is required.
 
 Path projection is monotonic and each update is limited by measured pose-to-pose travel. `projection_initial_allowance` permits a small initial offset, `projection_distance_factor` allows for localization and path-geometry error, `projection_pose_deadband` rejects stationary pose noise, and `projection_max_pose_step` limits the effect of localization jumps. Unused allowance is discarded rather than accumulated, preventing later closed or spatially adjacent loops from becoming eligible early.

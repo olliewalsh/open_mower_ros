@@ -71,3 +71,6 @@ SimplePathTracker:
   mow_current_gain: 0.125
   min_mow_motor_rpm: 2000.0
   mow_rpm_gain: 0.0002
+  # React quickly to increased load, then recover speed smoothly.
+  mow_load_filter_attack_time_constant: 0.25
+  mow_load_filter_release_time_constant: 1.50

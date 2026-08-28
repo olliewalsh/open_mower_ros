@@ -135,6 +135,10 @@ private:
   bool check_collisions_{true}, unknown_is_obstacle_{true};
   double collision_horizon_{2.0}, collision_time_step_{0.1};
   double braking_deceleration_{0.4}, reaction_time_{0.2}, collision_margin_{0.1};
+  bool mow_load_filter_initialized_{false};
+  double filtered_mow_current_{0.0}, filtered_mow_rpm_{0.0};
+  ros::Time last_mow_load_filter_time_;
+  double mow_load_filter_attack_time_constant_{0.25}, mow_load_filter_release_time_constant_{1.5};
   double max_mow_motor_current_{6.0}, mow_current_gain_{0.125};
   double min_mow_motor_rpm_{2000.0}, mow_rpm_gain_{0.0002};
 };

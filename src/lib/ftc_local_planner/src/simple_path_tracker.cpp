@@ -47,6 +47,7 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   LOAD(check_collisions); LOAD(unknown_is_obstacle); LOAD(collision_horizon);
   LOAD(collision_time_step); LOAD(braking_deceleration); LOAD(reaction_time); LOAD(collision_margin);
   LOAD(max_mow_motor_current); LOAD(mow_current_gain); LOAD(min_mow_motor_rpm); LOAD(mow_rpm_gain);
+  LOAD(mow_load_filter_attack_time_constant); LOAD(mow_load_filter_release_time_constant);
 #undef LOAD
   last_parameter_refresh_ = ros::WallTime::now();
   plan_publisher_ = nh.advertise<nav_msgs::Path>("global_plan", 1, true);
@@ -76,6 +77,7 @@ bool SimplePathTracker::setPlan(const std::vector<geometry_msgs::PoseStamped>& p
   resetTrackingProgress();
   resetMotionProgress();
   rotate_escape_attempt_count_ = 0;
+  mow_load_filter_initialized_ = false;
   cumulative_distance_.assign(plan_.size(), 0.0);
   for (size_t i = 1; i < plan_.size(); ++i)
     cumulative_distance_[i] = cumulative_distance_[i - 1] +
@@ -271,10 +273,34 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
       }
       if (p.remaining_distance < goal_slowdown_distance_) target *= std::max(0.0, p.remaining_distance / goal_slowdown_distance_);
       if (mower_status_.mow_enabled) {
-        const double amps = std::max(0.0, double(mower_status_.mower_esc_current) - max_mow_motor_current_);
-        const double rpm = std::max(0.0, min_mow_motor_rpm_ - std::abs(double(mower_status_.mower_motor_rpm)));
+        const double raw_current = double(mower_status_.mower_esc_current);
+        const double raw_rpm = std::abs(double(mower_status_.mower_motor_rpm));
+        const ros::Time filter_time = ros::Time::now();
+        if (!mow_load_filter_initialized_ || filter_time < last_mow_load_filter_time_) {
+          filtered_mow_current_ = raw_current;
+          filtered_mow_rpm_ = raw_rpm;
+          mow_load_filter_initialized_ = true;
+        } else {
+          const double filter_dt = std::max(0.0, std::min(1.0, (filter_time - last_mow_load_filter_time_).toSec()));
+          const auto update_filter = [filter_dt](double filtered, double sample, double time_constant) {
+            const double tau = std::max(0.0, time_constant);
+            const double alpha = tau > 0.0 ? filter_dt / (tau + filter_dt) : 1.0;
+            return filtered + alpha * (sample - filtered);
+          };
+          const double current_tau = raw_current > filtered_mow_current_ ?
+              mow_load_filter_attack_time_constant_ : mow_load_filter_release_time_constant_;
+          const double rpm_tau = raw_rpm < filtered_mow_rpm_ ?
+              mow_load_filter_attack_time_constant_ : mow_load_filter_release_time_constant_;
+          filtered_mow_current_ = update_filter(filtered_mow_current_, raw_current, current_tau);
+          filtered_mow_rpm_ = update_filter(filtered_mow_rpm_, raw_rpm, rpm_tau);
+        }
+        last_mow_load_filter_time_ = filter_time;
+        const double amps = std::max(0.0, filtered_mow_current_ - max_mow_motor_current_);
+        const double rpm = std::max(0.0, min_mow_motor_rpm_ - filtered_mow_rpm_);
         target = std::min(target, std::max(minimum_tracking_speed_, mowing_speed_ - amps * mow_current_gain_));
         target = std::min(target, std::max(minimum_tracking_speed_, mowing_speed_ - rpm * mow_rpm_gain_));
+      } else {
+        mow_load_filter_initialized_ = false;
       }
       const double boundary_distance = std::max(0.0, boundary_slowdown_distance_);
       if (boundary_distance > 0.0) {
@@ -647,6 +673,7 @@ void SimplePathTracker::refreshParameters(bool cached)
   LOAD(check_collisions); LOAD(unknown_is_obstacle); LOAD(collision_horizon);
   LOAD(collision_time_step); LOAD(braking_deceleration); LOAD(reaction_time); LOAD(collision_margin);
   LOAD(max_mow_motor_current); LOAD(mow_current_gain); LOAD(min_mow_motor_rpm); LOAD(mow_rpm_gain);
+  LOAD(mow_load_filter_attack_time_constant); LOAD(mow_load_filter_release_time_constant);
 #undef LOAD
 }
 double SimplePathTracker::applyAccelerationLimit(double target,double dt){last_linear_command_=std::max(last_linear_command_-max_deceleration_*dt,std::min(last_linear_command_+max_acceleration_*dt,target));return last_linear_command_;}
