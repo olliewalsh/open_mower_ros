@@ -9,8 +9,8 @@ SimplePathTracker:
   softening_speed: 0.15
   mowing_speed: 0.40
   # Reduce speed smoothly near lethal or unknown local-costmap cells.
-  boundary_slowdown_distance: 0.20
-  boundary_minimum_speed: 0.20
+  boundary_slowdown_distance: 0.50
+  boundary_minimum_speed: 0.10
   minimum_tracking_speed: 0.10
   max_angular_speed: 1.8
   max_acceleration: 0.15

@@ -3,6 +3,9 @@ PurePursuitTracker:
   # may be changed while the controller is running.
   heading_gain: 2.0
   mowing_speed: 0.25
+  # Reduce speed smoothly near lethal or unknown local-costmap cells.
+  boundary_slowdown_distance: 0.50
+  boundary_minimum_speed: 0.10
   minimum_tracking_speed: 0.10
   max_angular_speed: 1.8
   max_acceleration: 0.15

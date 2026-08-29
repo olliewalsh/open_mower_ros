@@ -113,7 +113,7 @@ private:
   double heading_gain_{2.0}, cross_track_gain_{2.0}, cross_track_curvature_scale_{0.25};
   double softening_speed_{0.1};
   double mowing_speed_{0.38}, minimum_tracking_speed_{0.1}, max_angular_speed_{1.8};
-  double boundary_slowdown_distance_{0.0}, boundary_minimum_speed_{0.2};
+  double boundary_slowdown_distance_{0.5}, boundary_minimum_speed_{0.1};
   double max_acceleration_{0.15}, max_deceleration_{0.3}, cross_track_slowdown_gain_{3.0};
   double max_angular_acceleration_{2.0}, max_angular_deceleration_{3.0};
   double rotate_threshold_{0.7}, rotate_tolerance_{0.17};
