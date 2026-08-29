@@ -582,9 +582,12 @@ void checkSafety(const ros::TimerEvent& timer_event) {
   }
 
   // We need orientation and a positional accuracy less than configured
-  bool gpsGoodNow = isGpsGood();
-  if (gpsGoodNow || last_config.ignore_gps_errors) {
-    setLastGoodGPS(ros::Time::now());
+  const ros::Time gpsNow = ros::Time::now();
+  const bool gpsGoodNow = isGpsGood();
+  const bool gpsIgnored = last_config.ignore_gps_errors;
+  const bool gpsUsableNow = gpsGoodNow || gpsIgnored;
+  if (gpsUsableNow) {
+    setLastGoodGPS(gpsNow);
     high_level_status.gps_quality_percent =
         1.0 - fmin(1.0, last_pose.position_accuracy / last_config.max_position_accuracy);
     if (currentBehavior->needs_gps()) {
@@ -602,13 +605,39 @@ void checkSafety(const ros::TimerEvent& timer_event) {
     }
   }
 
-  bool gpsTimeout = ros::Time::now() - last_good_gps > ros::Duration(last_config.gps_timeout);
+  const ros::Time effectiveLastGoodGps = gpsUsableNow ? gpsNow : last_good_gps;
+  const bool gpsFixTimedOut = gpsNow - effectiveLastGoodGps > ros::Duration(std::max(0.0, last_config.gps_timeout));
+  static bool gpsTimeoutLatched = false;
+  static ros::Time gpsRecoveryStarted;
+  if (gpsFixTimedOut) {
+    gpsTimeoutLatched = true;
+    gpsRecoveryStarted = ros::Time();
+  } else if (gpsTimeoutLatched) {
+    if (!gpsUsableNow) {
+      gpsRecoveryStarted = ros::Time();
+    } else {
+      const double gpsWaitTime = gpsIgnored ? 0.0 : std::max(0.0, last_config.gps_wait_time);
+      if (gpsRecoveryStarted.isZero() || gpsNow < gpsRecoveryStarted) {
+        gpsRecoveryStarted = gpsNow;
+      }
+      if ((gpsNow - gpsRecoveryStarted).toSec() >= gpsWaitTime) {
+        gpsTimeoutLatched = false;
+        gpsRecoveryStarted = ros::Time();
+      }
+    }
+  }
+  const bool gpsRecoveryPending = gpsTimeoutLatched && !gpsFixTimedOut;
+  const bool gpsTimeout = gpsFixTimedOut || gpsTimeoutLatched;
 
   if (gpsTimeout) {
     // GPS = bad, set quality to 0
     high_level_status.gps_quality_percent = 0;
     if (currentBehavior->needs_gps()) {
-      ROS_WARN_STREAM_THROTTLE(1, "GPS timeout");
+      if (gpsRecoveryPending) {
+        ROS_WARN_STREAM_THROTTLE(1, "Waiting for stable GPS after timeout");
+      } else {
+        ROS_WARN_STREAM_THROTTLE(1, "GPS timeout");
+      }
     }
   }
 
