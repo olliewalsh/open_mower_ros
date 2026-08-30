@@ -60,8 +60,9 @@ SimplePathTracker:
   # Maximum initial along-path projection. Further progress requires matching
   # physical robot movement, preventing stationary jumps on closed paths.
   projection_initial_allowance: 0.25
-  # Scale each measured pose step when advancing beyond the active segment.
-  projection_distance_factor: 1.10
+  # Scale measured forward motion along the path when advancing beyond the
+  # active segment. Lateral motion does not count as along-path progress.
+  projection_distance_factor: 1.0
   # Accumulate smaller pose changes and cap large localization jumps (metres/update).
   projection_pose_deadband: 0.002
   projection_max_pose_step: 0.25

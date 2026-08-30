@@ -105,9 +105,20 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   if (plan_.size() < 2) { message = "No valid path"; return INVALID_PATH; }
   const double x = pose.pose.position.x, y = pose.pose.position.y, yaw = yawOf(pose.pose.orientation);
   if (have_last_projection_pose_) {
-    const double pose_step = std::hypot(x - last_projection_x_, y - last_projection_y_);
+    const double pose_dx = x - last_projection_x_;
+    const double pose_dy = y - last_projection_y_;
+    const double pose_step = std::hypot(pose_dx, pose_dy);
     if (pose_step >= std::max(0.0, projection_pose_deadband_)) {
-      const double accepted_step = std::min(pose_step, std::max(0.0, projection_max_pose_step_));
+      // Only movement along the path is evidence of along-path progress. Using
+      // the full pose displacement lets a mower cutting across the inside of a
+      // tight curve advance its projection around that curve, which moves the
+      // control reference ahead and reinforces the shortcut.
+      const PathSample projection_reference = samplePath(last_projected_path_distance_);
+      const double along_path_step = std::max(0.0,
+          pose_dx * std::cos(projection_reference.heading) +
+          pose_dy * std::sin(projection_reference.heading));
+      const double accepted_step = std::min(
+          along_path_step, std::max(0.0, projection_max_pose_step_));
       projection_distance_limit_ = last_projected_path_distance_ +
           std::max(0.0, projection_distance_factor_) * accepted_step;
       // Retain the previous reference while movement is below the deadband so
