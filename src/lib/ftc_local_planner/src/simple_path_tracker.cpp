@@ -106,12 +106,20 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   const double x = pose.pose.position.x, y = pose.pose.position.y, yaw = yawOf(pose.pose.orientation);
   if (have_last_projection_pose_) {
     const double pose_step = std::hypot(x - last_projection_x_, y - last_projection_y_);
-    const double accepted_step = pose_step >= std::max(0.0, projection_pose_deadband_) ?
-        std::min(pose_step, std::max(0.0, projection_max_pose_step_)) : 0.0;
-    projection_distance_limit_ = last_projected_path_distance_ +
-        std::max(0.0, projection_distance_factor_) * accepted_step;
+    if (pose_step >= std::max(0.0, projection_pose_deadband_)) {
+      const double accepted_step = std::min(pose_step, std::max(0.0, projection_max_pose_step_));
+      projection_distance_limit_ = last_projected_path_distance_ +
+          std::max(0.0, projection_distance_factor_) * accepted_step;
+      // Retain the previous reference while movement is below the deadband so
+      // small pose updates accumulate instead of being discarded every cycle.
+      last_projection_x_ = x;
+      last_projection_y_ = y;
+    }
+  } else {
+    last_projection_x_ = x;
+    last_projection_y_ = y;
+    have_last_projection_pose_ = true;
   }
-  last_projection_x_ = x; last_projection_y_ = y; have_last_projection_pose_ = true;
   if (current_index_ < cumulative_distance_.size()) {
     last_projected_path_distance_ = std::max(
         last_projected_path_distance_, cumulative_distance_[current_index_]);
@@ -399,21 +407,33 @@ bool SimplePathTracker::projectToPath(double x, double y, double yaw, Projection
   double reference_heading = 0.0;
   bool have_reference_heading = false;
   size_t reference_segment = first;
+  double search_distance_limit = projection_distance_limit_;
   for (size_t i = first; i + 1 < plan_.size(); ++i) {
     if (cumulative_distance_[i] > projection_distance_limit_) break;
     const auto& a = plan_[i].pose.position;
     const auto& b = plan_[i + 1].pose.position;
     const double dx = b.x - a.x, dy = b.y - a.y;
-    if (dx * dx + dy * dy > 1e-10) {
+    const double length2 = dx * dx + dy * dy;
+    if (length2 > 1e-10) {
       reference_heading = std::atan2(dy, dx);
       reference_segment = i;
       have_reference_heading = true;
+      const double segment_length = std::sqrt(length2);
+      const double minimum_fraction = std::max(0.0, std::min(1.0,
+          (last_projected_path_distance_ - cumulative_distance_[i]) / segment_length));
+      const double pose_fraction = std::max(minimum_fraction, std::min(1.0,
+          ((x - a.x) * dx + (y - a.y) * dy) / length2));
+      // The active segment is topologically unambiguous, so let its projection
+      // catch up to the robot. The distance gate remains in force before the
+      // projection can advance onto any later segment.
+      search_distance_limit = std::max(search_distance_limit,
+          cumulative_distance_[i] + pose_fraction * segment_length);
       break;
     }
   }
   double best = std::numeric_limits<double>::infinity();
   for (size_t i = first; i + 1 < plan_.size(); ++i) {
-    if (cumulative_distance_[i] > projection_distance_limit_) break;
+    if (cumulative_distance_[i] > search_distance_limit) break;
     const auto& a = plan_[i].pose.position; const auto& b = plan_[i + 1].pose.position;
     const double dx = b.x-a.x, dy = b.y-a.y, length2 = dx*dx + dy*dy;
     if (length2 < 1e-10) continue;
@@ -430,7 +450,7 @@ bool SimplePathTracker::projectToPath(double x, double y, double yaw, Projection
     const double minimum_fraction = std::max(0.0, std::min(1.0,
         (last_projected_path_distance_ - cumulative_distance_[i]) / segment_length));
     const double reachable_fraction = std::min(1.0,
-        (projection_distance_limit_ - cumulative_distance_[i]) / segment_length);
+        (search_distance_limit - cumulative_distance_[i]) / segment_length);
     const double t = std::max(minimum_fraction, std::min(reachable_fraction,
         ((x-a.x)*dx + (y-a.y)*dy)/length2));
     const double px=a.x+t*dx, py=a.y+t*dy, distance2=(x-px)*(x-px)+(y-py)*(y-py);
