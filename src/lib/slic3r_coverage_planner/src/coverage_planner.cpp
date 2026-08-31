@@ -37,6 +37,7 @@ constexpr double kSourceSpacing = 0.05;
 constexpr double kMaxStraightSpacing = 0.50;
 constexpr double kMaxChordError = 0.01;
 constexpr double kMaxHeadingChange = 5.0 * M_PI / 180.0;
+constexpr double kSeamTurnWindow = 0.40;
 
 double pointDistance(const geometry_msgs::Point &a, const geometry_msgs::Point &b) {
     return std::hypot(b.x - a.x, b.y - a.y);
@@ -44,6 +45,37 @@ double pointDistance(const geometry_msgs::Point &a, const geometry_msgs::Point &
 
 double normalizedAngle(double angle) {
     return std::atan2(std::sin(angle), std::cos(angle));
+}
+
+// Scores how much the outline turns near a possible split/join point. Points
+// are sampled at kSourceSpacing, so the fixed index window represents a stable
+// physical distance and prevents an otherwise arbitrary polygon start from
+// placing every perimeter seam in a corner.
+double seamTurnScore(const Points &points, int index) {
+    if (points.size() < 3) return std::numeric_limits<double>::infinity();
+    const int size = static_cast<int>(points.size());
+    const int radius = std::max(1, static_cast<int>(std::ceil(kSeamTurnWindow / kSourceSpacing)));
+    double peak_turn = 0.0;
+    double weighted_turn = 0.0;
+    for (int offset = -radius; offset <= radius; ++offset) {
+        const int current = ((index + offset) % size + size) % size;
+        const int before = (current + size - 1) % size;
+        const int after = (current + 1) % size;
+        const double first_x = unscale(points[current].x - points[before].x);
+        const double first_y = unscale(points[current].y - points[before].y);
+        const double second_x = unscale(points[after].x - points[current].x);
+        const double second_y = unscale(points[after].y - points[current].y);
+        if (std::hypot(first_x, first_y) < 1e-6 ||
+            std::hypot(second_x, second_y) < 1e-6)
+            continue;
+        const double turn = std::abs(normalizedAngle(
+            std::atan2(second_y, second_x) - std::atan2(first_y, first_x)));
+        const double weight =
+            1.0 - static_cast<double>(std::abs(offset)) / static_cast<double>(radius + 1);
+        peak_turn = std::max(peak_turn, turn);
+        weighted_turn += weight * turn;
+    }
+    return peak_turn + weighted_turn;
 }
 
 double pointLineDistance(const geometry_msgs::Point &point, const geometry_msgs::Point &start,
@@ -487,13 +519,18 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
 
         if (is_first_point && !isObstacle) {
             double best_scale = 0.0;
+            double best_turn_score = std::numeric_limits<double>::infinity();
             int best_idx = 0;
             for (int idx = 0; idx < points.size(); ++idx) {
                 const int next_idx = (idx + 1) % points.size();
                 const double scale = outlineApproachScale(points[idx], points[next_idx], outline_poly,
                                                           obstacles, approach_length, approach_inset);
-                if (scale > best_scale) {
+                if (scale <= 0.0) continue;
+                const double turn_score = seamTurnScore(points, idx);
+                if (scale > best_scale ||
+                    (scale == best_scale && turn_score < best_turn_score)) {
                     best_scale = scale;
+                    best_turn_score = turn_score;
                     best_idx = idx;
                 }
             }
@@ -503,14 +540,19 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
         }
         else if (is_first_point && isObstacle && group.size() == 1) {
             double best_scale = 0.0;
+            double best_turn_score = std::numeric_limits<double>::infinity();
             int best_idx = 0;
             for (int idx = 0; idx < points.size(); ++idx) {
                 const int start_idx = (idx + points.size() - 1) % points.size();
                 const int start_next_idx = (start_idx + points.size() - 1) % points.size();
                 const double scale = outlineApproachScale(points[start_idx], points[start_next_idx], outline_poly,
                                                           obstacles, approach_length, approach_inset);
-                if (scale > best_scale) {
+                if (scale <= 0.0) continue;
+                const double turn_score = seamTurnScore(points, start_idx);
+                if (scale > best_scale ||
+                    (scale == best_scale && turn_score < best_turn_score)) {
                     best_scale = scale;
+                    best_turn_score = turn_score;
                     best_idx = idx;
                 }
             }
@@ -551,6 +593,7 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
             Points selected_transition;
             TransitionQuality selected_quality;
             bool selected_without_inflection = false;
+            double selected_turn_score = std::numeric_limits<double>::infinity();
             if (has_previous_point && points.size() > 1) {
                 const bool selecting_obstacle_start = isObstacle && i == static_cast<int>(group.size()) - 1;
                 const int candidate_count = selecting_obstacle_start ? points.size() : std::min<int>(11, points.size() - 1);
@@ -565,6 +608,7 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
                         continue;
                     const auto quality = transitionQuality(lastPoint, transition,
                                                            points[candidate_idx], points[next_idx]);
+                    const double turn_score = seamTurnScore(points, candidate_idx);
                     double approach_scale = 0.0;
                     if (selecting_obstacle_start) {
                         const int start_idx = (candidate_idx + points.size() - 1) % points.size();
@@ -575,16 +619,22 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
                     }
                     const bool candidate_without_inflection = !quality.has_inflection;
                     const bool prefer_approach = approach_scale > selected_approach_scale;
-                    const bool prefer = candidate_without_inflection && !selected_without_inflection;
-                    if (selected_transition.empty() || prefer_approach ||
-                        (approach_scale == selected_approach_scale && (prefer ||
-                         (candidate_without_inflection == selected_without_inflection &&
-                         quality.score < selected_quality.score)))) {
+                    const bool same_approach = approach_scale == selected_approach_scale;
+                    const bool prefer_inflection =
+                        candidate_without_inflection && !selected_without_inflection;
+                    const bool same_inflection =
+                        candidate_without_inflection == selected_without_inflection;
+                    const bool prefer_turn = turn_score < selected_turn_score;
+                    const bool same_turn = turn_score == selected_turn_score;
+                    if (selected_transition.empty() || prefer_approach || (same_approach &&
+                        (prefer_inflection || (same_inflection &&
+                         (prefer_turn || (same_turn && quality.score < selected_quality.score)))))) {
                         selected_idx = candidate_idx;
                         selected_transition = transition;
                         selected_quality = quality;
                         selected_without_inflection = candidate_without_inflection;
                         selected_approach_scale = approach_scale;
+                        selected_turn_score = turn_score;
                     }
                 }
             }
