@@ -182,7 +182,6 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         normalizeAngle(std::atan2(segment_dy, segment_dx) - yaw) : p.heading_error;
     if (std::abs(rotation_error) <= rotate_tolerance_) {
       state_ = State::TRACKING;
-      resetRotationProgress();
       rotate_escape_attempt_count_ = 0;
     } else if (rotationHasStalled(rotation_error, control_time)) {
       if (rotate_escape_attempt_count_ >= std::max(0, rotate_escape_attempts_)) {
@@ -268,7 +267,6 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
     else if (std::abs(p.heading_error) > rotate_threshold_) {
       goal_miss_active_ = false;
       state_ = State::PRE_ROTATE; last_linear_command_ = 0;
-      resetRotationProgress();
       command.twist.angular.z = std::max(-max_angular_speed_, std::min(max_angular_speed_, heading_gain_ * p.heading_error));
     } else {
       goal_miss_active_ = false;
@@ -351,6 +349,11 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
       command.twist.angular.z = std::max(-max_angular_speed_, std::min(max_angular_speed_, angular));
     }
   }
+  // Keep the rotation watchdog armed until a complete controller update
+  // remains in tracking. An immediate TRACKING -> PRE_ROTATE relapse must not
+  // erase the progress history that can identify a state-transition loop.
+  if (state_ == State::TRACKING)
+    resetRotationProgress();
   if (state_ == State::FINAL_ROTATE) {
     const double error = normalizeAngle(yawOf(plan_.back().pose.orientation) - yaw);
     if (std::abs(error) <= goal_angle_tolerance_) {
@@ -486,16 +489,38 @@ bool SimplePathTracker::projectToPath(double x, double y, double yaw, Projection
   const double path_distance = cumulative_distance_[result.segment] +
       result.fraction * segment_length;
   result.path_distance = path_distance;
+  // Do not let a symmetric preview reach backward across a sharp vertex that
+  // has already been processed. Otherwise the outgoing segment starts with a
+  // bisector heading and curvature from the completed corner, which can send
+  // the controller straight back into PRE_ROTATE.
+  bool sharp_corner_behind = false;
+  for (size_t segment = result.segment; segment > 0; --segment) {
+    const auto& previous_start = plan_[segment - 1].pose.position;
+    const auto& previous_end = plan_[segment].pose.position;
+    const double previous_dx = previous_end.x - previous_start.x;
+    const double previous_dy = previous_end.y - previous_start.y;
+    if (std::hypot(previous_dx, previous_dy) <= 1e-6)
+      continue;
+    const double previous_heading = std::atan2(previous_dy, previous_dx);
+    sharp_corner_behind =
+        std::abs(normalizeAngle(result.heading - previous_heading)) >= sharp_corner_angle_;
+    break;
+  }
+  const double preview_floor = sharp_corner_behind ?
+      cumulative_distance_[result.segment] : 0.0;
   const double half_preview = std::max(0.02, curvature_preview_distance_ * 0.5);
-  const PathSample behind = samplePath(path_distance - half_preview);
+  const PathSample behind = samplePath(std::max(preview_floor, path_distance - half_preview));
   const PathSample ahead = samplePath(path_distance + half_preview);
   if (std::hypot(ahead.x - behind.x, ahead.y - behind.y) > 1e-6)
     result.heading = std::atan2(ahead.y - behind.y, ahead.x - behind.x);
-  const PathSample curvature_behind = samplePath(path_distance - curvature_preview_distance_);
-  const PathSample curvature_ahead = samplePath(path_distance + curvature_preview_distance_);
-  const double curvature_span = std::max(0.04, std::min(cumulative_distance_.back(),
-      path_distance + curvature_preview_distance_) - std::max(0.0,
-      path_distance - curvature_preview_distance_));
+  const double curvature_behind_distance =
+      std::max(preview_floor, path_distance - curvature_preview_distance_);
+  const double curvature_ahead_distance = std::min(
+      cumulative_distance_.back(), path_distance + curvature_preview_distance_);
+  const PathSample curvature_behind = samplePath(curvature_behind_distance);
+  const PathSample curvature_ahead = samplePath(curvature_ahead_distance);
+  const double curvature_span =
+      std::max(0.04, curvature_ahead_distance - curvature_behind_distance);
   result.curvature = normalizeAngle(curvature_ahead.heading - curvature_behind.heading) /
       curvature_span;
   result.cross_track_error=-std::sin(result.heading)*(x-result.x)+
