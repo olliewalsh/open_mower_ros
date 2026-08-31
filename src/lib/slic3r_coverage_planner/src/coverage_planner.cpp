@@ -239,16 +239,29 @@ TransitionQuality transitionQuality(const Point &start, const Points &curve,
 }
 
 bool transitionIsSafe(const Point &start, const Points &curve, const Point &end,
-                      const Polygon &boundary) {
+                      const Polygon &boundary, const Polygons &obstacles) {
     Point intersection;
+    Polyline transition;
+    transition.points.reserve(curve.size() + 2);
+    transition.points.push_back(start);
     Point previous = start;
     for (const auto &point: curve) {
         Line segment(previous, point);
         if (boundary.intersection(segment, &intersection)) return false;
+        transition.points.push_back(point);
         previous = point;
     }
     Line final_segment(previous, end);
-    return !boundary.intersection(final_segment, &intersection);
+    if (boundary.intersection(final_segment, &intersection)) return false;
+    transition.points.push_back(end);
+
+    // The boundary check above only keeps a transition inside the next outer
+    // perimeter. For obstacle perimeters that still allows a chord through the
+    // obstacle itself. Clipping the complete transition against every original
+    // hole also catches curves that enter and leave a hole between sampled
+    // transition points. A point touching a hole boundary has no clipped length
+    // and remains valid.
+    return intersection_pl((Polylines)transition, obstacles).empty();
 }
 
 double distanceToPolygonBoundary(const Point &point, const Polygon &polygon) {
@@ -500,7 +513,8 @@ void traverse_from_right(std::vector<PerimeterGeneratorLoop> &contours, std::vec
 slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, Slic3r::Polygon &outline_poly,
                                                         const Polygons &obstacles, Slic3r::Polygons &group,
                                                         bool isObstacle, double approach_length,
-                                                        double approach_inset, Point *areaLastPoint) {
+                                                        double approach_inset, Point *areaLastPoint,
+                                                        bool *transition_failed) {
     slic3r_coverage_planner::Path path;
     path.is_outline = true;
     path.path.header = header;
@@ -604,7 +618,8 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
                     auto transition = cubicTransition(previousPoint, lastPoint,
                                                       points[candidate_idx], points[next_idx]);
                     if (transition.empty() || !transitionIsSafe(lastPoint, transition,
-                                                                points[candidate_idx], *next_outer_poly))
+                                                                points[candidate_idx], *next_outer_poly,
+                                                                obstacles))
                         continue;
                     const auto quality = transitionQuality(lastPoint, transition,
                                                            points[candidate_idx], points[next_idx]);
@@ -636,6 +651,31 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
                         selected_approach_scale = approach_scale;
                         selected_turn_score = turn_score;
                     }
+                }
+            }
+
+            // A smooth curve is optional, but an unchecked direct connection is
+            // not: it can form a chord through a concave outline or an obstacle.
+            // Choose the closest collision-free point as the fallback.
+            if (selected_transition.empty()) {
+                double closest_safe_distance = std::numeric_limits<double>::infinity();
+                bool found_safe_connection = false;
+                for (int candidate_idx = 0; candidate_idx < points.size(); ++candidate_idx) {
+                    const Points direct_transition;
+                    if (!transitionIsSafe(lastPoint, direct_transition, points[candidate_idx],
+                                          *next_outer_poly, obstacles))
+                        continue;
+                    const double distance = lastPoint.distance_to(points[candidate_idx]);
+                    if (distance < closest_safe_distance) {
+                        closest_safe_distance = distance;
+                        selected_idx = candidate_idx;
+                        found_safe_connection = true;
+                    }
+                }
+                if (!found_safe_connection) {
+                    ROS_ERROR("Unable to join perimeter loops without crossing a boundary or obstacle");
+                    if (transition_failed != nullptr) *transition_failed = true;
+                    return slic3r_coverage_planner::Path();
                 }
             }
             if (selected_idx > 0)
@@ -912,7 +952,11 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
 
     Point areaLastPoint;
     for (auto &group: area_outlines) {
-        auto path = determinePathForOutline(header, outline_poly, expoly.holes, group, false, req.outline_approach_length, req.outline_approach_inset, &areaLastPoint);
+        bool transition_failed = false;
+        auto path = determinePathForOutline(header, outline_poly, expoly.holes, group, false,
+                                            req.outline_approach_length, req.outline_approach_inset,
+                                            &areaLastPoint, &transition_failed);
+        if (transition_failed) return false;
         if (!path.path.poses.empty()) {
             res.paths.push_back(path);
         }
@@ -956,7 +1000,11 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
     // In order to make the mower approach the obstacle, we will reverse the path later.
     for (auto &group: ordered_obstacle_outlines) {
         // Reverse here to make the mower approach the obstacle instead of starting close to the obstacle
-        auto path = determinePathForOutline(header, outline_poly, expoly.holes, group, true, req.outline_approach_length, req.outline_approach_inset, nullptr);
+        bool transition_failed = false;
+        auto path = determinePathForOutline(header, outline_poly, expoly.holes, group, true,
+                                            req.outline_approach_length, req.outline_approach_inset,
+                                            nullptr, &transition_failed);
+        if (transition_failed) return false;
         if (!path.path.poses.empty()) {
             std::reverse(path.path.poses.begin(), path.path.poses.end());
             updatePathOrientations(path.path);
