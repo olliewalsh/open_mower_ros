@@ -5,7 +5,7 @@ SimplePathTracker:
   cross_track_gain: 4.0
   # Reduce lateral feedback on curves: gain / (1 + scale * abs(curvature)).
   # Set to 0.0 to disable curvature-dependent scaling.
-  cross_track_curvature_scale: 0.15
+  cross_track_curvature_scale: 0.0
   softening_speed: 0.15
   mowing_speed: 0.40
   # Reduce speed smoothly near lethal or unknown local-costmap cells.
@@ -19,8 +19,8 @@ SimplePathTracker:
   max_angular_acceleration: 2.0
   max_angular_deceleration: 3.0
   cross_track_slowdown_gain: 4.0
-  curvature_preview_distance: 0.15
-  curvature_angular_fraction: 0.30
+  curvature_preview_distance: 0.40
+  curvature_angular_fraction: 0.15
   sharp_corner_angle: 0.52
   # Treat a large cumulative heading reversal within this distance as a turnaround,
   # braking for its first vertex even when that individual corner is shallow.

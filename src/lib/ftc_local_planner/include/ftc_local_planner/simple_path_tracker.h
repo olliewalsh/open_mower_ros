@@ -110,7 +110,7 @@ private:
   ros::ServiceServer progress_server_;
   ros::Subscriber status_subscriber_;
 
-  double heading_gain_{2.0}, cross_track_gain_{2.0}, cross_track_curvature_scale_{0.25};
+  double heading_gain_{2.0}, cross_track_gain_{2.0}, cross_track_curvature_scale_{0.0};
   double softening_speed_{0.1};
   double mowing_speed_{0.38}, minimum_tracking_speed_{0.1}, max_angular_speed_{1.8};
   double boundary_slowdown_distance_{0.5}, boundary_minimum_speed_{0.1};
@@ -124,7 +124,7 @@ private:
   double tracking_progress_min_speed_{0.05};
   double motion_progress_timeout_{10.0}, motion_progress_distance_{0.03}, motion_progress_angle_{0.05};
   double motion_progress_min_linear_{0.05}, motion_progress_min_angular_{0.1};
-  double curvature_preview_distance_{0.35}, curvature_angular_fraction_{0.7};
+  double curvature_preview_distance_{0.40}, curvature_angular_fraction_{0.15};
   double minimum_lookahead_{0.15}, maximum_lookahead_{0.35}, lookahead_time_{0.4};
   double sharp_corner_angle_{1.22}, turnaround_angle_threshold_{2.1}, turnaround_preview_distance_{1.5};
   double corner_slowdown_distance_{0.4}, corner_position_tolerance_{0.05};
