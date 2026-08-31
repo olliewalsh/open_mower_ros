@@ -170,11 +170,21 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   if (!std::isfinite(command_dt) || command_dt <= 0 || command_dt > 1) command_dt = 0.1;
 
   if (state_ == State::PRE_ROTATE) {
-    if (std::abs(p.heading_error) <= rotate_tolerance_) {
+    // Rotation must align with the active segment itself. The normal tracking
+    // heading is preview-smoothed across nearby segments and becomes a corner
+    // bisector at a vertex, which would start forward motion before the mower
+    // has completed the turn onto the outgoing segment.
+    const auto& segment_start = plan_[p.segment].pose.position;
+    const auto& segment_end = plan_[p.segment + 1].pose.position;
+    const double segment_dx = segment_end.x - segment_start.x;
+    const double segment_dy = segment_end.y - segment_start.y;
+    const double rotation_error = std::hypot(segment_dx, segment_dy) > 1e-6 ?
+        normalizeAngle(std::atan2(segment_dy, segment_dx) - yaw) : p.heading_error;
+    if (std::abs(rotation_error) <= rotate_tolerance_) {
       state_ = State::TRACKING;
       resetRotationProgress();
       rotate_escape_attempt_count_ = 0;
-    } else if (rotationHasStalled(p.heading_error, control_time)) {
+    } else if (rotationHasStalled(rotation_error, control_time)) {
       if (rotate_escape_attempt_count_ >= std::max(0, rotate_escape_attempts_)) {
         message = "Rotation stalled after escape recovery";
         return MISSED_GOAL;
@@ -198,7 +208,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
           << (rotate_escape_direction_ > 0.0 ? "forward" : "in reverse"));
     } else {
       command.twist.angular.z = std::max(-max_angular_speed_,
-          std::min(max_angular_speed_, heading_gain_ * p.heading_error));
+          std::min(max_angular_speed_, heading_gain_ * rotation_error));
     }
   }
   if (state_ == State::ROTATE_ESCAPE) {

@@ -10,7 +10,7 @@ The lookahead distance is `clamp(minimum_lookahead + lookahead_time * commanded_
 
 ## SimplePathTracker
 
-`ftc_local_planner/SimplePathTracker` is an alternative MBF controller intended for precise mowing rows and curved perimeter paths. It projects the robot onto the path and creates one angular command from path-curvature feed-forward, heading error, and signed cross-track error, avoiding competing lateral and angular PID loops. Forward speed is constrained by curvature, tracking error, distance to the goal, acceleration limits, and mower current/RPM. Smooth row-end arcs are driven continuously; sharp vertices slow to a stop and rotate in place.
+`ftc_local_planner/SimplePathTracker` is an alternative MBF controller intended for precise mowing rows and curved perimeter paths. It projects the robot onto the path and creates one angular command from path-curvature feed-forward, heading error, and signed cross-track error, avoiding competing lateral and angular PID loops. Forward speed is constrained by curvature, tracking error, distance to the goal, acceleration limits, and mower current/RPM. Smooth row-end arcs are driven continuously; sharp vertices slow to a stop and rotate in place using the raw outgoing-segment heading rather than the preview-smoothed tracking heading.
 
 Angular commands use separate acceleration and deceleration limits. When acceleration limiting prevents the requested angular speed during forward tracking, linear speed is reduced by the same ratio to preserve path curvature. A pending angular sign reversal stops forward motion until the command reaches the requested sign. Safety stops and straight rotation-recovery movements bypass the slew limiter.
 
