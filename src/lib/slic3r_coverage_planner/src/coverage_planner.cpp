@@ -38,6 +38,10 @@ constexpr double kMaxStraightSpacing = 0.50;
 constexpr double kMaxChordError = 0.01;
 constexpr double kMaxHeadingChange = 5.0 * M_PI / 180.0;
 constexpr double kSeamTurnWindow = 0.40;
+constexpr double kInflectionPenalty = 0.50;
+constexpr double kSeamTurnWeight = 0.10;
+constexpr double kMaxTransitionTurn = M_PI;
+constexpr double kMaxTransitionDetour = 2.0;
 
 double pointDistance(const geometry_msgs::Point &a, const geometry_msgs::Point &b) {
     return std::hypot(b.x - a.x, b.y - a.y);
@@ -201,6 +205,7 @@ Points cubicTransition(const Point &previous, const Point &start, const Point &e
 struct TransitionQuality {
     double score{std::numeric_limits<double>::infinity()};
     bool has_inflection{false};
+    bool has_loopback{false};
 };
 
 TransitionQuality transitionQuality(const Point &start, const Points &curve,
@@ -215,6 +220,7 @@ TransitionQuality transitionQuality(const Point &start, const Points &curve,
     TransitionQuality quality;
     double peak_curvature = 0.0;
     double total_turn = 0.0;
+    double transition_length = 0.0;
     int previous_sign = 0;
     for (size_t i = 1; i + 1 < samples.size(); ++i) {
         const double ax = unscale(samples[i].x - samples[i - 1].x);
@@ -234,7 +240,32 @@ TransitionQuality transitionQuality(const Point &start, const Points &curve,
             previous_sign = sign;
         }
     }
-    quality.score = peak_curvature + 0.25 * total_turn;
+
+    const double chord_x = unscale(end.x - start.x);
+    const double chord_y = unscale(end.y - start.y);
+    const double chord_length = std::hypot(chord_x, chord_y);
+    for (size_t i = 1; i + 1 < samples.size(); ++i) {
+        const double dx = unscale(samples[i].x - samples[i - 1].x);
+        const double dy = unscale(samples[i].y - samples[i - 1].y);
+        const double segment_length = std::hypot(dx, dy);
+        transition_length += segment_length;
+
+        // Every part of the connector must continue towards the target loop.
+        // A negative chord projection is the characteristic overshoot which
+        // produces a cusp or a loop-back in an otherwise valid Bezier curve.
+        if (segment_length > 1e-6 && chord_length > 1e-6 &&
+            dx * chord_x + dy * chord_y < -1e-4 * segment_length * chord_length)
+            quality.has_loopback = true;
+    }
+    if (chord_length < 1e-6 || total_turn > kMaxTransitionTurn ||
+        transition_length > kMaxTransitionDetour * chord_length)
+        quality.has_loopback = true;
+
+    // An inflection is sometimes unavoidable when moving between locally
+    // parallel loops. Penalize it, but don't prefer a tight one-direction curl
+    // over a shallow S-shaped transition.
+    quality.score = peak_curvature + 0.25 * total_turn +
+                    (quality.has_inflection ? kInflectionPenalty : 0.0);
     return quality;
 }
 
@@ -605,9 +636,7 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
             }
             int selected_idx = closest_idx;
             Points selected_transition;
-            TransitionQuality selected_quality;
-            bool selected_without_inflection = false;
-            double selected_turn_score = std::numeric_limits<double>::infinity();
+            double selected_score = std::numeric_limits<double>::infinity();
             if (has_previous_point && points.size() > 1) {
                 const bool selecting_obstacle_start = isObstacle && i == static_cast<int>(group.size()) - 1;
                 const int candidate_count = selecting_obstacle_start ? points.size() : std::min<int>(11, points.size() - 1);
@@ -623,6 +652,7 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
                         continue;
                     const auto quality = transitionQuality(lastPoint, transition,
                                                            points[candidate_idx], points[next_idx]);
+                    if (quality.has_loopback) continue;
                     const double turn_score = seamTurnScore(points, candidate_idx);
                     double approach_scale = 0.0;
                     if (selecting_obstacle_start) {
@@ -632,24 +662,15 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
                                                              obstacles, approach_length, approach_inset);
                         if (approach_scale <= 0.0) continue;
                     }
-                    const bool candidate_without_inflection = !quality.has_inflection;
                     const bool prefer_approach = approach_scale > selected_approach_scale;
                     const bool same_approach = approach_scale == selected_approach_scale;
-                    const bool prefer_inflection =
-                        candidate_without_inflection && !selected_without_inflection;
-                    const bool same_inflection =
-                        candidate_without_inflection == selected_without_inflection;
-                    const bool prefer_turn = turn_score < selected_turn_score;
-                    const bool same_turn = turn_score == selected_turn_score;
+                    const double candidate_score = quality.score + kSeamTurnWeight * turn_score;
                     if (selected_transition.empty() || prefer_approach || (same_approach &&
-                        (prefer_inflection || (same_inflection &&
-                         (prefer_turn || (same_turn && quality.score < selected_quality.score)))))) {
+                        candidate_score < selected_score)) {
                         selected_idx = candidate_idx;
                         selected_transition = transition;
-                        selected_quality = quality;
-                        selected_without_inflection = candidate_without_inflection;
                         selected_approach_scale = approach_scale;
-                        selected_turn_score = turn_score;
+                        selected_score = candidate_score;
                     }
                 }
             }
