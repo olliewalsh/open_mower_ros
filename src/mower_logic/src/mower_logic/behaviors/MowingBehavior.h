@@ -15,6 +15,8 @@
 #ifndef SRC_MOWINGBEHAVIOR_H
 #define SRC_MOWINGBEHAVIOR_H
 
+#include <atomic>
+
 #include "Behavior.h"
 #include "UndockingBehavior.h"
 #include "ftc_local_planner/PlannerGetProgress.h"
@@ -36,7 +38,7 @@ class MowingBehavior : public Behavior {
   bool wait_for_mower_spinup();
 
   // Progress
-  bool mowerEnabled = false;
+  std::atomic_bool mowerEnabled{false};
   std::vector<slic3r_coverage_planner::Path> currentMowingPaths;
 
   ros::Time last_checkpoint;

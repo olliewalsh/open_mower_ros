@@ -107,6 +107,7 @@ Behavior* MowingBehavior::execute() {
 void MowingBehavior::enter() {
   skip_area = false;
   skip_path = false;
+  mowerEnabled = false;
   paused = aborted = false;
 
   for (auto& a : actions) {
@@ -116,6 +117,7 @@ void MowingBehavior::enter() {
 }
 
 void MowingBehavior::exit() {
+  mowerEnabled = false;
   for (auto& a : actions) {
     a.enabled = false;
   }
@@ -469,6 +471,10 @@ bool MowingBehavior::wait_for_mower_spinup() {
   ros::Rate check_rate(10);
   while (ros::ok()) {
     if (aborted || requested_pause_flag || skip_area || skip_path) {
+      if (aborted || requested_pause_flag || skip_area ||
+          currentMowingPath + 1 >= static_cast<int>(currentMowingPaths.size())) {
+        mowerEnabled = false;
+      }
       return false;
     }
     auto last_status = status_state_subscriber.getMessage();
@@ -488,6 +494,7 @@ bool MowingBehavior::wait_for_mower_spinup() {
     }
     check_rate.sleep();
   }
+  mowerEnabled = false;
   return false;
 }
 
@@ -618,6 +625,7 @@ bool MowingBehavior::execute_mowing_plan() {
             ROS_ERROR_STREAM("MowingBehavior: (FIRST POINT) No safe outline approach found while backtracking "
                              << outline_approach_backtrack_distance
                              << "m; aborting rather than skipping unmowed path.");
+            mowerEnabled = false;
             this->abort();
             return false;
           }
@@ -663,6 +671,10 @@ bool MowingBehavior::execute_mowing_plan() {
             return true;
           }
           if (skip_path) {
+            if (currentMowingPath + 1 >= static_cast<int>(currentMowingPaths.size())) {
+              mowerEnabled = false;
+            }
+            mbfClient->cancelAllGoals();
             skip_path = false;
             currentMowingPath++;
             currentMowingPathIndex = 0;
@@ -764,6 +776,10 @@ bool MowingBehavior::execute_mowing_plan() {
             break;
           }
           if (aborted || requested_pause_flag || skip_area || skip_path) {
+            if (aborted || requested_pause_flag || skip_area ||
+                currentMowingPath + 1 >= static_cast<int>(currentMowingPaths.size())) {
+              mowerEnabled = false;
+            }
             mbfClientExePath->cancelAllGoals();
             break;
           }
@@ -772,18 +788,26 @@ bool MowingBehavior::execute_mowing_plan() {
 
         if (skip_area) {
           publishMowerEvent("AREA_SKIPPED");
+          mowerEnabled = false;
           currentMowingPaths.clear();
           skip_area = false;
           return true;
         }
         if (skip_path) {
+          if (currentMowingPath + 1 >= static_cast<int>(currentMowingPaths.size())) {
+            mowerEnabled = false;
+          }
           skip_path = false;
           currentMowingPath++;
           currentMowingPathIndex = 0;
           return false;
         }
-        if (aborted || requested_pause_flag) return false;
+        if (aborted || requested_pause_flag) {
+          mowerEnabled = false;
+          return false;
+        }
         if (approach_status.state_ != actionlib::SimpleClientGoalState::SUCCEEDED) {
+          mowerEnabled = false;
           outline_approach_attempt_counter++;
           if (outline_approach_attempt_counter >= config.max_outline_approach_attempts) {
             ROS_ERROR_STREAM("MowingBehavior: (FIRST POINT) Tangent outline approach failed with status "
@@ -813,8 +837,7 @@ bool MowingBehavior::execute_mowing_plan() {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////
     {
       // enable mower (only when we reach the start not on the way to mowing already)
-      bool mower_enabled_last = mowerEnabled;
-      mowerEnabled = true;
+      bool mower_enabled_last = mowerEnabled.exchange(true);
 
       // Wait for mower motor to spin up to target RPM (if configured and previously disabled)
       if (!mower_enabled_last && !wait_for_mower_spinup()) {
@@ -852,11 +875,16 @@ bool MowingBehavior::execute_mowing_plan() {
             publishMowerEvent("AREA_SKIPPED");
             // remove all paths in current area and return true
             mowerEnabled = false;
+            mbfClientExePath->cancelAllGoals();
             currentMowingPaths.clear();
             skip_area = false;
             return true;
           }
           if (skip_path) {
+            if (currentMowingPath + 1 >= static_cast<int>(currentMowingPaths.size())) {
+              mowerEnabled = false;
+            }
+            mbfClientExePath->cancelAllGoals();
             skip_path = false;
             currentMowingPath++;
             currentMowingPathIndex = 0;
@@ -1106,6 +1134,7 @@ void MowingBehavior::handle_action(std::string action) {
     command_home();
   } else if (action == "mower_logic:mowing/skip_area") {
     ROS_INFO_STREAM("got skip_area command");
+    mowerEnabled = false;
     skip_area = true;
   } else if (action == "mower_logic:mowing/skip_path") {
     ROS_INFO_STREAM("got skip_path command");
