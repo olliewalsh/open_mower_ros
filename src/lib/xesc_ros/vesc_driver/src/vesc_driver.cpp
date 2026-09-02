@@ -36,6 +36,25 @@
 #include "vesc_driver/vesc_driver.h"
 
 namespace vesc_driver {
+    void VescDriver::convertStatus(const VescStatusStruct &status,
+                                   xesc_msgs::XescStateStamped &state_msg) const {
+        state_msg.header.seq = status.seq;
+        state_msg.header.stamp = ros::Time::now();
+        state_msg.state.connection_state = status.connection_state;
+        state_msg.state.fw_major = status.fw_version_major;
+        state_msg.state.fw_minor = status.fw_version_minor;
+        state_msg.state.voltage_input = status.voltage_input;
+        state_msg.state.temperature_pcb = status.temperature_pcb;
+        state_msg.state.temperature_motor = status.temperature_motor;
+        state_msg.state.current_input = status.current_input;
+        state_msg.state.duty_cycle = status.duty_cycle;
+        state_msg.state.tacho = status.tacho;
+        state_msg.state.fault_code = status.fault_code;
+        state_msg.state.tacho_absolute = status.tacho_absolute;
+        state_msg.state.direction = status.direction;
+        state_msg.state.rpm = status.speed_erpm / pole_pairs;
+    }
+
     VescDriver::VescDriver(ros::NodeHandle &nh, ros::NodeHandle &private_nh)
             : vesc_(std::bind(&VescDriver::vescErrorCallback, this, std::placeholders::_1)),
               duty_cycle_limit_(private_nh, "duty_cycle", -1.0, 1.0) {
@@ -111,6 +130,26 @@ namespace vesc_driver {
 
     void VescDriver::setDutyCycle(float duty_cycle) {
         vesc_.setDutyCycle(duty_cycle);
+    }
+
+    bool VescDriver::supportsStatusRequests() const {
+        return true;
+    }
+
+    void VescDriver::setStatusCallback(const StatusCallback &callback) {
+        if (!callback) {
+            vesc_.setStatusCallback(VescInterface::StatusHandlerFunction{});
+            return;
+        }
+        vesc_.setStatusCallback([this, callback](const VescStatusStruct &status) {
+            xesc_msgs::XescStateStamped state_msg;
+            convertStatus(status, state_msg);
+            callback(state_msg);
+        });
+    }
+
+    void VescDriver::requestStatus() {
+        vesc_.requestState();
     }
 
 

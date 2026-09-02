@@ -31,8 +31,10 @@
 #include <algorithm>
 #include <array>
 #include <bitset>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <mutex>
 
 #include "COBS.h"
 #include "boost/crc.hpp"
@@ -115,7 +117,7 @@ xesc_driver::XescDriver* right_xesc_interface;
 bool has_ticks;
 uint32_t last_ticks_l = 0;
 uint32_t last_ticks_r = 0;
-ros::Time last_ticks_stamp{};
+std::chrono::steady_clock::time_point last_ticks_time{};
 // Fresh ESC samples are paired before updating odometry and the controllers.
 bool left_status_sequence_valid = false;
 bool right_status_sequence_valid = false;
@@ -135,6 +137,12 @@ int32_t speed_window_right_sum = 0;
 float speed_window_dt_sum = 0.0f;
 size_t speed_window_index = 0;
 size_t speed_window_count = 0;
+
+std::mutex drive_controller_mutex;
+bool paired_status_requests = false;
+bool drive_status_request_in_flight = false;
+std::chrono::steady_clock::time_point drive_status_request_time{};
+constexpr std::chrono::milliseconds DRIVE_STATUS_REQUEST_TIMEOUT{250};
 
 std::mutex ll_status_mutex;
 struct ll_status last_ll_status = {0};
@@ -193,27 +201,36 @@ void updateDriveDuty(float dt) {
 }
 
 void publishActuators() {
-  speed_mow = target_speed_mow;
+  float drive_duty_l;
+  float drive_duty_r;
+  float mower_duty;
+  {
+    std::lock_guard<std::mutex> lock(drive_controller_mutex);
+    speed_mow = target_speed_mow;
 
-  // emergency or timeout -> send 0 speeds
-  const ros::Time now = ros::Time::now();
-  if (is_emergency()) {
-    resetDriveController();
-    speed_mow = 0;
-  } else if (now - last_cmd_vel > ros::Duration(1.0)) {
-    resetDriveController();
-  }
-  if (now - last_cmd_vel > ros::Duration(25.0)) {
-    speed_mow = 0;
-  }
+    // emergency or timeout -> send 0 speeds
+    const ros::Time now = ros::Time::now();
+    if (is_emergency()) {
+      resetDriveController();
+      speed_mow = 0;
+    } else if (now - last_cmd_vel > ros::Duration(1.0)) {
+      resetDriveController();
+    }
+    if (now - last_cmd_vel > ros::Duration(25.0)) {
+      speed_mow = 0;
+    }
 
+    drive_duty_l = speed_l;
+    drive_duty_r = speed_r;
+    mower_duty = speed_mow;
+  }
   if (mow_xesc_interface) {
-    mow_xesc_interface->setDutyCycle(speed_mow);
+    mow_xesc_interface->setDutyCycle(mower_duty);
   }
   // We need to invert the speed, because the ESC has the same config as the left one, so the motor is running in the
   // "wrong" direction
-  left_xesc_interface->setDutyCycle(speed_l);
-  right_xesc_interface->setDutyCycle(-speed_r);
+  left_xesc_interface->setDutyCycle(drive_duty_l);
+  right_xesc_interface->setDutyCycle(-drive_duty_r);
 
   struct ll_heartbeat heartbeat = {.type = PACKET_ID_LL_HEARTBEAT,
                                    // If high level has emergency and LL does not know yet, we set it
@@ -258,9 +275,10 @@ void convertStatus(const xesc_msgs::XescStateStamped& vesc_status, mower_msgs::E
 }
 
 void processDriveStatusPair(const xesc_msgs::XescStateStamped& left_status,
-                            const xesc_msgs::XescStateStamped& right_status, const ros::Time& stamp) {
+                            const xesc_msgs::XescStateStamped& right_status, const ros::Time& stamp,
+                            const std::chrono::steady_clock::time_point& sample_time) {
   if (has_ticks) {
-    const float dt = static_cast<float>((stamp - last_ticks_stamp).toSec());
+    const float dt = std::chrono::duration<float>(sample_time - last_ticks_time).count();
     if (dt > 0.0f && wheel_ticks_per_m > 0.0 && wheel_distance_m > 0.0) {
       const int32_t d_left = static_cast<int32_t>(left_status.state.tacho - last_ticks_l);
       const int32_t d_right = static_cast<int32_t>(right_status.state.tacho - last_ticks_r);
@@ -299,21 +317,26 @@ void processDriveStatusPair(const xesc_msgs::XescStateStamped& left_status,
     }
   }
 
-  last_ticks_stamp = stamp;
+  last_ticks_time = sample_time;
   last_ticks_l = left_status.state.tacho;
   last_ticks_r = right_status.state.tacho;
   has_ticks = true;
 }
 
+void resetDriveFeedback() {
+  left_status_sequence_valid = false;
+  right_status_sequence_valid = false;
+  left_status_pending = false;
+  right_status_pending = false;
+  drive_status_request_in_flight = false;
+  has_ticks = false;
+  resetDriveController();
+}
+
 void updateDriveFeedback(const xesc_msgs::XescStateStamped& left_status,
                          const xesc_msgs::XescStateStamped& right_status, const ros::Time& stamp) {
   if (!isEscConnected(left_status) || !isEscConnected(right_status)) {
-    left_status_sequence_valid = false;
-    right_status_sequence_valid = false;
-    left_status_pending = false;
-    right_status_pending = false;
-    has_ticks = false;
-    resetDriveController();
+    resetDriveFeedback();
     return;
   }
 
@@ -331,9 +354,93 @@ void updateDriveFeedback(const xesc_msgs::XescStateStamped& left_status,
   }
 
   if (left_status_pending && right_status_pending) {
-    processDriveStatusPair(pending_left_status, pending_right_status, stamp);
+    processDriveStatusPair(pending_left_status, pending_right_status, stamp, std::chrono::steady_clock::now());
     left_status_pending = false;
     right_status_pending = false;
+  }
+}
+
+void requestDriveStatusPair();
+
+void requestedDriveStatusReceived(const xesc_msgs::XescStateStamped& status, bool left) {
+  bool request_next = false;
+  {
+    std::lock_guard<std::mutex> lock(drive_controller_mutex);
+    if (!paired_status_requests || !drive_status_request_in_flight) {
+      return;
+    }
+
+    if (!isEscConnected(status)) {
+      resetDriveFeedback();
+      return;
+    }
+
+    if (left) {
+      pending_left_status = status;
+      left_status_pending = true;
+    } else {
+      pending_right_status = status;
+      right_status_pending = true;
+    }
+
+    if (left_status_pending && right_status_pending) {
+      processDriveStatusPair(pending_left_status, pending_right_status, ros::Time::now(),
+                             std::chrono::steady_clock::now());
+      left_status_pending = false;
+      right_status_pending = false;
+      drive_status_request_in_flight = false;
+      request_next = true;
+    }
+  }
+
+  if (request_next) {
+    requestDriveStatusPair();
+  }
+}
+
+void leftDriveStatusReceived(const xesc_msgs::XescStateStamped& status) {
+  requestedDriveStatusReceived(status, true);
+}
+
+void rightDriveStatusReceived(const xesc_msgs::XescStateStamped& status) {
+  requestedDriveStatusReceived(status, false);
+}
+
+void requestDriveStatusPair() {
+  {
+    std::lock_guard<std::mutex> lock(drive_controller_mutex);
+    if (!paired_status_requests || drive_status_request_in_flight) {
+      return;
+    }
+    drive_status_request_in_flight = true;
+    drive_status_request_time = std::chrono::steady_clock::now();
+  }
+
+  left_xesc_interface->requestStatus();
+  right_xesc_interface->requestStatus();
+}
+
+void maintainDriveStatusRequests() {
+  bool request_pair = false;
+  {
+    std::lock_guard<std::mutex> lock(drive_controller_mutex);
+    if (!paired_status_requests) {
+      return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (drive_status_request_in_flight && now - drive_status_request_time > DRIVE_STATUS_REQUEST_TIMEOUT) {
+      left_status_pending = false;
+      right_status_pending = false;
+      drive_status_request_in_flight = false;
+      has_ticks = false;
+      resetSpeedMeasurementWindow();
+    }
+    request_pair = !drive_status_request_in_flight;
+  }
+
+  if (request_pair) {
+    requestDriveStatusPair();
   }
 }
 
@@ -424,7 +531,21 @@ void publishStatus() {
   status_left_esc_pub.publish(left_esc_status);
   status_right_esc_pub.publish(right_esc_status);
 
-  updateDriveFeedback(left_status, right_status, status_msg.stamp);
+  {
+    std::lock_guard<std::mutex> lock(drive_controller_mutex);
+    if (paired_status_requests) {
+      if (!isEscConnected(left_status) || !isEscConnected(right_status)) {
+        left_status_pending = false;
+        right_status_pending = false;
+        has_ticks = false;
+        resetDriveController();
+      }
+    } else {
+      updateDriveFeedback(left_status, right_status, status_msg.stamp);
+    }
+  }
+
+  maintainDriveStatusRequests();
 }
 
 std::string getHallConfigsString(const HallConfig* hall_configs, const size_t size) {
@@ -581,6 +702,7 @@ void highLevelStatusReceived(const mower_msgs::HighLevelStatus::ConstPtr& msg) {
 }
 
 void velReceived(const geometry_msgs::Twist::ConstPtr& msg) {
+  std::lock_guard<std::mutex> lock(drive_controller_mutex);
   last_cmd_vel = ros::Time::now();
   desired_speed_r = msg->linear.x + 0.5 * wheel_distance_m * msg->angular.z;
   desired_speed_l = msg->linear.x - 0.5 * wheel_distance_m * msg->angular.z;
@@ -902,6 +1024,20 @@ int main(int argc, char** argv) {
   power_pub = n.advertise<mower_msgs::Power>("ll/power", 1);
   for (size_t i = 0; i < uss_range_pubs.size(); ++i) {
     uss_range_pubs[i] = n.advertise<sensor_msgs::Range>("ll/uss/" + std::to_string(i + 1), 1);
+  }
+
+  paired_status_requests =
+      left_xesc_interface->supportsStatusRequests() && right_xesc_interface->supportsStatusRequests();
+  if (paired_status_requests) {
+    ROS_INFO_STREAM("Using paired request-response updates for drive ESC status");
+    left_xesc_interface->setStatusCallback(leftDriveStatusReceived);
+    right_xesc_interface->setStatusCallback(rightDriveStatusReceived);
+    // Let any responses to requests made by the previous independent polling loops drain before
+    // starting the paired cycle.
+    ros::WallDuration(0.05).sleep();
+    requestDriveStatusPair();
+  } else {
+    ROS_INFO_STREAM("Using streamed drive ESC status updates");
   }
 
   ros::ServiceServer mow_service = n.advertiseService("ll/_service/mow_enabled", setMowEnabled);

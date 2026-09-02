@@ -94,6 +94,7 @@ namespace vesc_driver {
     class VescInterface : private boost::noncopyable {
     public:
         typedef std::function<void(const std::string &)> ErrorHandlerFunction;
+        typedef std::function<void(const VescStatusStruct &)> StatusHandlerFunction;
 
         /**
          * Creates a VescInterface object. Opens the serial port interface to the VESC if @p port is not
@@ -125,6 +126,7 @@ namespace vesc_driver {
 
         void get_status(VescStatusStruct *status);
         void wait_for_status(VescStatusStruct *status);
+        void setStatusCallback(const StatusHandlerFunction &callback);
         void requestFWVersion();
         void requestState();
 
@@ -162,6 +164,8 @@ namespace vesc_driver {
         std::mutex serial_tx_mutex_;
         std::condition_variable status_cv_;
         struct VescStatusStruct status_;
+        StatusHandlerFunction status_callback_;
+        bool automatically_request_state_ = true;
 
         uint32_t state_request_millis;
     };

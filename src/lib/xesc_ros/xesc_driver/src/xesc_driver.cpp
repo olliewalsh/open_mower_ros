@@ -50,6 +50,22 @@ void xesc_driver::XescDriver::setDutyCycle(float duty_cycle) {
     xesc_driver->setDutyCycle(duty_cycle);
 }
 
+bool xesc_driver::XescDriver::supportsStatusRequests() const {
+    return xesc_driver && xesc_driver->supportsStatusRequests();
+}
+
+void xesc_driver::XescDriver::setStatusCallback(const StatusCallback &callback) {
+    if (xesc_driver) {
+        xesc_driver->setStatusCallback(callback);
+    }
+}
+
+void xesc_driver::XescDriver::requestStatus() {
+    if (xesc_driver) {
+        xesc_driver->requestStatus();
+    }
+}
+
 xesc_driver::XescDriver::~XescDriver() {
     if (xesc_driver) {
         delete xesc_driver;

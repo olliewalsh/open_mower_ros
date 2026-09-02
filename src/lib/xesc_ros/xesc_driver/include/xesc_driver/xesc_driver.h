@@ -26,6 +26,12 @@ namespace xesc_driver  {
 
         void stop() override;
 
+        bool supportsStatusRequests() const override;
+
+        void setStatusCallback(const StatusCallback &callback) override;
+
+        void requestStatus() override;
+
     private:
         xesc_interface::XescInterface *xesc_driver = nullptr;
     };

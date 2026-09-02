@@ -63,6 +63,12 @@ public:
 
     void setDutyCycle(float duty_cycle) override;
 
+    bool supportsStatusRequests() const override;
+
+    void setStatusCallback(const StatusCallback &callback) override;
+
+    void requestStatus() override;
+
     VescDriver(ros::NodeHandle &nh, ros::NodeHandle &private_nh);
 
     void stop();
@@ -70,6 +76,7 @@ private:
   // interface to the VESC
   VescInterface vesc_;
   void vescErrorCallback(const std::string& error);
+  void convertStatus(const VescStatusStruct& status, xesc_msgs::XescStateStamped& state_msg) const;
 
   // limits on VESC commands
   struct CommandLimit

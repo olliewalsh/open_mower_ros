@@ -59,9 +59,11 @@ namespace vesc_driver {
 
             std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now();
             VESC_CONNECTION_STATE state;
+            bool automatically_request_state;
             {
                 std::unique_lock<std::mutex> lk(status_mutex_);
                 state = status_.connection_state;
+                automatically_request_state = automatically_request_state_;
             }
 
             if (WAITING_FOR_FW == state) {
@@ -71,7 +73,8 @@ namespace vesc_driver {
                     requestFWVersion();
                 }
                 continue;
-            } else if(status_.connection_state == CONNECTED || status_.connection_state == CONNECTED_INCOMPATIBLE_FW) {
+            } else if (automatically_request_state &&
+                       (state == CONNECTED || state == CONNECTED_INCOMPATIBLE_FW)) {
                 requestState();
             }
         }
@@ -189,9 +192,14 @@ namespace vesc_driver {
 
     void VescInterface::handle_packet(VescPacketConstPtr packet) {
         // Only update the state if connection state is connected
-        if ((status_.connection_state == CONNECTED || status_.connection_state == CONNECTED_INCOMPATIBLE_FW) &&
-            packet->getName() == "Values") {
-            std::lock_guard<std::mutex> lk(status_mutex_);
+        if (packet->getName() == "Values") {
+            StatusHandlerFunction status_callback;
+            VescStatusStruct status;
+            std::unique_lock<std::mutex> lk(status_mutex_);
+            if (status_.connection_state != CONNECTED &&
+                status_.connection_state != CONNECTED_INCOMPATIBLE_FW) {
+                return;
+            }
             std::shared_ptr<VescPacketValues const> values = std::dynamic_pointer_cast<VescPacketValues const>(
                     packet);
 
@@ -213,7 +221,13 @@ namespace vesc_driver {
             status_.tacho = values->getPosition();
             status_.tacho_absolute = values->getDisplacement();
             status_.direction = values->getVelocityERPM() < 0;
+            status = status_;
+            status_callback = status_callback_;
+            lk.unlock();
             status_cv_.notify_all();
+            if (status_callback) {
+                status_callback(status);
+            }
         } else if (packet->getName() == "FWVersion") {
             std::lock_guard<std::mutex> lk(status_mutex_);
             std::shared_ptr<VescPacketFWVersion const> fw_version =
@@ -300,6 +314,12 @@ namespace vesc_driver {
     void VescInterface::get_status(VescStatusStruct *status) {
         std::unique_lock<std::mutex> lk(status_mutex_);
         *status = status_;
+    }
+
+    void VescInterface::setStatusCallback(const StatusHandlerFunction &callback) {
+        std::unique_lock<std::mutex> lk(status_mutex_);
+        status_callback_ = callback;
+        automatically_request_state_ = !status_callback_;
     }
 
     void VescInterface::wait_for_status(VescStatusStruct *status) {
