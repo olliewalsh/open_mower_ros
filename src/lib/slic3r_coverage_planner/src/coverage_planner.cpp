@@ -42,6 +42,10 @@ constexpr double kInflectionPenalty = 0.50;
 constexpr double kSeamTurnWeight = 0.10;
 constexpr double kMaxTransitionTurn = M_PI;
 constexpr double kMaxTransitionDetour = 2.0;
+constexpr double kMinTransitionSearchDistance = 0.50;
+constexpr double kTransitionSearchSpacingFactor = 3.0;
+constexpr double kMinTransitionControlDistance = 0.30;
+constexpr double kTransitionControlSpacingFactor = 1.5;
 
 double pointDistance(const geometry_msgs::Point &a, const geometry_msgs::Point &b) {
     return std::hypot(b.x - a.x, b.y - a.y);
@@ -175,7 +179,8 @@ Points subdivideStraightSegments(const Points &vertices) {
     return result;
 }
 
-Points cubicTransition(const Point &previous, const Point &start, const Point &end, const Point &next) {
+Points cubicTransition(const Point &previous, const Point &start, const Point &end, const Point &next,
+                       double coverage_spacing) {
     const double sx = unscale(start.x), sy = unscale(start.y);
     const double ex = unscale(end.x), ey = unscale(end.y);
     double in_x = sx - unscale(previous.x), in_y = sy - unscale(previous.y);
@@ -187,7 +192,9 @@ Points cubicTransition(const Point &previous, const Point &start, const Point &e
     if (in_length < 1e-6 || out_length < 1e-6 || chord < 1e-6) return result;
     in_x /= in_length; in_y /= in_length;
     out_x /= out_length; out_y /= out_length;
-    const double control_distance = std::min(0.30, chord * 0.45);
+    const double control_limit = std::max(kMinTransitionControlDistance,
+                                          kTransitionControlSpacingFactor * coverage_spacing);
+    const double control_distance = std::min(control_limit, chord * 0.45);
     const double c1x = sx + in_x * control_distance, c1y = sy + in_y * control_distance;
     const double c2x = ex - out_x * control_distance, c2y = ey - out_y * control_distance;
     const int steps = std::max(2, static_cast<int>(std::ceil(
@@ -544,8 +551,8 @@ void traverse_from_right(std::vector<PerimeterGeneratorLoop> &contours, std::vec
 slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, Slic3r::Polygon &outline_poly,
                                                         const Polygons &obstacles, Slic3r::Polygons &group,
                                                         bool isObstacle, double approach_length,
-                                                        double approach_inset, Point *areaLastPoint,
-                                                        bool *transition_failed) {
+                                                        double approach_inset, double coverage_spacing,
+                                                        Point *areaLastPoint, bool *transition_failed) {
     slic3r_coverage_planner::Path path;
     path.is_outline = true;
     path.path.header = header;
@@ -638,14 +645,21 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
             Points selected_transition;
             double selected_score = std::numeric_limits<double>::infinity();
             if (has_previous_point && points.size() > 1) {
+                const double transition_search_distance =
+                    std::max(kMinTransitionSearchDistance,
+                             kTransitionSearchSpacingFactor * coverage_spacing);
+                const int max_transition_candidates =
+                    static_cast<int>(std::ceil(transition_search_distance / kSourceSpacing)) + 1;
                 const bool selecting_obstacle_start = isObstacle && i == static_cast<int>(group.size()) - 1;
-                const int candidate_count = selecting_obstacle_start ? points.size() : std::min<int>(11, points.size() - 1);
+                const int candidate_count = selecting_obstacle_start ? points.size() :
+                    std::min<int>(max_transition_candidates, points.size() - 1);
                 double selected_approach_scale = 0.0;
                 for (int offset = 0; offset < candidate_count; ++offset) {
                     const int candidate_idx = (closest_idx + offset) % points.size();
                     const int next_idx = (candidate_idx + 1) % points.size();
                     auto transition = cubicTransition(previousPoint, lastPoint,
-                                                      points[candidate_idx], points[next_idx]);
+                                                      points[candidate_idx], points[next_idx],
+                                                      coverage_spacing);
                     if (transition.empty() || !transitionIsSafe(lastPoint, transition,
                                                                 points[candidate_idx], *next_outer_poly,
                                                                 obstacles))
@@ -976,7 +990,7 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
         bool transition_failed = false;
         auto path = determinePathForOutline(header, outline_poly, expoly.holes, group, false,
                                             req.outline_approach_length, req.outline_approach_inset,
-                                            &areaLastPoint, &transition_failed);
+                                            req.distance, &areaLastPoint, &transition_failed);
         if (transition_failed) return false;
         if (!path.path.poses.empty()) {
             res.paths.push_back(path);
@@ -1024,7 +1038,7 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
         bool transition_failed = false;
         auto path = determinePathForOutline(header, outline_poly, expoly.holes, group, true,
                                             req.outline_approach_length, req.outline_approach_inset,
-                                            nullptr, &transition_failed);
+                                            req.distance, nullptr, &transition_failed);
         if (transition_failed) return false;
         if (!path.path.poses.empty()) {
             std::reverse(path.path.poses.begin(), path.path.poses.end());
