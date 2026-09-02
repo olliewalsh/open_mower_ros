@@ -38,8 +38,6 @@ constexpr double kMaxStraightSpacing = 0.50;
 constexpr double kMaxChordError = 0.01;
 constexpr double kMaxHeadingChange = 5.0 * M_PI / 180.0;
 constexpr double kSeamTurnWindow = 0.40;
-constexpr double kInflectionPenalty = 0.50;
-constexpr double kSeamTurnWeight = 0.10;
 constexpr double kMaxTransitionTurn = M_PI;
 constexpr double kMaxTransitionDetour = 2.0;
 constexpr double kMinTransitionSearchDistance = 0.50;
@@ -210,8 +208,8 @@ Points cubicTransition(const Point &previous, const Point &start, const Point &e
 }
 
 struct TransitionQuality {
-    double score{std::numeric_limits<double>::infinity()};
-    bool has_inflection{false};
+    double max_slope{std::numeric_limits<double>::infinity()};
+    double total_turn{std::numeric_limits<double>::infinity()};
     bool has_loopback{false};
 };
 
@@ -225,10 +223,9 @@ TransitionQuality transitionQuality(const Point &start, const Points &curve,
     samples.push_back(next);
 
     TransitionQuality quality;
-    double peak_curvature = 0.0;
-    double total_turn = 0.0;
+    quality.max_slope = 0.0;
+    quality.total_turn = 0.0;
     double transition_length = 0.0;
-    int previous_sign = 0;
     for (size_t i = 1; i + 1 < samples.size(); ++i) {
         const double ax = unscale(samples[i].x - samples[i - 1].x);
         const double ay = unscale(samples[i].y - samples[i - 1].y);
@@ -238,24 +235,27 @@ TransitionQuality transitionQuality(const Point &start, const Points &curve,
         const double second_length = std::hypot(bx, by);
         if (first_length < 1e-6 || second_length < 1e-6) continue;
         const double turn = normalizedAngle(std::atan2(by, bx) - std::atan2(ay, ax));
-        const double curvature = std::abs(turn) / (0.5 * (first_length + second_length));
-        peak_curvature = std::max(peak_curvature, curvature);
-        total_turn += std::abs(turn);
-        if (std::abs(turn) > 0.5 * M_PI / 180.0) {
-            const int sign = turn > 0.0 ? 1 : -1;
-            if (previous_sign != 0 && sign != previous_sign) quality.has_inflection = true;
-            previous_sign = sign;
-        }
+        quality.total_turn += std::abs(turn);
     }
 
     const double chord_x = unscale(end.x - start.x);
     const double chord_y = unscale(end.y - start.y);
     const double chord_length = std::hypot(chord_x, chord_y);
+    const double tangent_x = unscale(next.x - end.x);
+    const double tangent_y = unscale(next.y - end.y);
+    const double tangent_length = std::hypot(tangent_x, tangent_y);
+    const double target_heading = std::atan2(tangent_y, tangent_x);
+    if (tangent_length < 1e-6) quality.has_loopback = true;
     for (size_t i = 1; i + 1 < samples.size(); ++i) {
         const double dx = unscale(samples[i].x - samples[i - 1].x);
         const double dy = unscale(samples[i].y - samples[i - 1].y);
         const double segment_length = std::hypot(dx, dy);
         transition_length += segment_length;
+        if (segment_length > 1e-6) {
+            const double heading = std::atan2(dy, dx);
+            quality.max_slope = std::max(
+                quality.max_slope, std::abs(normalizedAngle(heading - target_heading)));
+        }
 
         // Every part of the connector must continue towards the target loop.
         // A negative chord projection is the characteristic overshoot which
@@ -264,15 +264,10 @@ TransitionQuality transitionQuality(const Point &start, const Points &curve,
             dx * chord_x + dy * chord_y < -1e-4 * segment_length * chord_length)
             quality.has_loopback = true;
     }
-    if (chord_length < 1e-6 || total_turn > kMaxTransitionTurn ||
+    if (chord_length < 1e-6 || quality.total_turn > kMaxTransitionTurn ||
         transition_length > kMaxTransitionDetour * chord_length)
         quality.has_loopback = true;
 
-    // An inflection is sometimes unavoidable when moving between locally
-    // parallel loops. Penalize it, but don't prefer a tight one-direction curl
-    // over a shallow S-shaped transition.
-    quality.score = peak_curvature + 0.25 * total_turn +
-                    (quality.has_inflection ? kInflectionPenalty : 0.0);
     return quality;
 }
 
@@ -643,7 +638,8 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
             }
             int selected_idx = closest_idx;
             Points selected_transition;
-            double selected_score = std::numeric_limits<double>::infinity();
+            TransitionQuality selected_quality;
+            double selected_turn_score = std::numeric_limits<double>::infinity();
             if (has_previous_point && points.size() > 1) {
                 const double transition_search_distance =
                     std::max(kMinTransitionSearchDistance,
@@ -678,13 +674,19 @@ slic3r_coverage_planner::Path determinePathForOutline(std_msgs::Header &header, 
                     }
                     const bool prefer_approach = approach_scale > selected_approach_scale;
                     const bool same_approach = approach_scale == selected_approach_scale;
-                    const double candidate_score = quality.score + kSeamTurnWeight * turn_score;
+                    const bool prefer_slope = quality.max_slope < selected_quality.max_slope;
+                    const bool same_slope = quality.max_slope == selected_quality.max_slope;
+                    const bool prefer_seam = turn_score < selected_turn_score;
+                    const bool same_seam = turn_score == selected_turn_score;
                     if (selected_transition.empty() || prefer_approach || (same_approach &&
-                        candidate_score < selected_score)) {
+                        (prefer_slope || (same_slope &&
+                         (prefer_seam || (same_seam &&
+                          quality.total_turn < selected_quality.total_turn)))))) {
                         selected_idx = candidate_idx;
                         selected_transition = transition;
+                        selected_quality = quality;
                         selected_approach_scale = approach_scale;
-                        selected_score = candidate_score;
+                        selected_turn_score = turn_score;
                     }
                 }
             }
