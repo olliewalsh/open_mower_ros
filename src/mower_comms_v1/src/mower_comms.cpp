@@ -118,7 +118,9 @@ xesc_driver::XescDriver* right_xesc_interface;
 bool has_ticks;
 uint32_t last_ticks_l = 0;
 uint32_t last_ticks_r = 0;
-std::chrono::steady_clock::time_point last_ticks_time{};
+ros::Time last_ticks_time_l{};
+ros::Time last_ticks_time_r{};
+ros::Time last_control_update_time{};
 // Fresh ESC samples are paired before updating odometry and the controllers.
 bool left_status_sequence_valid = false;
 bool right_status_sequence_valid = false;
@@ -267,16 +269,18 @@ void convertStatus(const xesc_msgs::XescStateStamped& vesc_status, mower_msgs::E
 
 void processDriveStatusPair(const xesc_msgs::XescStateStamped& left_status,
                             const xesc_msgs::XescStateStamped& right_status, const ros::Time& stamp,
-                            const std::chrono::steady_clock::time_point& sample_time) {
+                            const ros::Time& left_sample_time, const ros::Time& right_sample_time) {
   if (has_ticks) {
-    const float dt = std::chrono::duration<float>(sample_time - last_ticks_time).count();
-    if (dt > 0.0f && wheel_ticks_per_m > 0.0 && wheel_distance_m > 0.0) {
+    const float left_dt = static_cast<float>((left_sample_time - last_ticks_time_l).toSec());
+    const float right_dt = static_cast<float>((right_sample_time - last_ticks_time_r).toSec());
+    const float control_dt = static_cast<float>((stamp - last_control_update_time).toSec());
+    if (left_dt > 0.0f && right_dt > 0.0f && control_dt > 0.0f && wheel_ticks_per_m > 0.0 && wheel_distance_m > 0.0) {
       const int32_t d_left = static_cast<int32_t>(left_status.state.tacho - last_ticks_l);
       const int32_t d_right = static_cast<int32_t>(right_status.state.tacho - last_ticks_r);
       const float position_resolution = 1.0f / static_cast<float>(wheel_ticks_per_m);
-      const bool left_valid = left_speed_observer.Update(d_left * position_resolution, dt, position_resolution);
-      const bool right_valid =
-          right_speed_observer.Update(-static_cast<float>(d_right) * position_resolution, dt, position_resolution);
+      const bool left_valid = left_speed_observer.Update(d_left * position_resolution, left_dt, position_resolution);
+      const bool right_valid = right_speed_observer.Update(-static_cast<float>(d_right) * position_resolution, right_dt,
+                                                           position_resolution);
       if (!left_valid || !right_valid) {
         resetSpeedObservers();
       } else {
@@ -285,7 +289,7 @@ void processDriveStatusPair(const xesc_msgs::XescStateStamped& left_status,
 
         left_wheel_controller.SetMeasuredSpeed(measured_speed_l);
         right_wheel_controller.SetMeasuredSpeed(measured_speed_r);
-        updateDriveDuty(dt);
+        updateDriveDuty(control_dt);
 
         measured_twist_msg.header.frame_id = "base_link";
         measured_twist_msg.header.stamp = stamp;
@@ -300,7 +304,9 @@ void processDriveStatusPair(const xesc_msgs::XescStateStamped& left_status,
     }
   }
 
-  last_ticks_time = sample_time;
+  last_ticks_time_l = left_sample_time;
+  last_ticks_time_r = right_sample_time;
+  last_control_update_time = stamp;
   last_ticks_l = left_status.state.tacho;
   last_ticks_r = right_status.state.tacho;
   has_ticks = true;
@@ -337,7 +343,7 @@ void updateDriveFeedback(const xesc_msgs::XescStateStamped& left_status,
   }
 
   if (left_status_pending && right_status_pending) {
-    processDriveStatusPair(pending_left_status, pending_right_status, stamp, std::chrono::steady_clock::now());
+    processDriveStatusPair(pending_left_status, pending_right_status, stamp, stamp, stamp);
     left_status_pending = false;
     right_status_pending = false;
   }
@@ -367,8 +373,11 @@ void requestedDriveStatusReceived(const xesc_msgs::XescStateStamped& status, boo
     }
 
     if (left_status_pending && right_status_pending) {
-      processDriveStatusPair(pending_left_status, pending_right_status, ros::Time::now(),
-                             std::chrono::steady_clock::now());
+      const ros::Time pair_stamp = pending_left_status.header.stamp > pending_right_status.header.stamp
+                                       ? pending_left_status.header.stamp
+                                       : pending_right_status.header.stamp;
+      processDriveStatusPair(pending_left_status, pending_right_status, pair_stamp, pending_left_status.header.stamp,
+                             pending_right_status.header.stamp);
       left_status_pending = false;
       right_status_pending = false;
       drive_status_request_in_flight = false;
