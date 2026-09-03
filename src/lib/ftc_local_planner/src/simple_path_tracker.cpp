@@ -169,6 +169,14 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   last_command_time_ = control_time;
   if (!std::isfinite(command_dt) || command_dt <= 0 || command_dt > 1) command_dt = 0.1;
 
+  if (state_ == State::STOPPING_FOR_ROTATE) {
+    command.twist.linear.x = applyAccelerationLimit(0.0, command_dt);
+    if (std::abs(last_linear_command_) <= 1e-6) {
+      last_linear_command_ = 0.0;
+      state_ = State::PRE_ROTATE;
+      resetRotationProgress();
+    }
+  }
   if (state_ == State::PRE_ROTATE) {
     // Rotation must align with the active segment itself. The normal tracking
     // heading is preview-smoothed across nearby segments and becomes a corner
@@ -266,8 +274,9 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
     }
     else if (std::abs(p.heading_error) > rotate_threshold_) {
       goal_miss_active_ = false;
-      state_ = State::PRE_ROTATE; last_linear_command_ = 0;
-      command.twist.angular.z = std::max(-max_angular_speed_, std::min(max_angular_speed_, heading_gain_ * p.heading_error));
+      state_ = State::STOPPING_FOR_ROTATE;
+      resetRotationProgress();
+      command.twist.linear.x = applyAccelerationLimit(0.0, command_dt);
     } else {
       goal_miss_active_ = false;
       const double heading_scale = std::pow(std::max(0.0, std::cos(p.heading_error)), 2);
@@ -285,9 +294,8 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
           current_index_ = std::min(p.segment + 1, plan_.size() - 2);
           last_projected_path_distance_ = cumulative_distance_[p.segment + 1];
           projection_distance_limit_ = last_projected_path_distance_;
-          state_ = State::PRE_ROTATE;
+          state_ = State::STOPPING_FOR_ROTATE;
           resetRotationProgress();
-          last_linear_command_ = 0.0;
           target = 0.0;
         } else if (p.corner_distance < corner_slowdown_distance_) {
           const double braking_distance = std::max(0.0,
@@ -374,6 +382,11 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   }
   if (state_ == State::FINISHED) {
     command.twist = geometry_msgs::Twist();
+    last_angular_command_ = 0.0;
+  } else if (state_ == State::STOPPING_FOR_ROTATE) {
+    // Finish braking before beginning an in-place rotation. Resetting the
+    // angular slew state prevents a tracking command carrying into the stop.
+    command.twist.angular.z = 0.0;
     last_angular_command_ = 0.0;
   } else if (state_ == State::ROTATE_ESCAPE) {
     // Do not carry a rotation command into the straight collision-recovery movement.

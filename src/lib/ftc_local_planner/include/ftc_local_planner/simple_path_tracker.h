@@ -38,7 +38,7 @@ public:
   bool cancel() override;
 
 private:
-  enum class State { PRE_ROTATE, ROTATE_ESCAPE, TRACKING, FINAL_ROTATE, FINISHED };
+  enum class State { STOPPING_FOR_ROTATE, PRE_ROTATE, ROTATE_ESCAPE, TRACKING, FINAL_ROTATE, FINISHED };
   struct Projection
   {
     size_t segment{0};
