@@ -51,6 +51,7 @@
 #include "std_msgs/Bool.h"
 #include "std_msgs/Empty.h"
 #include "wheel_speed_controller.hpp"
+#include "wheel_speed_observer.hpp"
 
 ros::Publisher status_pub;
 ros::Publisher power_pub;
@@ -128,17 +129,8 @@ bool right_status_pending = false;
 xesc_msgs::XescStateStamped pending_left_status{};
 xesc_msgs::XescStateStamped pending_right_status{};
 geometry_msgs::TwistStamped measured_twist_msg{};
-constexpr size_t SPEED_WINDOW_SAMPLES = 3;
-std::array<int32_t, SPEED_WINDOW_SAMPLES> speed_window_left_ticks{};
-std::array<int32_t, SPEED_WINDOW_SAMPLES> speed_window_right_ticks{};
-std::array<float, SPEED_WINDOW_SAMPLES> speed_window_dt{};
-int32_t speed_window_left_sum = 0;
-int32_t speed_window_right_sum = 0;
-float speed_window_dt_sum = 0.0f;
-size_t speed_window_index = 0;
-size_t speed_window_count = 0;
-constexpr float DRIVE_MODE_EPSILON = 1e-4f;
-bool pure_rotation_commanded = false;
+WheelSpeedObserver left_speed_observer{};
+WheelSpeedObserver right_speed_observer{};
 
 std::mutex drive_controller_mutex;
 bool paired_status_requests = false;
@@ -162,16 +154,9 @@ bool isEscConnected(const xesc_msgs::XescStateStamped& status) {
          status.state.connection_state == xesc_msgs::XescState::XESC_CONNECTION_STATE_CONNECTED_INCOMPATIBLE_FW;
 }
 
-void resetSpeedMeasurementWindow() {
-  speed_window_left_sum = 0;
-  speed_window_right_sum = 0;
-  speed_window_dt_sum = 0.0f;
-  speed_window_index = 0;
-  speed_window_count = 0;
-}
-
-bool isPureRotationCommand(float linear, float angular) {
-  return std::fabs(linear) < DRIVE_MODE_EPSILON && std::fabs(angular) >= DRIVE_MODE_EPSILON;
+void resetSpeedObservers() {
+  left_speed_observer.Reset();
+  right_speed_observer.Reset();
 }
 
 void resetDriveController() {
@@ -181,8 +166,7 @@ void resetDriveController() {
   speed_r = 0.0f;
   left_wheel_controller.Reset();
   right_wheel_controller.Reset();
-  resetSpeedMeasurementWindow();
-  pure_rotation_commanded = false;
+  resetSpeedObservers();
 }
 
 void updateDriveDuty(float dt) {
@@ -289,38 +273,30 @@ void processDriveStatusPair(const xesc_msgs::XescStateStamped& left_status,
     if (dt > 0.0f && wheel_ticks_per_m > 0.0 && wheel_distance_m > 0.0) {
       const int32_t d_left = static_cast<int32_t>(left_status.state.tacho - last_ticks_l);
       const int32_t d_right = static_cast<int32_t>(right_status.state.tacho - last_ticks_r);
-
-      if (speed_window_count == SPEED_WINDOW_SAMPLES) {
-        speed_window_left_sum -= speed_window_left_ticks[speed_window_index];
-        speed_window_right_sum -= speed_window_right_ticks[speed_window_index];
-        speed_window_dt_sum -= speed_window_dt[speed_window_index];
+      const float position_resolution = 1.0f / static_cast<float>(wheel_ticks_per_m);
+      const bool left_valid = left_speed_observer.Update(d_left * position_resolution, dt, position_resolution);
+      const bool right_valid =
+          right_speed_observer.Update(-static_cast<float>(d_right) * position_resolution, dt, position_resolution);
+      if (!left_valid || !right_valid) {
+        resetSpeedObservers();
       } else {
-        speed_window_count++;
+        const float measured_speed_l = left_speed_observer.velocity();
+        const float measured_speed_r = right_speed_observer.velocity();
+
+        left_wheel_controller.SetMeasuredSpeed(measured_speed_l);
+        right_wheel_controller.SetMeasuredSpeed(measured_speed_r);
+        updateDriveDuty(dt);
+
+        measured_twist_msg.header.frame_id = "base_link";
+        measured_twist_msg.header.stamp = stamp;
+        measured_twist_msg.header.seq++;
+        measured_twist_msg.twist.linear.x = 0.5f * (measured_speed_l + measured_speed_r);
+        measured_twist_msg.twist.angular.z =
+            (measured_speed_r - measured_speed_l) / static_cast<float>(wheel_distance_m);
+        actual_twist_pub.publish(measured_twist_msg);
       }
-
-      speed_window_left_ticks[speed_window_index] = d_left;
-      speed_window_right_ticks[speed_window_index] = d_right;
-      speed_window_dt[speed_window_index] = dt;
-      speed_window_left_sum += d_left;
-      speed_window_right_sum += d_right;
-      speed_window_dt_sum += dt;
-      speed_window_index = (speed_window_index + 1) % SPEED_WINDOW_SAMPLES;
-
-      const float measured_speed_l =
-          static_cast<float>(speed_window_left_sum) / (speed_window_dt_sum * static_cast<float>(wheel_ticks_per_m));
-      const float measured_speed_r =
-          -static_cast<float>(speed_window_right_sum) / (speed_window_dt_sum * static_cast<float>(wheel_ticks_per_m));
-
-      left_wheel_controller.SetMeasuredSpeed(measured_speed_l);
-      right_wheel_controller.SetMeasuredSpeed(measured_speed_r);
-      updateDriveDuty(dt);
-
-      measured_twist_msg.header.frame_id = "base_link";
-      measured_twist_msg.header.stamp = stamp;
-      measured_twist_msg.header.seq++;
-      measured_twist_msg.twist.linear.x = 0.5f * (measured_speed_l + measured_speed_r);
-      measured_twist_msg.twist.angular.z = (measured_speed_r - measured_speed_l) / static_cast<float>(wheel_distance_m);
-      actual_twist_pub.publish(measured_twist_msg);
+    } else {
+      resetSpeedObservers();
     }
   }
 
@@ -441,7 +417,7 @@ void maintainDriveStatusRequests() {
       right_status_pending = false;
       drive_status_request_in_flight = false;
       has_ticks = false;
-      resetSpeedMeasurementWindow();
+      resetSpeedObservers();
     }
     request_pair = !drive_status_request_in_flight;
   }
@@ -711,13 +687,6 @@ void highLevelStatusReceived(const mower_msgs::HighLevelStatus::ConstPtr& msg) {
 void velReceived(const geometry_msgs::Twist::ConstPtr& msg) {
   std::lock_guard<std::mutex> lock(drive_controller_mutex);
   last_cmd_vel = ros::Time::now();
-  const bool pure_rotation =
-      isPureRotationCommand(static_cast<float>(msg->linear.x), static_cast<float>(msg->angular.z));
-  // Do not mix samples from the preceding translation/arc into a pure rotation, or vice versa.
-  if (pure_rotation != pure_rotation_commanded) {
-    resetSpeedMeasurementWindow();
-  }
-  pure_rotation_commanded = pure_rotation;
   desired_speed_r = msg->linear.x + 0.5 * wheel_distance_m * msg->angular.z;
   desired_speed_l = msg->linear.x - 0.5 * wheel_distance_m * msg->angular.z;
   updateDriveDuty(0.0f);

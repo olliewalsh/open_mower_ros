@@ -216,6 +216,12 @@ target_link_libraries(mower_comms_v1 ${catkin_LIBRARIES}
 ## Testing ##
 #############
 
+if(CATKIN_ENABLE_TESTING)
+  add_executable(mower_comms_v1_wheel_speed_observer_test test/wheel_speed_observer_test.cpp)
+  target_include_directories(mower_comms_v1_wheel_speed_observer_test PRIVATE src)
+  add_test(NAME mower_comms_v1_wheel_speed_observer_test COMMAND mower_comms_v1_wheel_speed_observer_test)
+endif()
+
 ## Add gtest based cpp test target and link libraries
 # catkin_add_gtest(${PROJECT_NAME}-test test/test_mower_comms.cpp)
 # if(TARGET ${PROJECT_NAME}-test)
