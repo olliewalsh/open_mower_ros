@@ -92,6 +92,8 @@ namespace ftc_local_planner
          * Speed ramp for acceleration and deceleration
          */
         double current_movement_speed;
+        bool following_rotate_ = false;
+        ros::Time following_rotate_started_;
 
         /**
          * State for point interpolation

@@ -82,6 +82,8 @@ namespace ftc_local_planner
 
         last_time = ros::Time::now();
         current_movement_speed = 0;
+        following_rotate_ = false;
+        following_rotate_started_ = ros::Time(0);
         speed_limit = config.max_cmd_vel_speed;
 
         lat_error = 0.0;
@@ -252,6 +254,11 @@ namespace ftc_local_planner
     void FTCPlanner::set_planner_state(PlannerState s) {
         auto last_state = current_state;
         current_state_ = s;
+        if (current_state != FOLLOWING)
+        {
+            following_rotate_ = false;
+            following_rotate_started_ = ros::Time(0);
+        }
         if( last_state != current_state) {
             ROS_INFO_STREAM("FTCLocalPlannerROS: Switching to state " << current_state);
             state_entered_time = ros::Time::now();
@@ -284,20 +291,34 @@ namespace ftc_local_planner
         break;
         case FOLLOWING:
         {
-            double distance = local_control_point.translation().norm();
-            // check for crash with debounce
-            if (distance > config.max_follow_distance)
+            if (following_rotate_)
             {
-                if (follow_distance_exceeded_time_.isZero()) {
-                    follow_distance_exceeded_time_ = ros::Time::now();
-                } else if ((ros::Time::now() - follow_distance_exceeded_time_).toSec() >= config.max_follow_distance_timeout) {
-                    ROS_ERROR_STREAM("FTCLocalPlannerROS: Robot is far away from global plan. distance (" << distance << ") > config.max_follow_distance (" << config.max_follow_distance << ") for " << config.max_follow_distance_timeout << "s. It probably has crashed.");
+                follow_distance_exceeded_time_ = ros::Time(0);
+                if ((ros::Time::now() - following_rotate_started_).toSec() > config.goal_timeout)
+                {
+                    ROS_ERROR_STREAM("FTCLocalPlannerROS: Timed out correcting following heading.");
                     is_crashed = true;
                     set_planner_state(FINISHED);
                     return;
                 }
-            } else {
-                follow_distance_exceeded_time_ = ros::Time(0);
+            }
+            else
+            {
+                double distance = local_control_point.translation().norm();
+                // check for crash with debounce
+                if (distance > config.max_follow_distance)
+                {
+                    if (follow_distance_exceeded_time_.isZero()) {
+                        follow_distance_exceeded_time_ = ros::Time::now();
+                    } else if ((ros::Time::now() - follow_distance_exceeded_time_).toSec() >= config.max_follow_distance_timeout) {
+                        ROS_ERROR_STREAM("FTCLocalPlannerROS: Robot is far away from global plan. distance (" << distance << ") > config.max_follow_distance (" << config.max_follow_distance << ") for " << config.max_follow_distance_timeout << "s. It probably has crashed.");
+                        is_crashed = true;
+                        set_planner_state(FINISHED);
+                        return;
+                    }
+                } else {
+                    follow_distance_exceeded_time_ = ros::Time(0);
+                }
             }
 
             // check if we're done following
@@ -437,6 +458,11 @@ namespace ftc_local_planner
         case FOLLOWING:
         {
             double speed = 0.0;
+            if (following_rotate_)
+            {
+                current_movement_speed = 0.0;
+                break;
+            }
             double straight_dist = distanceLookahead();
             if(config.speed_slow > 0.0)
             {
@@ -604,14 +630,46 @@ namespace ftc_local_planner
             // TODO: Need this too? Don't think so: lon_error *= -1.0;
         }
 
-        auto real_angle_error = angle_error;
-        if (config.ang_error_scale) {
+        const auto real_angle_error = angle_error;
+        const double rotate_threshold = config.follow_rotate_threshold * (M_PI / 180.0);
+        const double rotate_tolerance =
+            std::min(config.follow_rotate_tolerance, config.follow_rotate_threshold) * (M_PI / 180.0);
+        if (current_state == FOLLOWING)
+        {
+            if (rotate_threshold <= 0.0)
+            {
+                following_rotate_ = false;
+            }
+            else if (!following_rotate_ && std::abs(real_angle_error) >= rotate_threshold)
+            {
+                following_rotate_ = true;
+                following_rotate_started_ = ros::Time::now();
+                current_movement_speed = 0.0;
+                lin_speed = 0.0;
+                i_lon_error = 0.0;
+                i_angle_error = 0.0;
+                last_angle_error = real_angle_error;
+                ROS_INFO_STREAM("FTCLocalPlannerROS: Stopping to correct a " <<
+                    std::abs(real_angle_error) * (180.0 / M_PI) << " degree following heading error.");
+            }
+            else if (following_rotate_ && std::abs(real_angle_error) <= rotate_tolerance)
+            {
+                following_rotate_ = false;
+                i_angle_error = 0.0;
+                last_angle_error = real_angle_error;
+                ROS_INFO_STREAM("FTCLocalPlannerROS: Following heading recovered. Resuming path tracking.");
+            }
+        }
+        if (!following_rotate_ && config.ang_error_scale) {
             angle_error *= config.ang_error_scale_factor / (config.ang_error_scale_factor + abs(lin_speed));
         }
 
         double prev_i_lon_error = i_lon_error;
-        i_lon_error += lon_error * dt;
-        i_lat_error += lat_error * dt;
+        if (!following_rotate_)
+        {
+            i_lon_error += lon_error * dt;
+            i_lat_error += lat_error * dt;
+        }
         i_angle_error += angle_error * dt;
 
         if (i_lon_error > config.ki_lon_max)
@@ -630,7 +688,7 @@ namespace ftc_local_planner
         {
             i_lat_error = -config.ki_lat_max;
         }
-        if (current_state == FOLLOWING) {
+        if (current_state == FOLLOWING && !following_rotate_) {
             if (i_angle_error > config.ki_ang_max)
             {
                 i_angle_error = config.ki_ang_max;
@@ -676,11 +734,11 @@ namespace ftc_local_planner
         ));
 
         double ang_speed = angle_error * config.kp_ang + i_angle_error * config.ki_ang + d_angle * config.kd_ang + d_angle_input * config.kd_ang_input;
-        if (current_state == PRE_ROTATE || current_state == POST_ROTATE)
+        if (current_state == PRE_ROTATE || current_state == POST_ROTATE || following_rotate_)
             ang_speed = angle_error * config.kp_ang_rotate + i_angle_error * config.ki_ang_rotate + d_angle * config.kd_ang_rotate;
 
         // Only apply lat PID while FOLLOWING
-        if ((current_state == FOLLOWING) || (current_state == WAITING_FOR_GOAL_APPROACH)) {
+        if ((current_state == FOLLOWING && !following_rotate_) || (current_state == WAITING_FOR_GOAL_APPROACH)) {
             // reduce angular error gain if there is a large lateral error
             double ang_gain_factor = 1.0;
             if(config.lateral_priority_distance > 0.01)
@@ -718,7 +776,7 @@ namespace ftc_local_planner
         cmd_vel.twist.angular.z = ang_speed;
 
         // Only allow linear movement while FOLLOWING or WAITING_FOR_GOAL_APPROACH
-        if (current_state == FOLLOWING || current_state == WAITING_FOR_GOAL_APPROACH)
+        if ((current_state == FOLLOWING && !following_rotate_) || current_state == WAITING_FOR_GOAL_APPROACH)
         {
             if (config.lon_pid_speed_delta) {
                 // TODO: Maybe?
