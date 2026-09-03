@@ -110,7 +110,7 @@ private:
   ros::ServiceServer progress_server_;
   ros::Subscriber status_subscriber_;
 
-  double heading_gain_{2.0}, cross_track_gain_{2.0}, cross_track_curvature_scale_{0.0};
+  double heading_gain_{4.0}, cross_track_gain_{5.0}, cross_track_curvature_scale_{0.0};
   double softening_speed_{0.1};
   double mowing_speed_{0.38}, minimum_tracking_speed_{0.1}, max_angular_speed_{1.8};
   double boundary_slowdown_distance_{0.5}, boundary_minimum_speed_{0.1};

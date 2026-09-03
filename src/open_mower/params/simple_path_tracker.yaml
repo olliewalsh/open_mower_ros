@@ -1,8 +1,8 @@
 SimplePathTracker:
   # Parameters are refreshed from the ROS parameter server once per second and
   # may be changed while the controller is running.
-  heading_gain: 4.5
-  cross_track_gain: 4.0
+  heading_gain: 4.0
+  cross_track_gain: 5.0
   # Reduce lateral feedback on curves: gain / (1 + scale * abs(curvature)).
   # Set to 0.0 to disable curvature-dependent scaling.
   cross_track_curvature_scale: 0.0
