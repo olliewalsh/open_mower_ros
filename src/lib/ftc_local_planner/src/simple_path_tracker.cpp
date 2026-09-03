@@ -174,6 +174,8 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   const double approach_speed = std::max(measured_speed, std::abs(last_linear_command_));
   const double deceleration_reaction_distance =
       approach_speed * std::max(0.0, deceleration_reaction_time_);
+  const double minimum_tracking_command = std::min(
+      std::max(0.0, mowing_speed_), std::max(0.0, minimum_tracking_speed_));
 
   // Stop/rotate decisions must use the same active-segment heading as the
   // rotation controller. The preview-smoothed tracking heading can point at a
@@ -273,8 +275,9 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
       } else {
         const double braking_distance = std::max(0.0,
             goal_distance - goal_distance_tolerance_ - deceleration_reaction_distance);
-        const double target = std::min(mowing_speed_,
-            std::sqrt(2.0 * max_deceleration_ * braking_distance));
+        const double target = std::min(std::max(0.0, mowing_speed_),
+            std::max(minimum_tracking_command,
+                std::sqrt(2.0 * std::max(0.0, max_deceleration_) * braking_distance)));
         command.twist.linear.x = applyAccelerationLimit(target, command_dt);
         command.twist.angular.z = std::max(-max_angular_speed_,
             std::min(max_angular_speed_, heading_gain_ * goal_heading_error));
@@ -357,6 +360,10 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         const double boundary_speed = minimum_speed + scale * (normal_speed - minimum_speed);
         target = std::min(target, boundary_speed);
       }
+      // Every non-zero tracking target must be high enough to move the mower.
+      // STOPPING_FOR_ROTATE remains exempt so it can decelerate smoothly to zero.
+      if (state_ == State::TRACKING && tracking_scale > 0.05)
+        target = std::max(minimum_tracking_command, target);
       const double linear = applyAccelerationLimit(target, command_dt);
       const double effective_cross_track_gain = cross_track_gain_ /
           (1.0 + std::max(0.0, cross_track_curvature_scale_) * std::abs(p.curvature));
@@ -416,6 +423,14 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         linear_scale = std::abs(limited_angular / requested_angular);
       }
       command.twist.linear.x *= linear_scale;
+      // Angular slew coupling is the final linear limiter. Reapply the
+      // breakaway floor here so it cannot create a persistent sub-minimum
+      // command that neither moves the mower nor arms the progress watchdogs.
+      if (std::abs(command.twist.linear.x) > 1e-6 &&
+          std::abs(command.twist.linear.x) < minimum_tracking_command) {
+        command.twist.linear.x = std::copysign(
+            minimum_tracking_command, command.twist.linear.x);
+      }
       last_linear_command_ = command.twist.linear.x;
     }
     command.twist.angular.z = limited_angular;
