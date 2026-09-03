@@ -137,6 +137,8 @@ int32_t speed_window_right_sum = 0;
 float speed_window_dt_sum = 0.0f;
 size_t speed_window_index = 0;
 size_t speed_window_count = 0;
+constexpr float DRIVE_MODE_EPSILON = 1e-4f;
+bool pure_rotation_commanded = false;
 
 std::mutex drive_controller_mutex;
 bool paired_status_requests = false;
@@ -168,6 +170,10 @@ void resetSpeedMeasurementWindow() {
   speed_window_count = 0;
 }
 
+bool isPureRotationCommand(float linear, float angular) {
+  return std::fabs(linear) < DRIVE_MODE_EPSILON && std::fabs(angular) >= DRIVE_MODE_EPSILON;
+}
+
 void resetDriveController() {
   desired_speed_l = 0.0f;
   desired_speed_r = 0.0f;
@@ -176,6 +182,7 @@ void resetDriveController() {
   left_wheel_controller.Reset();
   right_wheel_controller.Reset();
   resetSpeedMeasurementWindow();
+  pure_rotation_commanded = false;
 }
 
 void updateDriveDuty(float dt) {
@@ -704,6 +711,13 @@ void highLevelStatusReceived(const mower_msgs::HighLevelStatus::ConstPtr& msg) {
 void velReceived(const geometry_msgs::Twist::ConstPtr& msg) {
   std::lock_guard<std::mutex> lock(drive_controller_mutex);
   last_cmd_vel = ros::Time::now();
+  const bool pure_rotation =
+      isPureRotationCommand(static_cast<float>(msg->linear.x), static_cast<float>(msg->angular.z));
+  // Do not mix samples from the preceding translation/arc into a pure rotation, or vice versa.
+  if (pure_rotation != pure_rotation_commanded) {
+    resetSpeedMeasurementWindow();
+  }
+  pure_rotation_commanded = pure_rotation;
   desired_speed_r = msg->linear.x + 0.5 * wheel_distance_m * msg->angular.z;
   desired_speed_l = msg->linear.x - 0.5 * wheel_distance_m * msg->angular.z;
   updateDriveDuty(0.0f);

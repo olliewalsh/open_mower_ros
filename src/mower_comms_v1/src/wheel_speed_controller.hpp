@@ -34,7 +34,14 @@ class WheelSpeedController {
   }
 
   void SetTargetSpeed(float speed) {
+    // Integral learned in one direction works against the controller after stopping or reversing.
+    // Seed the previous error for the new target so a configured derivative term does not kick.
+    const bool stops_or_reverses = target_speed_ != 0.0f && (speed == 0.0f || (target_speed_ > 0.0f) != (speed > 0.0f));
     target_speed_ = speed;
+    if (stops_or_reverses) {
+      integral_ = 0.0f;
+      prev_error_ = target_speed_ - measured_speed_;
+    }
   }
 
   void SetMeasuredSpeed(float speed) {
