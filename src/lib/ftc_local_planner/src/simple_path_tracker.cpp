@@ -29,7 +29,8 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   LOAD(heading_gain); LOAD(cross_track_gain); LOAD(cross_track_curvature_scale); LOAD(softening_speed);
   LOAD(mowing_speed); LOAD(minimum_tracking_speed); LOAD(max_angular_speed);
   LOAD(boundary_slowdown_distance); LOAD(boundary_minimum_speed);
-  LOAD(max_acceleration); LOAD(max_deceleration); LOAD(cross_track_slowdown_gain);
+  LOAD(max_acceleration); LOAD(max_deceleration); LOAD(deceleration_reaction_time);
+  LOAD(cross_track_slowdown_gain);
   LOAD(max_angular_acceleration); LOAD(max_angular_deceleration);
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
   LOAD(rotate_progress_timeout); LOAD(rotate_progress_angle);
@@ -90,7 +91,7 @@ bool SimplePathTracker::setPlan(const std::vector<geometry_msgs::PoseStamped>& p
 }
 
 uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseStamped& pose,
-    const geometry_msgs::TwistStamped&, geometry_msgs::TwistStamped& command,
+    const geometry_msgs::TwistStamped& velocity, geometry_msgs::TwistStamped& command,
     std::string& message)
 {
   const ros::WallTime now = ros::WallTime::now();
@@ -168,6 +169,11 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   double command_dt = (control_time - last_command_time_).toSec();
   last_command_time_ = control_time;
   if (!std::isfinite(command_dt) || command_dt <= 0 || command_dt > 1) command_dt = 0.1;
+  const double measured_speed = std::isfinite(velocity.twist.linear.x) ?
+      std::abs(velocity.twist.linear.x) : 0.0;
+  const double approach_speed = std::max(measured_speed, std::abs(last_linear_command_));
+  const double deceleration_reaction_distance =
+      approach_speed * std::max(0.0, deceleration_reaction_time_);
 
   // Stop/rotate decisions must use the same active-segment heading as the
   // rotation controller. The preview-smoothed tracking heading can point at a
@@ -265,7 +271,8 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         command.twist.angular.z = std::max(-max_angular_speed_,
             std::min(max_angular_speed_, heading_gain_ * goal_heading_error));
       } else {
-        const double braking_distance = std::max(0.0, goal_distance - goal_distance_tolerance_);
+        const double braking_distance = std::max(0.0,
+            goal_distance - goal_distance_tolerance_ - deceleration_reaction_distance);
         const double target = std::min(mowing_speed_,
             std::sqrt(2.0 * max_deceleration_ * braking_distance));
         command.twist.linear.x = applyAccelerationLimit(target, command_dt);
@@ -299,14 +306,18 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
           target = 0.0;
         } else if (p.corner_distance < corner_slowdown_distance_) {
           const double braking_distance = std::max(0.0,
-              p.corner_distance - corner_position_tolerance_);
+              p.corner_distance - corner_position_tolerance_ -
+              deceleration_reaction_distance);
           const double braking_speed = std::sqrt(
               2.0 * std::max(0.0, max_deceleration_) * braking_distance);
           target = std::min(target,
               std::max(std::max(0.0, minimum_tracking_speed_), braking_speed));
         }
       }
-      if (p.remaining_distance < goal_slowdown_distance_) target *= std::max(0.0, p.remaining_distance / goal_slowdown_distance_);
+      const double goal_slowdown_remaining = std::max(0.0,
+          p.remaining_distance - deceleration_reaction_distance);
+      if (goal_slowdown_remaining < goal_slowdown_distance_)
+        target *= std::max(0.0, goal_slowdown_remaining / goal_slowdown_distance_);
       if (mower_status_.mow_enabled) {
         const double raw_current = double(mower_status_.mower_esc_current);
         const double raw_rpm = std::abs(double(mower_status_.mower_motor_rpm));
@@ -782,7 +793,8 @@ void SimplePathTracker::refreshParameters(bool cached)
   LOAD(heading_gain); LOAD(cross_track_gain); LOAD(cross_track_curvature_scale); LOAD(softening_speed);
   LOAD(mowing_speed); LOAD(minimum_tracking_speed); LOAD(max_angular_speed);
   LOAD(boundary_slowdown_distance); LOAD(boundary_minimum_speed);
-  LOAD(max_acceleration); LOAD(max_deceleration); LOAD(cross_track_slowdown_gain);
+  LOAD(max_acceleration); LOAD(max_deceleration); LOAD(deceleration_reaction_time);
+  LOAD(cross_track_slowdown_gain);
   LOAD(max_angular_acceleration); LOAD(max_angular_deceleration);
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
   LOAD(rotate_progress_timeout); LOAD(rotate_progress_angle);
