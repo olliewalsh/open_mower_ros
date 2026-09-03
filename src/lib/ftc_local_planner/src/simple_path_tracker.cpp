@@ -169,6 +169,17 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   last_command_time_ = control_time;
   if (!std::isfinite(command_dt) || command_dt <= 0 || command_dt > 1) command_dt = 0.1;
 
+  // Stop/rotate decisions must use the same active-segment heading as the
+  // rotation controller. The preview-smoothed tracking heading can point at a
+  // corner bisector, causing PRE_ROTATE to declare alignment and TRACKING to
+  // immediately request another stop without ever producing a command.
+  const auto& segment_start = plan_[p.segment].pose.position;
+  const auto& segment_end = plan_[p.segment + 1].pose.position;
+  const double segment_dx = segment_end.x - segment_start.x;
+  const double segment_dy = segment_end.y - segment_start.y;
+  const double segment_heading_error = std::hypot(segment_dx, segment_dy) > 1e-6 ?
+      normalizeAngle(std::atan2(segment_dy, segment_dx) - yaw) : p.heading_error;
+
   if (state_ == State::STOPPING_FOR_ROTATE) {
     command.twist.linear.x = applyAccelerationLimit(0.0, command_dt);
     if (std::abs(last_linear_command_) <= 1e-6) {
@@ -178,20 +189,10 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
     }
   }
   if (state_ == State::PRE_ROTATE) {
-    // Rotation must align with the active segment itself. The normal tracking
-    // heading is preview-smoothed across nearby segments and becomes a corner
-    // bisector at a vertex, which would start forward motion before the mower
-    // has completed the turn onto the outgoing segment.
-    const auto& segment_start = plan_[p.segment].pose.position;
-    const auto& segment_end = plan_[p.segment + 1].pose.position;
-    const double segment_dx = segment_end.x - segment_start.x;
-    const double segment_dy = segment_end.y - segment_start.y;
-    const double rotation_error = std::hypot(segment_dx, segment_dy) > 1e-6 ?
-        normalizeAngle(std::atan2(segment_dy, segment_dx) - yaw) : p.heading_error;
-    if (std::abs(rotation_error) <= rotate_tolerance_) {
+    if (std::abs(segment_heading_error) <= rotate_tolerance_) {
       state_ = State::TRACKING;
       rotate_escape_attempt_count_ = 0;
-    } else if (rotationHasStalled(rotation_error, control_time)) {
+    } else if (rotationHasStalled(segment_heading_error, control_time)) {
       if (rotate_escape_attempt_count_ >= std::max(0, rotate_escape_attempts_)) {
         message = "Rotation stalled after escape recovery";
         return MISSED_GOAL;
@@ -215,7 +216,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
           << (rotate_escape_direction_ > 0.0 ? "forward" : "in reverse"));
     } else {
       command.twist.angular.z = std::max(-max_angular_speed_,
-          std::min(max_angular_speed_, heading_gain_ * rotation_error));
+          std::min(max_angular_speed_, heading_gain_ * segment_heading_error));
     }
   }
   if (state_ == State::ROTATE_ESCAPE) {
@@ -272,10 +273,9 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
             std::min(max_angular_speed_, heading_gain_ * goal_heading_error));
       }
     }
-    else if (std::abs(p.heading_error) > rotate_threshold_) {
+    else if (std::abs(segment_heading_error) > rotate_threshold_) {
       goal_miss_active_ = false;
       state_ = State::STOPPING_FOR_ROTATE;
-      resetRotationProgress();
       command.twist.linear.x = applyAccelerationLimit(0.0, command_dt);
     } else {
       goal_miss_active_ = false;
