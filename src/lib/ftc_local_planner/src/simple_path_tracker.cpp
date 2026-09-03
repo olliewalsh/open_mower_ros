@@ -357,6 +357,11 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   if (state_ == State::FINAL_ROTATE) {
     const double error = normalizeAngle(yawOf(plan_.back().pose.orientation) - yaw);
     if (std::abs(error) <= goal_angle_tolerance_) {
+      // Reaching the goal within tolerance can leave the geometric projection
+      // on an earlier segment of a short path tail. Report the terminal pose
+      // when declaring success so a resumed mowing path is not retried from a
+      // stale progress index.
+      current_index_ = plan_.size() - 1;
       state_ = State::FINISHED;
       resetRotationProgress();
     } else if (rotationHasStalled(error, control_time)) {
