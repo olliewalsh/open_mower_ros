@@ -655,7 +655,10 @@ bool SimplePathTracker::projectToPath(double x, double y, double yaw, Projection
         std::abs(normalizeAngle(std::atan2(dy, dx) - reference_heading)) > projection_heading_tolerance_) {
       continue;
     }
-    if (cumulative_distance_[i + 1] < last_projected_path_distance_)
+    // Allow round-off at a segment endpoint. Computing start + segment
+    // length can otherwise land a few ulps beyond the identical cumulative
+    // endpoint and reject the final segment on the next controller update.
+    if (cumulative_distance_[i + 1] + 1e-9 < last_projected_path_distance_)
       continue;
     const double segment_length = std::sqrt(length2);
     const double minimum_fraction = std::max(0.0, std::min(1.0,
@@ -675,7 +678,8 @@ bool SimplePathTracker::projectToPath(double x, double y, double yaw, Projection
       cumulative_distance_[result.segment];
   const double path_distance = cumulative_distance_[result.segment] +
       result.fraction * segment_length;
-  result.path_distance = path_distance;
+  result.path_distance = std::max(cumulative_distance_[result.segment],
+      std::min(cumulative_distance_[result.segment + 1], path_distance));
   // Do not let a symmetric preview reach backward across a sharp vertex that
   // has already been processed. Otherwise the outgoing segment starts with a
   // bisector heading and curvature from the completed corner, which can send
