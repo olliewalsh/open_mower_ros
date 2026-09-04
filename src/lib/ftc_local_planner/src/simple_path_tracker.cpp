@@ -42,8 +42,8 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction);
   LOAD(minimum_lookahead); LOAD(maximum_lookahead); LOAD(lookahead_time); LOAD(sharp_corner_angle);
   LOAD(turnaround_angle_threshold); LOAD(turnaround_preview_distance);
-  LOAD(corner_slowdown_distance); LOAD(corner_position_tolerance);
-  LOAD(goal_angle_tolerance); LOAD(goal_slowdown_distance); LOAD(goal_position_timeout);
+  LOAD(corner_position_tolerance); LOAD(vertex_reapproach_distance); LOAD(vertex_reapproach_attempts);
+  LOAD(goal_angle_tolerance);
   LOAD(projection_initial_allowance);
   LOAD(projection_distance_factor); LOAD(projection_pose_deadband); LOAD(projection_max_pose_step);
   LOAD(projection_heading_tolerance);
@@ -74,11 +74,10 @@ bool SimplePathTracker::setPlan(const std::vector<geometry_msgs::PoseStamped>& p
   projection_distance_limit_ = projection_initial_allowance_;
   last_projected_path_distance_ = 0.0;
   have_last_projection_pose_ = false;
-  goal_miss_active_ = false;
-  best_goal_distance_ = std::numeric_limits<double>::infinity();
   resetRotationProgress();
   resetRotateStopWait();
-  corner_stop_pending_ = false;
+  stop_target_ = StopTarget();
+  vertex_reapproach_attempt_count_ = 0;
   resetTrackingProgress();
   resetMotionProgress();
   rotate_escape_attempt_count_ = 0;
@@ -88,6 +87,7 @@ bool SimplePathTracker::setPlan(const std::vector<geometry_msgs::PoseStamped>& p
     cumulative_distance_[i] = cumulative_distance_[i - 1] +
         std::hypot(plan_[i].pose.position.x - plan_[i - 1].pose.position.x,
                    plan_[i].pose.position.y - plan_[i - 1].pose.position.y);
+  cacheStopVertices();
   last_command_time_ = ros::Time::now(); cancelled_ = false; state_ = State::PRE_ROTATE;
   nav_msgs::Path path; path.header = plan.front().header; path.poses = plan; plan_publisher_.publish(path);
   return true;
@@ -107,16 +107,13 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   if (cancelled_) return CANCELED;
   if (state_ == State::FINISHED) return SUCCESS;
   if (plan_.size() < 2) { message = "No valid path"; return INVALID_PATH; }
+
   const double x = pose.pose.position.x, y = pose.pose.position.y, yaw = yawOf(pose.pose.orientation);
   if (have_last_projection_pose_) {
     const double pose_dx = x - last_projection_x_;
     const double pose_dy = y - last_projection_y_;
     const double pose_step = std::hypot(pose_dx, pose_dy);
     if (pose_step >= std::max(0.0, projection_pose_deadband_)) {
-      // Only movement along the path is evidence of along-path progress. Using
-      // the full pose displacement lets a mower cutting across the inside of a
-      // tight curve advance its projection around that curve, which moves the
-      // control reference ahead and reinforces the shortcut.
       const PathSample projection_reference = samplePath(last_projected_path_distance_);
       const double along_path_step = std::max(0.0,
           pose_dx * std::cos(projection_reference.heading) +
@@ -125,8 +122,6 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
           along_path_step, std::max(0.0, projection_max_pose_step_));
       projection_distance_limit_ = last_projected_path_distance_ +
           std::max(0.0, projection_distance_factor_) * accepted_step;
-      // Retain the previous reference while movement is below the deadband so
-      // small pose updates accumulate instead of being discarded every cycle.
       last_projection_x_ = x;
       last_projection_y_ = y;
     }
@@ -141,6 +136,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
     projection_distance_limit_ = std::max(
         projection_distance_limit_, last_projected_path_distance_);
   }
+
   Projection p;
   if (!projectToPath(x, y, yaw, p)) { message = "Cannot project pose onto path"; return INVALID_PATH; }
   last_projected_path_distance_ = p.path_distance;
@@ -150,6 +146,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   diagnostic.data = p.curvature; path_curvature_publisher_.publish(diagnostic);
   diagnostic.data = p.remaining_distance; remaining_distance_publisher_.publish(diagnostic);
   current_index_ = std::max(current_index_, p.segment);
+
   double control_curvature = p.curvature;
   if (pure_pursuit_) {
     const double minimum = std::max(0.01, minimum_lookahead_);
@@ -163,147 +160,215 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
     control_curvature = distance2 > 1e-8 ? 2.0 * lateral / distance2 : 0.0;
     if (p.sharp_corner_ahead) control_curvature = 0.0;
   }
-  geometry_msgs::PoseStamped point = pose; point.pose.position.x = p.x; point.pose.position.y = p.y;
+
+  geometry_msgs::PoseStamped point = pose;
+  point.pose.position.x = p.x;
+  point.pose.position.y = p.y;
   tf2::Quaternion q; q.setRPY(0, 0, p.heading); point.pose.orientation = tf2::toMsg(q);
   tracking_point_publisher_.publish(point);
-  const auto& goal = plan_.back().pose.position;
-  const double goal_distance = std::hypot(goal.x - x, goal.y - y);
+
   const ros::Time control_time = ros::Time::now();
   double command_dt = (control_time - last_command_time_).toSec();
   last_command_time_ = control_time;
   if (!std::isfinite(command_dt) || command_dt <= 0 || command_dt > 1) command_dt = 0.1;
   const bool measured_speed_valid = std::isfinite(velocity.twist.linear.x);
-  const double measured_speed = measured_speed_valid ?
-      std::abs(velocity.twist.linear.x) : 0.0;
+  const double measured_speed = measured_speed_valid ? std::abs(velocity.twist.linear.x) : 0.0;
   const double approach_speed = std::max(measured_speed, std::abs(last_linear_command_));
-  const double deceleration_reaction_distance =
-      approach_speed * std::max(0.0, deceleration_reaction_time_);
   const double minimum_tracking_command = std::min(
       std::max(0.0, mowing_speed_), std::max(0.0, minimum_tracking_speed_));
 
-  // Stop/rotate decisions must use the same active-segment heading as the
-  // rotation controller. The preview-smoothed tracking heading can point at a
-  // corner bisector, causing PRE_ROTATE to declare alignment and TRACKING to
-  // immediately request another stop without ever producing a command.
+  const auto stoppingSpeed = [&](double distance, double tolerance) {
+    const double usable_distance = std::max(0.0,
+        distance - std::max(0.0, tolerance) -
+        approach_speed * std::max(0.0, deceleration_reaction_time_));
+    return max_deceleration_ > 1e-6 ?
+        std::sqrt(2.0 * max_deceleration_ * usable_distance) : 0.0;
+  };
+  const auto linearMotionSettled = [&]() {
+    if (std::abs(last_linear_command_) > 1e-6) {
+      resetRotateStopWait();
+      return false;
+    }
+    last_linear_command_ = 0.0;
+    if (!rotate_stop_wait_active_ || control_time < rotate_stop_wait_started_) {
+      rotate_stop_wait_active_ = true;
+      rotate_stop_wait_started_ = control_time;
+      rotate_stop_settle_active_ = false;
+    }
+    const bool measured_stopped = measured_speed_valid &&
+        measured_speed <= std::max(0.0, rotate_start_speed_tolerance_);
+    if (!measured_stopped) {
+      rotate_stop_settle_active_ = false;
+      return false;
+    }
+    if (!rotate_stop_settle_active_ || control_time < rotate_stop_settle_started_) {
+      rotate_stop_settle_active_ = true;
+      rotate_stop_settle_started_ = control_time;
+    }
+    return (control_time - rotate_stop_settle_started_).toSec() >=
+        std::max(0.0, rotate_stop_settle_time_);
+  };
+  const auto stopWaitTimedOut = [&]() {
+    return rotate_stop_wait_active_ && rotate_stop_timeout_ > 0.0 &&
+        (control_time - rotate_stop_wait_started_).toSec() >= rotate_stop_timeout_;
+  };
+  const auto lineAngularCommand = [&](double tangent_x, double tangent_y,
+                                      double reference_x, double reference_y,
+                                      double linear) {
+    const double path_heading = std::atan2(tangent_y, tangent_x);
+    const double heading_error = normalizeAngle(path_heading - yaw);
+    const double cross_track_error = -tangent_y * (x - reference_x) +
+        tangent_x * (y - reference_y);
+    const double direction = linear < 0.0 ? -1.0 : 1.0;
+    double angular = heading_gain_ * heading_error - direction *
+        std::atan2(cross_track_gain_ * cross_track_error,
+                   std::abs(linear) + std::max(0.0, softening_speed_));
+    if (minimum_tracking_command > 1e-6 && std::abs(linear) < minimum_tracking_command)
+      angular *= std::abs(linear) / minimum_tracking_command;
+    return std::max(-max_angular_speed_, std::min(max_angular_speed_, angular));
+  };
+
   const auto& segment_start = plan_[p.segment].pose.position;
   const auto& segment_end = plan_[p.segment + 1].pose.position;
   const double segment_dx = segment_end.x - segment_start.x;
   const double segment_dy = segment_end.y - segment_start.y;
-  const double segment_heading_error = std::hypot(segment_dx, segment_dy) > 1e-6 ?
-      normalizeAngle(std::atan2(segment_dy, segment_dx) - yaw) : p.heading_error;
+  const double segment_heading = std::hypot(segment_dx, segment_dy) > 1e-6 ?
+      std::atan2(segment_dy, segment_dx) : p.heading;
+  const double segment_heading_error = normalizeAngle(segment_heading - yaw);
 
-  if (state_ == State::STOPPING_FOR_ROTATE) {
-    command.twist.linear.x = applyAccelerationLimit(0.0, command_dt);
-    const bool command_stopped = std::abs(last_linear_command_) <= 1e-6;
-    if (!command_stopped) {
-      resetRotateStopWait();
-    } else {
-      last_linear_command_ = 0.0;
-      if (!rotate_stop_wait_active_ || control_time < rotate_stop_wait_started_) {
-        rotate_stop_wait_active_ = true;
-        rotate_stop_wait_started_ = control_time;
-        rotate_stop_settle_active_ = false;
-      }
-      const bool measured_stopped = measured_speed_valid &&
-          measured_speed <= std::max(0.0, rotate_start_speed_tolerance_);
-      if (!measured_stopped) {
-        rotate_stop_settle_active_ = false;
-      } else {
-        if (!rotate_stop_settle_active_ || control_time < rotate_stop_settle_started_) {
-          rotate_stop_settle_active_ = true;
-          rotate_stop_settle_started_ = control_time;
-        }
-        if ((control_time - rotate_stop_settle_started_).toSec() >=
-            std::max(0.0, rotate_stop_settle_time_)) {
-          if (corner_stop_pending_ && pending_corner_index_ > 0 &&
-              pending_corner_index_ < plan_.size()) {
-            const auto& corner = plan_[pending_corner_index_].pose.position;
-            const auto& incoming = plan_[pending_corner_index_ - 1].pose.position;
-            const double incoming_dx = corner.x - incoming.x;
-            const double incoming_dy = corner.y - incoming.y;
-            const double incoming_length = std::hypot(incoming_dx, incoming_dy);
-            const double remaining_along_segment = incoming_length > 1e-6 ?
-                ((corner.x - x) * incoming_dx + (corner.y - y) * incoming_dy) /
-                    incoming_length : 0.0;
-            const double position_tolerance = std::max(0.0, corner_position_tolerance_);
-            if (std::abs(remaining_along_segment) > position_tolerance) {
-              corner_approach_direction_ = remaining_along_segment > 0.0 ? 1.0 : -1.0;
-              const double correction_speed = minimum_tracking_command;
-              state_ = State::CORNER_APPROACH;
-              resetRotateStopWait();
-              resetRotationProgress();
-              resetTrackingProgress();
-              ROS_INFO_STREAM("SimplePathTracker: stopped "
-                  << std::abs(remaining_along_segment) << " m "
-                  << (corner_approach_direction_ > 0.0 ? "before" : "past")
-                  << " corner; correcting at " << correction_speed << " m/s");
-            } else {
-              current_index_ = std::min(pending_corner_index_, plan_.size() - 2);
-              last_projected_path_distance_ = cumulative_distance_[pending_corner_index_];
-              projection_distance_limit_ = last_projected_path_distance_;
-              corner_stop_pending_ = false;
-              // Keep the stop state for this update. The projection and
-              // segment heading above still describe the incoming segment;
-              // the next update will project from the outgoing segment before
-              // entering PRE_ROTATE.
-            }
-          } else {
-            state_ = rotate_stop_next_state_;
-            resetRotateStopWait();
-            resetRotationProgress();
-          }
-        }
-      }
-      if (state_ == State::STOPPING_FOR_ROTATE &&
-          rotate_stop_timeout_ > 0.0 &&
-          (control_time - rotate_stop_wait_started_).toSec() >= rotate_stop_timeout_) {
-        message = "Timed out waiting for measured linear velocity to settle before rotation";
-        return MISSED_GOAL;
-      }
-    }
-  }
-  if (state_ == State::CORNER_APPROACH) {
-    if (!corner_stop_pending_ || pending_corner_index_ == 0 ||
-        pending_corner_index_ >= plan_.size()) {
-      message = "Corner approach has no valid target vertex";
+  if (state_ == State::APPROACH_STOP) {
+    if (!stop_target_.active) {
+      message = "Stop approach has no target";
       return INVALID_PATH;
     }
-    if (minimum_tracking_command <= 1e-6) {
-      message = "Corner approach requires a positive minimum tracking speed";
+    const double target_dx = stop_target_.x - x;
+    const double target_dy = stop_target_.y - y;
+    const double longitudinal_error = target_dx * stop_target_.tangent_x +
+        target_dy * stop_target_.tangent_y;
+    const double lateral_error = -stop_target_.tangent_y * (x - stop_target_.x) +
+        stop_target_.tangent_x * (y - stop_target_.y);
+    const double position_error = std::hypot(target_dx, target_dy);
+    const bool position_reached = !stop_target_.require_position ||
+        position_error <= std::max(0.0, stop_target_.position_tolerance);
+
+    double target = 0.0;
+    if (!position_reached) {
+      const double direction = longitudinal_error >= 0.0 ? 1.0 : -1.0;
+      if (stop_correction_active_) {
+        const double braking_distance =
+            measured_speed * std::max(0.0, deceleration_reaction_time_) +
+            (max_deceleration_ > 1e-6 ?
+                measured_speed * measured_speed / (2.0 * max_deceleration_) :
+                std::numeric_limits<double>::infinity());
+        const bool reached_braking_point = stop_correction_direction_ > 0.0 ?
+            longitudinal_error <= braking_distance : longitudinal_error >= -braking_distance;
+        if (reached_braking_point) {
+          stop_correction_active_ = false;
+        } else {
+          target = stop_correction_direction_ * minimum_tracking_command;
+        }
+      } else {
+        target = direction * std::min(std::max(0.0, mowing_speed_),
+            stoppingSpeed(std::abs(longitudinal_error), stop_target_.position_tolerance));
+      }
+    }
+    const double linear = applyAccelerationLimit(target, command_dt);
+    command.twist.linear.x = linear;
+    if (std::abs(linear) > 1e-6) {
+      command.twist.angular.z = lineAngularCommand(
+          stop_target_.tangent_x, stop_target_.tangent_y,
+          stop_target_.x, stop_target_.y, linear);
+    }
+
+    if (linearMotionSettled()) {
+      if (position_reached) {
+        completeStopApproach();
+      } else if (std::abs(lateral_error) > stop_target_.position_tolerance) {
+        if (vertex_reapproach_attempt_count_ >= std::max(0, vertex_reapproach_attempts_)) {
+          message = "Unable to align with stop vertex after " +
+              std::to_string(vertex_reapproach_attempt_count_) + " re-approach attempts";
+          return MISSED_GOAL;
+        }
+        const double reverse_distance = std::max(0.0, vertex_reapproach_distance_);
+        if (reverse_distance <= 1e-6 || minimum_tracking_command <= 1e-6 ||
+            !straightEscapeIsSafe(x, y, yaw, -reverse_distance)) {
+          message = "Unable to safely realign with stop vertex";
+          return MISSED_GOAL;
+        }
+        reapproach_start_x_ = x;
+        reapproach_start_y_ = y;
+        reapproach_heading_ = yaw;
+        vertex_reapproach_attempt_count_++;
+        stop_target_reapproaching_ = true;
+        stop_correction_active_ = false;
+        resetRotateStopWait();
+        resetRotationProgress();
+        resetTrackingProgress();
+        state_ = State::REAPPROACH_REVERSE;
+        ROS_WARN_STREAM("SimplePathTracker: stop vertex lateral error "
+            << std::abs(lateral_error) << " m; starting re-approach "
+            << vertex_reapproach_attempt_count_ << " / "
+            << std::max(0, vertex_reapproach_attempts_));
+      } else {
+        if (minimum_tracking_command <= 1e-6) {
+          message = "Stop correction requires a positive minimum tracking speed";
+          return MISSED_GOAL;
+        }
+        stop_correction_direction_ = longitudinal_error >= 0.0 ? 1.0 : -1.0;
+        stop_correction_active_ = true;
+        resetRotateStopWait();
+      }
+    } else if (stopWaitTimedOut()) {
+      message = "Timed out waiting for linear velocity to settle at stop target";
       return MISSED_GOAL;
     }
-    if (!measured_speed_valid) {
-      message = "Corner approach requires a valid measured linear speed";
+  } else if (state_ == State::REAPPROACH_REVERSE) {
+    const double travelled = std::hypot(x - reapproach_start_x_, y - reapproach_start_y_);
+    const bool reverse_complete = travelled >= std::max(0.0, vertex_reapproach_distance_);
+    const double target = reverse_complete ? 0.0 : -minimum_tracking_command;
+    command.twist.linear.x = applyAccelerationLimit(target, command_dt);
+    if (std::abs(command.twist.linear.x) > 1e-6) {
+      const double heading_error = normalizeAngle(reapproach_heading_ - yaw);
+      command.twist.angular.z = std::max(-max_angular_speed_,
+          std::min(max_angular_speed_, heading_gain_ * heading_error));
+    }
+    if (reverse_complete && linearMotionSettled()) {
+      state_ = State::REAPPROACH_AIM;
+      resetRotateStopWait();
+      resetRotationProgress();
+    } else if (stopWaitTimedOut()) {
+      message = "Timed out stopping after vertex re-approach reverse";
       return MISSED_GOAL;
     }
-    const auto& corner = plan_[pending_corner_index_].pose.position;
-    const auto& incoming = plan_[pending_corner_index_ - 1].pose.position;
-    const double incoming_dx = corner.x - incoming.x;
-    const double incoming_dy = corner.y - incoming.y;
-    const double incoming_length = std::hypot(incoming_dx, incoming_dy);
-    const double remaining_along_segment = incoming_length > 1e-6 ?
-        ((corner.x - x) * incoming_dx + (corner.y - y) * incoming_dy) /
-            incoming_length : 0.0;
-    // The correction starts from rest. Using the requested creep speed here
-    // can make its predicted stopping distance exceed the remaining error
-    // before the mower has moved at all, producing short on/off pulses.
-    const double stopping_distance =
-        measured_speed * std::max(0.0, deceleration_reaction_time_) +
-        (max_deceleration_ > 1e-6 ?
-            measured_speed * measured_speed / (2.0 * max_deceleration_) :
-            std::numeric_limits<double>::infinity());
-    const bool reached_braking_point = corner_approach_direction_ > 0.0 ?
-        remaining_along_segment <= stopping_distance :
-        remaining_along_segment >= -stopping_distance;
-    if (reached_braking_point) {
-      beginCornerStopForRotate(pending_corner_index_);
-      command.twist.linear.x = applyAccelerationLimit(0.0, command_dt);
+  } else if (state_ == State::REAPPROACH_AIM) {
+    const double target_dx = stop_target_.x - x;
+    const double target_dy = stop_target_.y - y;
+    const double target_distance = std::hypot(target_dx, target_dy);
+    if (target_distance <= stop_target_.position_tolerance) {
+      completeStopApproach();
     } else {
-      command.twist.linear.x = applyAccelerationLimit(
-          corner_approach_direction_ * minimum_tracking_command, command_dt);
+      const double target_heading = std::atan2(target_dy, target_dx);
+      const double heading_error = normalizeAngle(target_heading - yaw);
+      if (std::abs(heading_error) <= rotate_tolerance_) {
+        if (!straightEscapeIsSafe(x, y, target_heading, target_distance)) {
+          message = "Unable to safely return to stop vertex";
+          return MISSED_GOAL;
+        }
+        stop_target_.tangent_x = std::cos(target_heading);
+        stop_target_.tangent_y = std::sin(target_heading);
+        stop_correction_active_ = false;
+        resetRotateStopWait();
+        resetRotationProgress();
+        state_ = State::APPROACH_STOP;
+      } else if (rotationHasStalled(heading_error, control_time)) {
+        message = "Rotation towards stop vertex stalled";
+        return MISSED_GOAL;
+      } else {
+        command.twist.angular.z = std::max(-max_angular_speed_,
+            std::min(max_angular_speed_, heading_gain_ * heading_error));
+      }
     }
-  }
-  if (state_ == State::PRE_ROTATE) {
+  } else if (state_ == State::PRE_ROTATE) {
     if (std::abs(segment_heading_error) <= rotate_tolerance_) {
       state_ = State::TRACKING;
       rotate_escape_attempt_count_ = 0;
@@ -333,8 +398,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
       command.twist.angular.z = std::max(-max_angular_speed_,
           std::min(max_angular_speed_, heading_gain_ * segment_heading_error));
     }
-  }
-  if (state_ == State::ROTATE_ESCAPE) {
+  } else if (state_ == State::ROTATE_ESCAPE) {
     const double travelled = std::hypot(x - rotate_escape_start_x_, y - rotate_escape_start_y_);
     if (travelled >= std::max(0.0, rotate_escape_distance_)) {
       state_ = State::PRE_ROTATE;
@@ -352,81 +416,23 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
       }
       command.twist.linear.x = rotate_escape_direction_ * std::max(0.0, rotate_escape_speed_);
     }
-  }
-  if (state_ == State::TRACKING) {
-    if (goal_distance <= goal_distance_tolerance_ &&
-        p.remaining_distance <= goal_distance_tolerance_) {
-      goal_miss_active_ = false;
-      beginStopForRotate(State::FINAL_ROTATE);
-      command.twist.linear.x = applyAccelerationLimit(0.0, command_dt);
-    }
-    else if (p.remaining_distance <= goal_distance_tolerance_) {
-      const double goal_heading = std::atan2(goal.y - y, goal.x - x);
-      const double goal_heading_error = normalizeAngle(goal_heading - yaw);
-      if (!goal_miss_active_ || goal_distance + 0.01 < best_goal_distance_) {
-        goal_miss_active_ = true;
-        goal_miss_started_ = ros::Time::now();
-        best_goal_distance_ = goal_distance;
-      }
-      if ((ros::Time::now() - goal_miss_started_).toSec() >=
-          std::max(0.0, goal_position_timeout_)) {
-        message = "Final approach stalled with goal distance " + std::to_string(goal_distance) +
-            " m, tolerance " + std::to_string(goal_distance_tolerance_) + " m";
-        return MISSED_GOAL;
-      }
-      if (std::abs(goal_heading_error) > rotate_tolerance_) {
-        goal_miss_started_ = ros::Time::now();
-        last_linear_command_ = 0.0;
-        command.twist.angular.z = std::max(-max_angular_speed_,
-            std::min(max_angular_speed_, heading_gain_ * goal_heading_error));
-      } else {
-        const double braking_distance = std::max(0.0,
-            goal_distance - goal_distance_tolerance_ - deceleration_reaction_distance);
-        const double target = std::min(std::max(0.0, mowing_speed_),
-            std::max(minimum_tracking_command,
-                std::sqrt(2.0 * std::max(0.0, max_deceleration_) * braking_distance)));
-        command.twist.linear.x = applyAccelerationLimit(target, command_dt);
-        command.twist.angular.z = std::max(-max_angular_speed_,
-            std::min(max_angular_speed_, heading_gain_ * goal_heading_error));
-      }
-    }
-    else if (std::abs(segment_heading_error) > rotate_threshold_) {
-      goal_miss_active_ = false;
-      beginStopForRotate(State::PRE_ROTATE);
+  } else if (state_ == State::TRACKING) {
+    if (std::abs(segment_heading_error) > rotate_threshold_) {
+      beginStopForRotate(x, y, segment_heading);
       command.twist.linear.x = applyAccelerationLimit(0.0, command_dt);
     } else {
-      goal_miss_active_ = false;
       const double heading_scale = std::pow(std::max(0.0, std::cos(p.heading_error)), 2);
-      const double tracking_scale = heading_scale / (1.0 + cross_track_slowdown_gain_ * std::abs(p.cross_track_error));
+      const double tracking_scale = heading_scale /
+          (1.0 + cross_track_slowdown_gain_ * std::abs(p.cross_track_error));
       double target = mowing_speed_ * tracking_scale;
       if (tracking_scale <= 0.05)
         target = 0.0;
-      else if (p.remaining_distance >= goal_slowdown_distance_)
-        target = std::max(minimum_tracking_speed_, target);
+      else
+        target = std::max(minimum_tracking_command, target);
       if (std::abs(control_curvature) > 1e-6)
         target = std::min(target, curvature_angular_fraction_ * max_angular_speed_ /
             std::abs(control_curvature));
-      if (p.sharp_corner_ahead) {
-        const double stopping_distance = deceleration_reaction_distance +
-            (max_deceleration_ > 1e-6 ?
-                approach_speed * approach_speed / (2.0 * max_deceleration_) :
-                std::numeric_limits<double>::infinity());
-        if (p.corner_distance <= stopping_distance) {
-          beginCornerStopForRotate(p.corner_index);
-          target = 0.0;
-        } else if (p.corner_distance < corner_slowdown_distance_) {
-          const double braking_distance = std::max(0.0,
-              p.corner_distance - deceleration_reaction_distance);
-          const double braking_speed = std::sqrt(
-              2.0 * std::max(0.0, max_deceleration_) * braking_distance);
-          target = std::min(target,
-              std::max(std::max(0.0, minimum_tracking_speed_), braking_speed));
-        }
-      }
-      const double goal_slowdown_remaining = std::max(0.0,
-          p.remaining_distance - deceleration_reaction_distance);
-      if (goal_slowdown_remaining < goal_slowdown_distance_)
-        target *= std::max(0.0, goal_slowdown_remaining / goal_slowdown_distance_);
+
       if (mower_status_.mow_enabled) {
         const double raw_current = double(mower_status_.mower_esc_current);
         const double raw_rpm = std::abs(double(mower_status_.mower_motor_rpm));
@@ -436,7 +442,8 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
           filtered_mow_rpm_ = raw_rpm;
           mow_load_filter_initialized_ = true;
         } else {
-          const double filter_dt = std::max(0.0, std::min(1.0, (filter_time - last_mow_load_filter_time_).toSec()));
+          const double filter_dt = std::max(0.0, std::min(
+              1.0, (filter_time - last_mow_load_filter_time_).toSec()));
           const auto update_filter = [filter_dt](double filtered, double sample, double time_constant) {
             const double tau = std::max(0.0, time_constant);
             const double alpha = tau > 0.0 ? filter_dt / (tau + filter_dt) : 1.0;
@@ -452,24 +459,38 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         last_mow_load_filter_time_ = filter_time;
         const double amps = std::max(0.0, filtered_mow_current_ - max_mow_motor_current_);
         const double rpm = std::max(0.0, min_mow_motor_rpm_ - filtered_mow_rpm_);
-        target = std::min(target, std::max(minimum_tracking_speed_, mowing_speed_ - amps * mow_current_gain_));
-        target = std::min(target, std::max(minimum_tracking_speed_, mowing_speed_ - rpm * mow_rpm_gain_));
+        target = std::min(target,
+            std::max(minimum_tracking_command, mowing_speed_ - amps * mow_current_gain_));
+        target = std::min(target,
+            std::max(minimum_tracking_command, mowing_speed_ - rpm * mow_rpm_gain_));
       } else {
         mow_load_filter_initialized_ = false;
       }
+
       const double boundary_distance = std::max(0.0, boundary_slowdown_distance_);
       if (boundary_distance > 0.0) {
         const double clearance = obstacleClearance(x, y, boundary_distance);
         const double scale = std::max(0.0, std::min(1.0, clearance / boundary_distance));
         const double normal_speed = std::max(0.0, mowing_speed_);
-        const double minimum_speed = std::min(normal_speed, std::max(0.0, boundary_minimum_speed_));
-        const double boundary_speed = minimum_speed + scale * (normal_speed - minimum_speed);
-        target = std::min(target, boundary_speed);
+        const double minimum_speed = std::min(
+            normal_speed, std::max(0.0, boundary_minimum_speed_));
+        target = std::min(target,
+            minimum_speed + scale * (normal_speed - minimum_speed));
       }
-      // Every non-zero tracking target must be high enough to move the mower.
-      // STOPPING_FOR_ROTATE remains exempt so it can decelerate smoothly to zero.
-      if (state_ == State::TRACKING && tracking_scale > 0.05)
-        target = std::max(minimum_tracking_command, target);
+
+      const bool stopping_at_corner = p.sharp_corner_ahead;
+      const double stop_distance = stopping_at_corner ? p.corner_distance : p.remaining_distance;
+      const double stop_tolerance = stopping_at_corner ?
+          corner_position_tolerance_ : goal_distance_tolerance_;
+      const double stop_speed = stoppingSpeed(stop_distance, stop_tolerance);
+      if (stop_speed <= target) {
+        if (stopping_at_corner)
+          beginStopApproach(p.corner_index, false);
+        else
+          beginStopApproach(plan_.size() - 1, true);
+        target = std::min(target, stop_speed);
+      }
+
       const double linear = applyAccelerationLimit(target, command_dt);
       const double effective_cross_track_gain = cross_track_gain_ /
           (1.0 + std::max(0.0, cross_track_curvature_scale_) * std::abs(p.curvature));
@@ -478,21 +499,12 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
           std::atan2(effective_cross_track_gain * p.cross_track_error,
                      std::abs(linear) + softening_speed_);
       command.twist.linear.x = linear;
-      command.twist.angular.z = std::max(-max_angular_speed_, std::min(max_angular_speed_, angular));
+      command.twist.angular.z = std::max(
+          -max_angular_speed_, std::min(max_angular_speed_, angular));
     }
-  }
-  // Keep the rotation watchdog armed until a complete controller update
-  // remains in tracking. An immediate TRACKING -> PRE_ROTATE relapse must not
-  // erase the progress history that can identify a state-transition loop.
-  if (state_ == State::TRACKING)
-    resetRotationProgress();
-  if (state_ == State::FINAL_ROTATE) {
+  } else if (state_ == State::FINAL_ROTATE) {
     const double error = normalizeAngle(yawOf(plan_.back().pose.orientation) - yaw);
     if (std::abs(error) <= goal_angle_tolerance_) {
-      // Reaching the goal within tolerance can leave the geometric projection
-      // on an earlier segment of a short path tail. Report the terminal pose
-      // when declaring success so a resumed mowing path is not retried from a
-      // stale progress index.
       current_index_ = plan_.size() - 1;
       state_ = State::FINISHED;
       resetRotationProgress();
@@ -504,23 +516,20 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
           std::min(max_angular_speed_, heading_gain_ * error));
     }
   }
+
+  if (state_ == State::TRACKING)
+    resetRotationProgress();
   if (state_ == State::FINISHED) {
     command.twist = geometry_msgs::Twist();
     last_angular_command_ = 0.0;
-  } else if (state_ == State::STOPPING_FOR_ROTATE || state_ == State::CORNER_APPROACH) {
-    // Finish braking before beginning an in-place rotation. Resetting the
-    // angular slew state prevents a tracking command carrying into the stop
-    // or the straight corner correction.
-    command.twist.angular.z = 0.0;
-    last_angular_command_ = 0.0;
   } else if (state_ == State::ROTATE_ESCAPE) {
-    // Do not carry a rotation command into the straight collision-recovery movement.
     command.twist.angular.z = 0.0;
     last_angular_command_ = 0.0;
   } else {
     const double requested_angular = command.twist.angular.z;
     const double limited_angular = applyAngularAccelerationLimit(requested_angular, command_dt);
-    if (state_ == State::TRACKING && std::abs(command.twist.linear.x) > 1e-6) {
+    if ((state_ == State::TRACKING || state_ == State::APPROACH_STOP) &&
+        std::abs(command.twist.linear.x) > 1e-6) {
       double linear_scale = 1.0;
       if (requested_angular * limited_angular < 0.0 ||
           (std::abs(requested_angular) <= 1e-6 && std::abs(limited_angular) > 1e-6)) {
@@ -530,10 +539,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         linear_scale = std::abs(limited_angular / requested_angular);
       }
       command.twist.linear.x *= linear_scale;
-      // Angular slew coupling is the final linear limiter. Reapply the
-      // breakaway floor here so it cannot create a persistent sub-minimum
-      // command that neither moves the mower nor arms the progress watchdogs.
-      if (std::abs(command.twist.linear.x) > 1e-6 &&
+      if (state_ == State::TRACKING && std::abs(command.twist.linear.x) > 1e-6 &&
           std::abs(command.twist.linear.x) < minimum_tracking_command) {
         command.twist.linear.x = std::copysign(
             minimum_tracking_command, command.twist.linear.x);
@@ -542,10 +548,21 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
     }
     command.twist.angular.z = limited_angular;
   }
+
+  const bool vertex_recovery = state_ == State::REAPPROACH_REVERSE ||
+      state_ == State::REAPPROACH_AIM || stop_target_reapproaching_;
   if (state_ != State::ROTATE_ESCAPE &&
       !trajectoryIsSafe(x, y, yaw, command.twist.linear.x, command.twist.angular.z, message)) {
-    command.twist = geometry_msgs::Twist(); last_linear_command_ = 0; last_angular_command_ = 0; return COLLISION;
+    command.twist = geometry_msgs::Twist();
+    last_linear_command_ = 0.0;
+    last_angular_command_ = 0.0;
+    if (vertex_recovery) {
+      message = "Unable to safely realign with stop vertex: " + message;
+      return MISSED_GOAL;
+    }
+    return COLLISION;
   }
+
   const bool normal_tracking = state_ == State::TRACKING &&
       std::abs(command.twist.linear.x) >= std::max(0.0, tracking_progress_min_speed_);
   if (!normal_tracking) {
@@ -558,6 +575,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         std::to_string(std::max(0.0, tracking_progress_timeout_)) + " s";
     return MISSED_GOAL;
   }
+
   if (state_ == State::FINISHED) {
     resetMotionProgress();
   } else {
@@ -686,46 +704,16 @@ bool SimplePathTracker::projectToPath(double x, double y, double yaw, Projection
   const double current_heading = std::atan2(
       end.y - plan_[result.segment].pose.position.y,
       end.x - plan_[result.segment].pose.position.x);
-  if (result.segment + 2 < plan_.size()) {
-    const auto& next = plan_[result.segment + 2].pose.position;
-    const double next_dx = next.x - end.x, next_dy = next.y - end.y;
-    if (std::hypot(next_dx, next_dy) > 1e-6) {
-      result.sharp_corner_ahead = std::abs(normalizeAngle(
-          std::atan2(next_dy, next_dx) - current_heading)) >= sharp_corner_angle_;
+  for (size_t vertex = result.segment + 1; vertex + 1 < plan_.size(); ++vertex) {
+    if (vertex >= stop_vertices_.size() || !stop_vertices_[vertex]) continue;
+    const double distance = std::max(0.0, cumulative_distance_[vertex] - path_distance);
+    if (vertex == result.segment + 1 ||
+        distance <= std::max(0.0, turnaround_preview_distance_)) {
+      result.sharp_corner_ahead = true;
+      result.corner_distance = distance;
+      result.corner_index = vertex;
     }
-  }
-  if (!result.sharp_corner_ahead) {
-    double accumulated_turn = 0.0;
-    double previous_heading = current_heading;
-    double vertex_distance = result.corner_distance;
-    double first_turn_distance = 0.0;
-    size_t first_turn_index = result.corner_index;
-    bool have_first_turn = false;
-    for (size_t segment = result.segment + 1; segment + 1 < plan_.size(); ++segment) {
-      if (vertex_distance > std::max(0.0, turnaround_preview_distance_)) break;
-      const auto& a = plan_[segment].pose.position;
-      const auto& b = plan_[segment + 1].pose.position;
-      const double dx = b.x - a.x, dy = b.y - a.y;
-      const double length = std::hypot(dx, dy);
-      if (length > 1e-6) {
-        const double heading = std::atan2(dy, dx);
-        const double turn = normalizeAngle(heading - previous_heading);
-        if (!have_first_turn && std::abs(turn) > 0.05) {
-          first_turn_distance = vertex_distance;
-          first_turn_index = segment;
-          have_first_turn = true;
-        }
-        accumulated_turn += turn;
-        previous_heading = heading;
-        if (have_first_turn && std::abs(accumulated_turn) >= turnaround_angle_threshold_) {
-          result.sharp_corner_ahead = true;
-          result.corner_distance = first_turn_distance;
-          result.corner_index = first_turn_index;
-          break;
-        }
-      }
-      vertex_distance += length;
-    }
+    break;
   }
   if (result.sharp_corner_ahead) {
     result.heading = current_heading;
@@ -829,23 +817,131 @@ void SimplePathTracker::resetRotationProgress()
   rotate_progress_started_ = ros::Time();
 }
 
-void SimplePathTracker::beginStopForRotate(State next_state)
+void SimplePathTracker::cacheStopVertices()
 {
-  state_ = State::STOPPING_FOR_ROTATE;
-  rotate_stop_next_state_ = next_state;
-  corner_stop_pending_ = false;
-  resetRotateStopWait();
-  resetRotationProgress();
+  stop_vertices_.assign(plan_.size(), false);
+  if (plan_.size() < 3) return;
+
+  const auto segmentHeading = [&](size_t segment, double& heading) {
+    if (segment + 1 >= plan_.size()) return false;
+    const auto& a = plan_[segment].pose.position;
+    const auto& b = plan_[segment + 1].pose.position;
+    const double dx = b.x - a.x, dy = b.y - a.y;
+    if (std::hypot(dx, dy) <= 1e-6) return false;
+    heading = std::atan2(dy, dx);
+    return true;
+  };
+
+  for (size_t vertex = 1; vertex + 1 < plan_.size(); ++vertex) {
+    size_t incoming = vertex;
+    double incoming_heading = 0.0;
+    while (incoming > 0 && !segmentHeading(incoming - 1, incoming_heading)) --incoming;
+    size_t outgoing = vertex;
+    double outgoing_heading = 0.0;
+    while (outgoing + 1 < plan_.size() && !segmentHeading(outgoing, outgoing_heading)) ++outgoing;
+    if (incoming > 0 && outgoing + 1 < plan_.size() &&
+        std::abs(normalizeAngle(outgoing_heading - incoming_heading)) >= sharp_corner_angle_) {
+      stop_vertices_[vertex] = true;
+    }
+  }
+
+  const double preview = std::max(0.0, turnaround_preview_distance_);
+  for (size_t start = 0; start + 2 < plan_.size(); ++start) {
+    double previous_heading = 0.0;
+    if (!segmentHeading(start, previous_heading)) continue;
+    double accumulated_turn = 0.0;
+    size_t first_turn = plan_.size();
+    for (size_t segment = start + 1; segment + 1 < plan_.size(); ++segment) {
+      if (cumulative_distance_[segment] - cumulative_distance_[start + 1] > preview) break;
+      double heading = 0.0;
+      if (!segmentHeading(segment, heading)) continue;
+      const double turn = normalizeAngle(heading - previous_heading);
+      if (first_turn == plan_.size() && std::abs(turn) > 0.05) first_turn = segment;
+      accumulated_turn += turn;
+      previous_heading = heading;
+      if (first_turn < plan_.size() &&
+          std::abs(accumulated_turn) >= std::max(0.0, turnaround_angle_threshold_)) {
+        stop_vertices_[first_turn] = true;
+        break;
+      }
+    }
+  }
 }
 
-void SimplePathTracker::beginCornerStopForRotate(size_t corner_index)
+void SimplePathTracker::beginStopApproach(size_t target_index, bool final)
 {
-  beginStopForRotate(State::PRE_ROTATE);
-  corner_stop_pending_ = true;
-  pending_corner_index_ = corner_index;
-  if (corner_index < cumulative_distance_.size()) {
-    projection_distance_limit_ = cumulative_distance_[corner_index];
+  if (target_index == 0 || target_index >= plan_.size()) return;
+  size_t incoming = target_index;
+  double dx = 0.0, dy = 0.0, length = 0.0;
+  while (incoming > 0 && length <= 1e-6) {
+    const auto& a = plan_[incoming - 1].pose.position;
+    const auto& b = plan_[incoming].pose.position;
+    dx = b.x - a.x;
+    dy = b.y - a.y;
+    length = std::hypot(dx, dy);
+    --incoming;
   }
+  if (length <= 1e-6) return;
+
+  const auto& target = plan_[target_index].pose.position;
+  stop_target_.active = true;
+  stop_target_.require_position = true;
+  stop_target_.final = final;
+  stop_target_.index = target_index;
+  stop_target_.x = target.x;
+  stop_target_.y = target.y;
+  stop_target_.tangent_x = dx / length;
+  stop_target_.tangent_y = dy / length;
+  stop_target_.position_tolerance = std::max(
+      0.0, final ? goal_distance_tolerance_ : corner_position_tolerance_);
+  stop_correction_active_ = false;
+  stop_target_reapproaching_ = false;
+  vertex_reapproach_attempt_count_ = 0;
+  projection_distance_limit_ = cumulative_distance_[target_index];
+  resetRotateStopWait();
+  resetRotationProgress();
+  resetTrackingProgress();
+  state_ = State::APPROACH_STOP;
+}
+
+void SimplePathTracker::beginStopForRotate(double x, double y, double heading)
+{
+  stop_target_.active = true;
+  stop_target_.require_position = false;
+  stop_target_.final = false;
+  stop_target_.index = current_index_;
+  stop_target_.x = x;
+  stop_target_.y = y;
+  stop_target_.tangent_x = std::cos(heading);
+  stop_target_.tangent_y = std::sin(heading);
+  stop_target_.position_tolerance = 0.0;
+  stop_correction_active_ = false;
+  stop_target_reapproaching_ = false;
+  vertex_reapproach_attempt_count_ = 0;
+  resetRotateStopWait();
+  resetRotationProgress();
+  state_ = State::APPROACH_STOP;
+}
+
+void SimplePathTracker::completeStopApproach()
+{
+  if (stop_target_.require_position) {
+    if (stop_target_.final) {
+      state_ = State::FINAL_ROTATE;
+    } else {
+      current_index_ = std::min(stop_target_.index, plan_.size() - 2);
+      last_projected_path_distance_ = cumulative_distance_[stop_target_.index];
+      projection_distance_limit_ = last_projected_path_distance_;
+      state_ = State::PRE_ROTATE;
+    }
+  } else {
+    state_ = State::PRE_ROTATE;
+  }
+  stop_target_ = StopTarget();
+  stop_correction_active_ = false;
+  stop_target_reapproaching_ = false;
+  resetRotateStopWait();
+  resetRotationProgress();
 }
 
 void SimplePathTracker::resetRotateStopWait()
@@ -959,8 +1055,8 @@ void SimplePathTracker::refreshParameters(bool cached)
   LOAD(curvature_preview_distance); LOAD(curvature_angular_fraction);
   LOAD(minimum_lookahead); LOAD(maximum_lookahead); LOAD(lookahead_time); LOAD(sharp_corner_angle);
   LOAD(turnaround_angle_threshold); LOAD(turnaround_preview_distance);
-  LOAD(corner_slowdown_distance); LOAD(corner_position_tolerance);
-  LOAD(goal_angle_tolerance); LOAD(goal_slowdown_distance); LOAD(goal_position_timeout);
+  LOAD(corner_position_tolerance); LOAD(vertex_reapproach_distance); LOAD(vertex_reapproach_attempts);
+  LOAD(goal_angle_tolerance);
   LOAD(projection_initial_allowance); LOAD(projection_distance_factor);
   LOAD(projection_pose_deadband); LOAD(projection_max_pose_step);
   LOAD(projection_heading_tolerance);

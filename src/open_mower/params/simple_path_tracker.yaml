@@ -28,8 +28,10 @@ SimplePathTracker:
   # braking for its first vertex even when that individual corner is shallow.
   turnaround_angle_threshold: 2.10
   turnaround_preview_distance: 1.50
-  corner_slowdown_distance: 0.40
   corner_position_tolerance: 0.07
+  # Back straight, aim at a missed stop vertex, and approach it again.
+  vertex_reapproach_distance: 0.50
+  vertex_reapproach_attempts: 1
   rotate_threshold: 0.70
   rotate_tolerance: 0.17
   # Begin rotating only after measured linear speed remains below this value.
@@ -58,9 +60,6 @@ SimplePathTracker:
   motion_progress_min_angular: 0.10
   goal_distance_tolerance: 0.10
   goal_angle_tolerance: 0.17
-  goal_slowdown_distance: 0.50
-  # Return MISSED_GOAL if the path is exhausted outside the position tolerance.
-  goal_position_timeout: 2.0
   # Reject non-adjacent future segments that turn farther than this tolerance
   # (radians) from the current path segment.
   projection_heading_tolerance: 0.52

@@ -40,13 +40,24 @@ public:
 private:
   enum class State
   {
-    STOPPING_FOR_ROTATE,
-    CORNER_APPROACH,
+    APPROACH_STOP,
+    REAPPROACH_REVERSE,
+    REAPPROACH_AIM,
     PRE_ROTATE,
     ROTATE_ESCAPE,
     TRACKING,
     FINAL_ROTATE,
     FINISHED
+  };
+  struct StopTarget
+  {
+    bool active{false};
+    bool require_position{false};
+    bool final{false};
+    size_t index{0};
+    double x{0.0}, y{0.0};
+    double tangent_x{1.0}, tangent_y{0.0};
+    double position_tolerance{0.0};
   };
   struct Projection
   {
@@ -65,9 +76,11 @@ private:
   bool straightEscapeIsSafe(double x, double y, double yaw, double distance) const;
   bool footprintIsSafe(double x, double y, double yaw) const;
   double obstacleClearance(double x, double y, double maximum_distance) const;
+  void cacheStopVertices();
+  void beginStopApproach(size_t target_index, bool final);
+  void beginStopForRotate(double x, double y, double heading);
+  void completeStopApproach();
   void resetRotationProgress();
-  void beginStopForRotate(State next_state);
-  void beginCornerStopForRotate(size_t corner_index);
   void resetRotateStopWait();
   bool rotationHasStalled(double heading_error, const ros::Time& now);
   void resetTrackingProgress();
@@ -92,23 +105,24 @@ private:
   std::unique_ptr<base_local_planner::CostmapModel> collision_model_;
   std::vector<geometry_msgs::PoseStamped> plan_;
   std::vector<double> cumulative_distance_;
+  std::vector<bool> stop_vertices_;
   size_t current_index_{0};
   double projection_distance_limit_{0.0};
   double last_projected_path_distance_{0.0};
   bool have_last_projection_pose_{false};
   double last_projection_x_{0.0}, last_projection_y_{0.0};
-  bool goal_miss_active_{false};
-  ros::Time goal_miss_started_;
-  double best_goal_distance_{std::numeric_limits<double>::infinity()};
   double last_linear_command_{0.0}, last_angular_command_{0.0};
   ros::Time last_command_time_;
   bool rotate_progress_active_{false};
   double best_rotate_error_{std::numeric_limits<double>::infinity()};
   ros::Time rotate_progress_started_;
-  State rotate_stop_next_state_{State::PRE_ROTATE};
-  bool corner_stop_pending_{false};
-  size_t pending_corner_index_{0};
-  double corner_approach_direction_{1.0};
+  StopTarget stop_target_;
+  bool stop_correction_active_{false};
+  double stop_correction_direction_{1.0};
+  int vertex_reapproach_attempt_count_{0};
+  double reapproach_start_x_{0.0}, reapproach_start_y_{0.0};
+  bool stop_target_reapproaching_{false};
+  double reapproach_heading_{0.0};
   bool rotate_stop_wait_active_{false}, rotate_stop_settle_active_{false};
   ros::Time rotate_stop_wait_started_;
   ros::Time rotate_stop_settle_started_;
@@ -149,9 +163,10 @@ private:
   double curvature_preview_distance_{0.40}, curvature_angular_fraction_{0.15};
   double minimum_lookahead_{0.15}, maximum_lookahead_{0.35}, lookahead_time_{0.4};
   double sharp_corner_angle_{1.22}, turnaround_angle_threshold_{2.1}, turnaround_preview_distance_{1.5};
-  double corner_slowdown_distance_{0.4}, corner_position_tolerance_{0.05};
-  double goal_distance_tolerance_{0.1}, goal_angle_tolerance_{0.17}, goal_slowdown_distance_{0.5};
-  double goal_position_timeout_{2.0};
+  double corner_position_tolerance_{0.05};
+  double vertex_reapproach_distance_{0.5};
+  int vertex_reapproach_attempts_{1};
+  double goal_distance_tolerance_{0.1}, goal_angle_tolerance_{0.17};
   double projection_initial_allowance_{0.5};
   double projection_distance_factor_{1.0};
   double projection_heading_tolerance_{0.52};
