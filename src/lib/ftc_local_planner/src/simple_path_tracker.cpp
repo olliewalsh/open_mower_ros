@@ -278,16 +278,13 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
     // Stop commanding first; once settled, the correction mode below latches a
     // minimum-speed command until its measured braking point.
     if (!stop_correction_active_ && measured_speed_valid &&
-        measured_speed <= std::max(0.0, rotate_start_speed_tolerance_) &&
+        minimum_tracking_command > 1e-6 && measured_speed < minimum_tracking_command &&
         std::abs(target) > 1e-6 && std::abs(target) < minimum_tracking_command) {
       target = 0.0;
     }
     double linear = applyAccelerationLimit(target, command_dt);
-    const bool starting_latched_approach =
-        stop_correction_active_ || stop_target_reapproaching_;
-    if (starting_latched_approach && measured_speed_valid &&
-        measured_speed <= std::max(0.0, rotate_start_speed_tolerance_) &&
-        minimum_tracking_command > 1e-6 && linear * target > 0.0 &&
+    if (!position_reached && measured_speed_valid && minimum_tracking_command > 1e-6 &&
+        measured_speed < minimum_tracking_command && linear * target > 0.0 &&
         std::abs(linear) < minimum_tracking_command) {
       linear = std::copysign(minimum_tracking_command, target);
       last_linear_command_ = linear;
@@ -568,8 +565,14 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
       command.twist.linear.x *= linear_scale;
       const bool apply_minimum_floor = state_ == State::TRACKING ||
           (minimum_linear_breakaway && linear_scale >= 0.99);
-      if (apply_minimum_floor && std::abs(command.twist.linear.x) > 1e-6 &&
-          std::abs(command.twist.linear.x) < minimum_tracking_command) {
+      const bool unusable_stationary_approach = state_ == State::APPROACH_STOP &&
+          measured_speed_valid && measured_speed < minimum_tracking_command &&
+          std::abs(command.twist.linear.x) > 1e-6 &&
+          std::abs(command.twist.linear.x) < minimum_tracking_command;
+      if (unusable_stationary_approach && !apply_minimum_floor) {
+        command.twist.linear.x = 0.0;
+      } else if (apply_minimum_floor && std::abs(command.twist.linear.x) > 1e-6 &&
+                 std::abs(command.twist.linear.x) < minimum_tracking_command) {
         command.twist.linear.x = std::copysign(
             minimum_tracking_command, command.twist.linear.x);
       }
