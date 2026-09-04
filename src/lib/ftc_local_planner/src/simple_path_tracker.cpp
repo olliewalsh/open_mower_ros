@@ -229,11 +229,6 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
             if (std::abs(remaining_along_segment) > position_tolerance) {
               corner_approach_direction_ = remaining_along_segment > 0.0 ? 1.0 : -1.0;
               const double correction_speed = minimum_tracking_command;
-              corner_approach_stop_distance_ =
-                  correction_speed * std::max(0.0, deceleration_reaction_time_) +
-                  (max_deceleration_ > 1e-6 ?
-                      correction_speed * correction_speed / (2.0 * max_deceleration_) :
-                      std::numeric_limits<double>::infinity());
               state_ = State::CORNER_APPROACH;
               resetRotateStopWait();
               resetRotationProgress();
@@ -277,6 +272,10 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
       message = "Corner approach requires a positive minimum tracking speed";
       return MISSED_GOAL;
     }
+    if (!measured_speed_valid) {
+      message = "Corner approach requires a valid measured linear speed";
+      return MISSED_GOAL;
+    }
     const auto& corner = plan_[pending_corner_index_].pose.position;
     const auto& incoming = plan_[pending_corner_index_ - 1].pose.position;
     const double incoming_dx = corner.x - incoming.x;
@@ -285,9 +284,17 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
     const double remaining_along_segment = incoming_length > 1e-6 ?
         ((corner.x - x) * incoming_dx + (corner.y - y) * incoming_dy) /
             incoming_length : 0.0;
+    // The correction starts from rest. Using the requested creep speed here
+    // can make its predicted stopping distance exceed the remaining error
+    // before the mower has moved at all, producing short on/off pulses.
+    const double stopping_distance =
+        measured_speed * std::max(0.0, deceleration_reaction_time_) +
+        (max_deceleration_ > 1e-6 ?
+            measured_speed * measured_speed / (2.0 * max_deceleration_) :
+            std::numeric_limits<double>::infinity());
     const bool reached_braking_point = corner_approach_direction_ > 0.0 ?
-        remaining_along_segment <= corner_approach_stop_distance_ :
-        remaining_along_segment >= -corner_approach_stop_distance_;
+        remaining_along_segment <= stopping_distance :
+        remaining_along_segment >= -stopping_distance;
     if (reached_braking_point) {
       beginCornerStopForRotate(pending_corner_index_);
       command.twist.linear.x = applyAccelerationLimit(0.0, command_dt);
