@@ -220,6 +220,10 @@ if(CATKIN_ENABLE_TESTING)
   add_executable(mower_comms_v1_wheel_speed_observer_test test/wheel_speed_observer_test.cpp)
   target_include_directories(mower_comms_v1_wheel_speed_observer_test PRIVATE src)
   add_test(NAME mower_comms_v1_wheel_speed_observer_test COMMAND mower_comms_v1_wheel_speed_observer_test)
+
+  add_executable(mower_comms_v1_wheel_speed_controller_test test/wheel_speed_controller_test.cpp)
+  target_include_directories(mower_comms_v1_wheel_speed_controller_test PRIVATE src)
+  add_test(NAME mower_comms_v1_wheel_speed_controller_test COMMAND mower_comms_v1_wheel_speed_controller_test)
 endif()
 
 ## Add gtest based cpp test target and link libraries

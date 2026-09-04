@@ -51,7 +51,13 @@ class WheelSpeedController {
   float Update(float dt) {
     const float error = target_speed_ - measured_speed_;
     float next_integral = integral_;
-    if (dt > 0.0f) {
+    // Do not accumulate braking effort while stopped. Otherwise the integral
+    // built while the wheel coasts to rest remains as reverse drive duty once
+    // the measured speed reaches zero.
+    if (target_speed_ == 0.0f) {
+      integral_ = 0.0f;
+      next_integral = 0.0f;
+    } else if (dt > 0.0f) {
       next_integral += error * dt;
     }
 
