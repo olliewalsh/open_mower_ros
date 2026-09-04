@@ -225,14 +225,23 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
             const double remaining_along_segment = incoming_length > 1e-6 ?
                 ((corner.x - x) * incoming_dx + (corner.y - y) * incoming_dy) /
                     incoming_length : 0.0;
-            if (remaining_along_segment > std::max(0.0, corner_position_tolerance_)) {
-              ROS_INFO_STREAM("SimplePathTracker: stopped " << remaining_along_segment
-                  << " m before corner; resuming approach");
-              corner_stop_pending_ = false;
-              state_ = State::TRACKING;
+            const double position_tolerance = std::max(0.0, corner_position_tolerance_);
+            if (std::abs(remaining_along_segment) > position_tolerance) {
+              corner_approach_direction_ = remaining_along_segment > 0.0 ? 1.0 : -1.0;
+              const double correction_speed = minimum_tracking_command;
+              corner_approach_stop_distance_ =
+                  correction_speed * std::max(0.0, deceleration_reaction_time_) +
+                  (max_deceleration_ > 1e-6 ?
+                      correction_speed * correction_speed / (2.0 * max_deceleration_) :
+                      std::numeric_limits<double>::infinity());
+              state_ = State::CORNER_APPROACH;
               resetRotateStopWait();
               resetRotationProgress();
               resetTrackingProgress();
+              ROS_INFO_STREAM("SimplePathTracker: stopped "
+                  << std::abs(remaining_along_segment) << " m "
+                  << (corner_approach_direction_ > 0.0 ? "before" : "past")
+                  << " corner; correcting at " << correction_speed << " m/s");
             } else {
               current_index_ = std::min(pending_corner_index_, plan_.size() - 2);
               last_projected_path_distance_ = cumulative_distance_[pending_corner_index_];
@@ -256,6 +265,35 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         message = "Timed out waiting for measured linear velocity to settle before rotation";
         return MISSED_GOAL;
       }
+    }
+  }
+  if (state_ == State::CORNER_APPROACH) {
+    if (!corner_stop_pending_ || pending_corner_index_ == 0 ||
+        pending_corner_index_ >= plan_.size()) {
+      message = "Corner approach has no valid target vertex";
+      return INVALID_PATH;
+    }
+    if (minimum_tracking_command <= 1e-6) {
+      message = "Corner approach requires a positive minimum tracking speed";
+      return MISSED_GOAL;
+    }
+    const auto& corner = plan_[pending_corner_index_].pose.position;
+    const auto& incoming = plan_[pending_corner_index_ - 1].pose.position;
+    const double incoming_dx = corner.x - incoming.x;
+    const double incoming_dy = corner.y - incoming.y;
+    const double incoming_length = std::hypot(incoming_dx, incoming_dy);
+    const double remaining_along_segment = incoming_length > 1e-6 ?
+        ((corner.x - x) * incoming_dx + (corner.y - y) * incoming_dy) /
+            incoming_length : 0.0;
+    const bool reached_braking_point = corner_approach_direction_ > 0.0 ?
+        remaining_along_segment <= corner_approach_stop_distance_ :
+        remaining_along_segment >= -corner_approach_stop_distance_;
+    if (reached_braking_point) {
+      beginCornerStopForRotate(pending_corner_index_);
+      command.twist.linear.x = applyAccelerationLimit(0.0, command_dt);
+    } else {
+      command.twist.linear.x = applyAccelerationLimit(
+          corner_approach_direction_ * minimum_tracking_command, command_dt);
     }
   }
   if (state_ == State::PRE_ROTATE) {
@@ -462,9 +500,10 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   if (state_ == State::FINISHED) {
     command.twist = geometry_msgs::Twist();
     last_angular_command_ = 0.0;
-  } else if (state_ == State::STOPPING_FOR_ROTATE) {
+  } else if (state_ == State::STOPPING_FOR_ROTATE || state_ == State::CORNER_APPROACH) {
     // Finish braking before beginning an in-place rotation. Resetting the
-    // angular slew state prevents a tracking command carrying into the stop.
+    // angular slew state prevents a tracking command carrying into the stop
+    // or the straight corner correction.
     command.twist.angular.z = 0.0;
     last_angular_command_ = 0.0;
   } else if (state_ == State::ROTATE_ESCAPE) {
@@ -924,7 +963,20 @@ void SimplePathTracker::refreshParameters(bool cached)
   LOAD(mow_load_filter_attack_time_constant); LOAD(mow_load_filter_release_time_constant);
 #undef LOAD
 }
-double SimplePathTracker::applyAccelerationLimit(double target,double dt){last_linear_command_=std::max(last_linear_command_-max_deceleration_*dt,std::min(last_linear_command_+max_acceleration_*dt,target));return last_linear_command_;}
+double SimplePathTracker::applyAccelerationLimit(double target, double dt)
+{
+  // Decelerate to zero before changing direction, then use the acceleration
+  // limit while building speed in either direction.
+  const bool reversing = last_linear_command_ * target < 0.0;
+  const double limited_target = reversing ? 0.0 : target;
+  const bool accelerating = std::abs(limited_target) > std::abs(last_linear_command_);
+  const double rate = std::max(0.0, accelerating ? max_acceleration_ : max_deceleration_);
+  const double maximum_step = rate * std::max(0.0, dt);
+  const double delta = std::max(-maximum_step,
+      std::min(maximum_step, limited_target - last_linear_command_));
+  last_linear_command_ += delta;
+  return last_linear_command_;
+}
 double SimplePathTracker::applyAngularAccelerationLimit(double target,double dt)
 {
   const double acceleration = std::max(0.0, max_angular_acceleration_);

@@ -38,7 +38,16 @@ public:
   bool cancel() override;
 
 private:
-  enum class State { STOPPING_FOR_ROTATE, PRE_ROTATE, ROTATE_ESCAPE, TRACKING, FINAL_ROTATE, FINISHED };
+  enum class State
+  {
+    STOPPING_FOR_ROTATE,
+    CORNER_APPROACH,
+    PRE_ROTATE,
+    ROTATE_ESCAPE,
+    TRACKING,
+    FINAL_ROTATE,
+    FINISHED
+  };
   struct Projection
   {
     size_t segment{0};
@@ -99,6 +108,8 @@ private:
   State rotate_stop_next_state_{State::PRE_ROTATE};
   bool corner_stop_pending_{false};
   size_t pending_corner_index_{0};
+  double corner_approach_direction_{1.0};
+  double corner_approach_stop_distance_{0.0};
   bool rotate_stop_wait_active_{false}, rotate_stop_settle_active_{false};
   ros::Time rotate_stop_wait_started_;
   ros::Time rotate_stop_settle_started_;
