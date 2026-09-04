@@ -272,6 +272,15 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
             stoppingSpeed(std::abs(longitudinal_error), stop_target_.position_tolerance));
       }
     }
+    // A positive braking-profile command below the usable tracking minimum can
+    // leave the mower stationary forever without entering the settled branch.
+    // Stop commanding first; once settled, the correction mode below latches a
+    // minimum-speed command until its measured braking point.
+    if (!stop_correction_active_ && measured_speed_valid &&
+        measured_speed <= std::max(0.0, rotate_start_speed_tolerance_) &&
+        std::abs(target) > 1e-6 && std::abs(target) < minimum_tracking_command) {
+      target = 0.0;
+    }
     const double linear = applyAccelerationLimit(target, command_dt);
     command.twist.linear.x = linear;
     if (std::abs(linear) > 1e-6) {
@@ -317,6 +326,10 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         stop_correction_direction_ = longitudinal_error >= 0.0 ? 1.0 : -1.0;
         stop_correction_active_ = true;
         resetRotateStopWait();
+        ROS_INFO_STREAM("SimplePathTracker: stopped "
+            << std::abs(longitudinal_error) << " m "
+            << (stop_correction_direction_ > 0.0 ? "before" : "past")
+            << " stop target; correcting at " << minimum_tracking_command << " m/s");
       }
     } else if (stopWaitTimedOut()) {
       message = "Timed out waiting for linear velocity to settle at stop target";
@@ -336,6 +349,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
       state_ = State::REAPPROACH_AIM;
       resetRotateStopWait();
       resetRotationProgress();
+      ROS_INFO("SimplePathTracker: re-approach reverse complete; aiming at stop vertex");
     } else if (stopWaitTimedOut()) {
       message = "Timed out stopping after vertex re-approach reverse";
       return MISSED_GOAL;
@@ -360,6 +374,8 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         resetRotateStopWait();
         resetRotationProgress();
         state_ = State::APPROACH_STOP;
+        ROS_INFO_STREAM("SimplePathTracker: aligned for " << target_distance
+            << " m straight re-approach to stop vertex");
       } else if (rotationHasStalled(heading_error, control_time)) {
         message = "Rotation towards stop vertex stalled";
         return MISSED_GOAL;
@@ -579,7 +595,9 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   if (state_ == State::FINISHED) {
     resetMotionProgress();
   } else {
-    const bool motion_commanded =
+    const bool recovery_motion_expected = state_ == State::REAPPROACH_REVERSE ||
+        state_ == State::REAPPROACH_AIM || stop_target_reapproaching_;
+    const bool motion_commanded = recovery_motion_expected ||
         std::abs(command.twist.linear.x) >= std::max(0.0, motion_progress_min_linear_) ||
         std::abs(command.twist.angular.z) >= std::max(0.0, motion_progress_min_angular_);
     if (motionHasStalled(x, y, yaw, motion_commanded, control_time)) {
