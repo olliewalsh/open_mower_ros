@@ -42,6 +42,7 @@ private:
   struct Projection
   {
     size_t segment{0};
+    size_t corner_index{0};
     double fraction{0.0}, path_distance{0.0}, x{0.0}, y{0.0}, heading{0.0}, curvature{0.0};
     double cross_track_error{0.0}, heading_error{0.0}, remaining_distance{0.0};
     bool sharp_corner_ahead{false};
@@ -57,6 +58,7 @@ private:
   double obstacleClearance(double x, double y, double maximum_distance) const;
   void resetRotationProgress();
   void beginStopForRotate(State next_state);
+  void beginCornerStopForRotate(size_t corner_index);
   void resetRotateStopWait();
   bool rotationHasStalled(double heading_error, const ros::Time& now);
   void resetTrackingProgress();
@@ -95,6 +97,8 @@ private:
   double best_rotate_error_{std::numeric_limits<double>::infinity()};
   ros::Time rotate_progress_started_;
   State rotate_stop_next_state_{State::PRE_ROTATE};
+  bool corner_stop_pending_{false};
+  size_t pending_corner_index_{0};
   bool rotate_stop_wait_active_{false}, rotate_stop_settle_active_{false};
   ros::Time rotate_stop_wait_started_;
   ros::Time rotate_stop_settle_started_;

@@ -78,6 +78,7 @@ bool SimplePathTracker::setPlan(const std::vector<geometry_msgs::PoseStamped>& p
   best_goal_distance_ = std::numeric_limits<double>::infinity();
   resetRotationProgress();
   resetRotateStopWait();
+  corner_stop_pending_ = false;
   resetTrackingProgress();
   resetMotionProgress();
   rotate_escape_attempt_count_ = 0;
@@ -214,9 +215,39 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         }
         if ((control_time - rotate_stop_settle_started_).toSec() >=
             std::max(0.0, rotate_stop_settle_time_)) {
-          state_ = rotate_stop_next_state_;
-          resetRotateStopWait();
-          resetRotationProgress();
+          if (corner_stop_pending_ && pending_corner_index_ > 0 &&
+              pending_corner_index_ < plan_.size()) {
+            const auto& corner = plan_[pending_corner_index_].pose.position;
+            const auto& incoming = plan_[pending_corner_index_ - 1].pose.position;
+            const double incoming_dx = corner.x - incoming.x;
+            const double incoming_dy = corner.y - incoming.y;
+            const double incoming_length = std::hypot(incoming_dx, incoming_dy);
+            const double remaining_along_segment = incoming_length > 1e-6 ?
+                ((corner.x - x) * incoming_dx + (corner.y - y) * incoming_dy) /
+                    incoming_length : 0.0;
+            if (remaining_along_segment > std::max(0.0, corner_position_tolerance_)) {
+              ROS_INFO_STREAM("SimplePathTracker: stopped " << remaining_along_segment
+                  << " m before corner; resuming approach");
+              corner_stop_pending_ = false;
+              state_ = State::TRACKING;
+              resetRotateStopWait();
+              resetRotationProgress();
+              resetTrackingProgress();
+            } else {
+              current_index_ = std::min(pending_corner_index_, plan_.size() - 2);
+              last_projected_path_distance_ = cumulative_distance_[pending_corner_index_];
+              projection_distance_limit_ = last_projected_path_distance_;
+              corner_stop_pending_ = false;
+              // Keep the stop state for this update. The projection and
+              // segment heading above still describe the incoming segment;
+              // the next update will project from the outgoing segment before
+              // entering PRE_ROTATE.
+            }
+          } else {
+            state_ = rotate_stop_next_state_;
+            resetRotateStopWait();
+            resetRotationProgress();
+          }
         }
       }
       if (state_ == State::STOPPING_FOR_ROTATE &&
@@ -331,16 +362,16 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         target = std::min(target, curvature_angular_fraction_ * max_angular_speed_ /
             std::abs(control_curvature));
       if (p.sharp_corner_ahead) {
-        if (p.corner_distance <= corner_position_tolerance_) {
-          current_index_ = std::min(p.segment + 1, plan_.size() - 2);
-          last_projected_path_distance_ = cumulative_distance_[p.segment + 1];
-          projection_distance_limit_ = last_projected_path_distance_;
-          beginStopForRotate(State::PRE_ROTATE);
+        const double stopping_distance = deceleration_reaction_distance +
+            (max_deceleration_ > 1e-6 ?
+                approach_speed * approach_speed / (2.0 * max_deceleration_) :
+                std::numeric_limits<double>::infinity());
+        if (p.corner_distance <= stopping_distance) {
+          beginCornerStopForRotate(p.corner_index);
           target = 0.0;
         } else if (p.corner_distance < corner_slowdown_distance_) {
           const double braking_distance = std::max(0.0,
-              p.corner_distance - corner_position_tolerance_ -
-              deceleration_reaction_distance);
+              p.corner_distance - deceleration_reaction_distance);
           const double braking_speed = std::sqrt(
               2.0 * std::max(0.0, max_deceleration_) * braking_distance);
           target = std::min(target,
@@ -605,6 +636,7 @@ bool SimplePathTracker::projectToPath(double x, double y, double yaw, Projection
   for(size_t i=result.segment+1;i+1<plan_.size();++i)
     result.remaining_distance+=std::hypot(plan_[i+1].pose.position.x-plan_[i].pose.position.x,plan_[i+1].pose.position.y-plan_[i].pose.position.y);
   result.corner_distance = std::hypot(end.x - result.x, end.y - result.y);
+  result.corner_index = result.segment + 1;
   const double current_heading = std::atan2(
       end.y - plan_[result.segment].pose.position.y,
       end.x - plan_[result.segment].pose.position.x);
@@ -621,6 +653,7 @@ bool SimplePathTracker::projectToPath(double x, double y, double yaw, Projection
     double previous_heading = current_heading;
     double vertex_distance = result.corner_distance;
     double first_turn_distance = 0.0;
+    size_t first_turn_index = result.corner_index;
     bool have_first_turn = false;
     for (size_t segment = result.segment + 1; segment + 1 < plan_.size(); ++segment) {
       if (vertex_distance > std::max(0.0, turnaround_preview_distance_)) break;
@@ -633,6 +666,7 @@ bool SimplePathTracker::projectToPath(double x, double y, double yaw, Projection
         const double turn = normalizeAngle(heading - previous_heading);
         if (!have_first_turn && std::abs(turn) > 0.05) {
           first_turn_distance = vertex_distance;
+          first_turn_index = segment;
           have_first_turn = true;
         }
         accumulated_turn += turn;
@@ -640,6 +674,7 @@ bool SimplePathTracker::projectToPath(double x, double y, double yaw, Projection
         if (have_first_turn && std::abs(accumulated_turn) >= turnaround_angle_threshold_) {
           result.sharp_corner_ahead = true;
           result.corner_distance = first_turn_distance;
+          result.corner_index = first_turn_index;
           break;
         }
       }
@@ -752,8 +787,19 @@ void SimplePathTracker::beginStopForRotate(State next_state)
 {
   state_ = State::STOPPING_FOR_ROTATE;
   rotate_stop_next_state_ = next_state;
+  corner_stop_pending_ = false;
   resetRotateStopWait();
   resetRotationProgress();
+}
+
+void SimplePathTracker::beginCornerStopForRotate(size_t corner_index)
+{
+  beginStopForRotate(State::PRE_ROTATE);
+  corner_stop_pending_ = true;
+  pending_corner_index_ = corner_index;
+  if (corner_index < cumulative_distance_.size()) {
+    projection_distance_limit_ = cumulative_distance_[corner_index];
+  }
 }
 
 void SimplePathTracker::resetRotateStopWait()
