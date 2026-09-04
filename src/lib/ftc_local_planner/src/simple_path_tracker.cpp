@@ -235,6 +235,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   const double segment_heading = std::hypot(segment_dx, segment_dy) > 1e-6 ?
       std::atan2(segment_dy, segment_dx) : p.heading;
   const double segment_heading_error = normalizeAngle(segment_heading - yaw);
+  bool minimum_linear_breakaway = false;
 
   if (state_ == State::APPROACH_STOP) {
     if (!stop_target_.active) {
@@ -281,7 +282,17 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         std::abs(target) > 1e-6 && std::abs(target) < minimum_tracking_command) {
       target = 0.0;
     }
-    const double linear = applyAccelerationLimit(target, command_dt);
+    double linear = applyAccelerationLimit(target, command_dt);
+    const bool starting_latched_approach =
+        stop_correction_active_ || stop_target_reapproaching_;
+    if (starting_latched_approach && measured_speed_valid &&
+        measured_speed <= std::max(0.0, rotate_start_speed_tolerance_) &&
+        minimum_tracking_command > 1e-6 && linear * target > 0.0 &&
+        std::abs(linear) < minimum_tracking_command) {
+      linear = std::copysign(minimum_tracking_command, target);
+      last_linear_command_ = linear;
+      minimum_linear_breakaway = true;
+    }
     command.twist.linear.x = linear;
     if (std::abs(linear) > 1e-6) {
       command.twist.angular.z = lineAngularCommand(
@@ -555,7 +566,9 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
         linear_scale = std::abs(limited_angular / requested_angular);
       }
       command.twist.linear.x *= linear_scale;
-      if (state_ == State::TRACKING && std::abs(command.twist.linear.x) > 1e-6 &&
+      const bool apply_minimum_floor = state_ == State::TRACKING ||
+          (minimum_linear_breakaway && linear_scale >= 0.99);
+      if (apply_minimum_floor && std::abs(command.twist.linear.x) > 1e-6 &&
           std::abs(command.twist.linear.x) < minimum_tracking_command) {
         command.twist.linear.x = std::copysign(
             minimum_tracking_command, command.twist.linear.x);
