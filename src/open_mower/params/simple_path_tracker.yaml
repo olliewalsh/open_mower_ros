@@ -32,6 +32,11 @@ SimplePathTracker:
   corner_position_tolerance: 0.07
   rotate_threshold: 0.70
   rotate_tolerance: 0.17
+  # Begin rotating only after measured linear speed remains below this value.
+  rotate_start_speed_tolerance: 0.02
+  rotate_stop_settle_time: 0.15
+  # Abort if measured motion has not settled this long after cmd_vel reaches zero.
+  rotate_stop_timeout: 2.0
   # If an in-place turn makes no meaningful heading progress, move a short
   # collision-checked distance to regain traction and retry once.
   rotate_progress_timeout: 5.0

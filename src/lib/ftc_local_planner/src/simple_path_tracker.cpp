@@ -33,6 +33,7 @@ void SimplePathTracker::initialize(std::string name, tf2_ros::Buffer*, costmap_2
   LOAD(cross_track_slowdown_gain);
   LOAD(max_angular_acceleration); LOAD(max_angular_deceleration);
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
+  LOAD(rotate_start_speed_tolerance); LOAD(rotate_stop_settle_time); LOAD(rotate_stop_timeout);
   LOAD(rotate_progress_timeout); LOAD(rotate_progress_angle);
   LOAD(rotate_escape_distance); LOAD(rotate_escape_speed); LOAD(rotate_escape_timeout); LOAD(rotate_escape_attempts);
   LOAD(tracking_progress_timeout); LOAD(tracking_progress_distance); LOAD(tracking_progress_min_speed);
@@ -76,6 +77,7 @@ bool SimplePathTracker::setPlan(const std::vector<geometry_msgs::PoseStamped>& p
   goal_miss_active_ = false;
   best_goal_distance_ = std::numeric_limits<double>::infinity();
   resetRotationProgress();
+  resetRotateStopWait();
   resetTrackingProgress();
   resetMotionProgress();
   rotate_escape_attempt_count_ = 0;
@@ -169,7 +171,8 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
   double command_dt = (control_time - last_command_time_).toSec();
   last_command_time_ = control_time;
   if (!std::isfinite(command_dt) || command_dt <= 0 || command_dt > 1) command_dt = 0.1;
-  const double measured_speed = std::isfinite(velocity.twist.linear.x) ?
+  const bool measured_speed_valid = std::isfinite(velocity.twist.linear.x);
+  const double measured_speed = measured_speed_valid ?
       std::abs(velocity.twist.linear.x) : 0.0;
   const double approach_speed = std::max(measured_speed, std::abs(last_linear_command_));
   const double deceleration_reaction_distance =
@@ -190,10 +193,38 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
 
   if (state_ == State::STOPPING_FOR_ROTATE) {
     command.twist.linear.x = applyAccelerationLimit(0.0, command_dt);
-    if (std::abs(last_linear_command_) <= 1e-6) {
+    const bool command_stopped = std::abs(last_linear_command_) <= 1e-6;
+    if (!command_stopped) {
+      resetRotateStopWait();
+    } else {
       last_linear_command_ = 0.0;
-      state_ = State::PRE_ROTATE;
-      resetRotationProgress();
+      if (!rotate_stop_wait_active_ || control_time < rotate_stop_wait_started_) {
+        rotate_stop_wait_active_ = true;
+        rotate_stop_wait_started_ = control_time;
+        rotate_stop_settle_active_ = false;
+      }
+      const bool measured_stopped = measured_speed_valid &&
+          measured_speed <= std::max(0.0, rotate_start_speed_tolerance_);
+      if (!measured_stopped) {
+        rotate_stop_settle_active_ = false;
+      } else {
+        if (!rotate_stop_settle_active_ || control_time < rotate_stop_settle_started_) {
+          rotate_stop_settle_active_ = true;
+          rotate_stop_settle_started_ = control_time;
+        }
+        if ((control_time - rotate_stop_settle_started_).toSec() >=
+            std::max(0.0, rotate_stop_settle_time_)) {
+          state_ = rotate_stop_next_state_;
+          resetRotateStopWait();
+          resetRotationProgress();
+        }
+      }
+      if (state_ == State::STOPPING_FOR_ROTATE &&
+          rotate_stop_timeout_ > 0.0 &&
+          (control_time - rotate_stop_wait_started_).toSec() >= rotate_stop_timeout_) {
+        message = "Timed out waiting for measured linear velocity to settle before rotation";
+        return MISSED_GOAL;
+      }
     }
   }
   if (state_ == State::PRE_ROTATE) {
@@ -250,8 +281,8 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
     if (goal_distance <= goal_distance_tolerance_ &&
         p.remaining_distance <= goal_distance_tolerance_) {
       goal_miss_active_ = false;
-      state_ = State::FINAL_ROTATE;
-      last_linear_command_ = 0;
+      beginStopForRotate(State::FINAL_ROTATE);
+      command.twist.linear.x = applyAccelerationLimit(0.0, command_dt);
     }
     else if (p.remaining_distance <= goal_distance_tolerance_) {
       const double goal_heading = std::atan2(goal.y - y, goal.x - x);
@@ -285,7 +316,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
     }
     else if (std::abs(segment_heading_error) > rotate_threshold_) {
       goal_miss_active_ = false;
-      state_ = State::STOPPING_FOR_ROTATE;
+      beginStopForRotate(State::PRE_ROTATE);
       command.twist.linear.x = applyAccelerationLimit(0.0, command_dt);
     } else {
       goal_miss_active_ = false;
@@ -304,8 +335,7 @@ uint32_t SimplePathTracker::computeVelocityCommands(const geometry_msgs::PoseSta
           current_index_ = std::min(p.segment + 1, plan_.size() - 2);
           last_projected_path_distance_ = cumulative_distance_[p.segment + 1];
           projection_distance_limit_ = last_projected_path_distance_;
-          state_ = State::STOPPING_FOR_ROTATE;
-          resetRotationProgress();
+          beginStopForRotate(State::PRE_ROTATE);
           target = 0.0;
         } else if (p.corner_distance < corner_slowdown_distance_) {
           const double braking_distance = std::max(0.0,
@@ -718,6 +748,22 @@ void SimplePathTracker::resetRotationProgress()
   rotate_progress_started_ = ros::Time();
 }
 
+void SimplePathTracker::beginStopForRotate(State next_state)
+{
+  state_ = State::STOPPING_FOR_ROTATE;
+  rotate_stop_next_state_ = next_state;
+  resetRotateStopWait();
+  resetRotationProgress();
+}
+
+void SimplePathTracker::resetRotateStopWait()
+{
+  rotate_stop_wait_active_ = false;
+  rotate_stop_settle_active_ = false;
+  rotate_stop_wait_started_ = ros::Time();
+  rotate_stop_settle_started_ = ros::Time();
+}
+
 bool SimplePathTracker::rotationHasStalled(double heading_error, const ros::Time& now)
 {
   const double error = std::abs(heading_error);
@@ -812,6 +858,7 @@ void SimplePathTracker::refreshParameters(bool cached)
   LOAD(cross_track_slowdown_gain);
   LOAD(max_angular_acceleration); LOAD(max_angular_deceleration);
   LOAD(rotate_threshold); LOAD(rotate_tolerance); LOAD(goal_distance_tolerance);
+  LOAD(rotate_start_speed_tolerance); LOAD(rotate_stop_settle_time); LOAD(rotate_stop_timeout);
   LOAD(rotate_progress_timeout); LOAD(rotate_progress_angle);
   LOAD(rotate_escape_distance); LOAD(rotate_escape_speed); LOAD(rotate_escape_timeout); LOAD(rotate_escape_attempts);
   LOAD(tracking_progress_timeout); LOAD(tracking_progress_distance); LOAD(tracking_progress_min_speed);

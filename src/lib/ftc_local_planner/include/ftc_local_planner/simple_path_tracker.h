@@ -56,6 +56,8 @@ private:
   bool footprintIsSafe(double x, double y, double yaw) const;
   double obstacleClearance(double x, double y, double maximum_distance) const;
   void resetRotationProgress();
+  void beginStopForRotate(State next_state);
+  void resetRotateStopWait();
   bool rotationHasStalled(double heading_error, const ros::Time& now);
   void resetTrackingProgress();
   bool trackingHasStalled(double path_distance, const ros::Time& now);
@@ -92,6 +94,10 @@ private:
   bool rotate_progress_active_{false};
   double best_rotate_error_{std::numeric_limits<double>::infinity()};
   ros::Time rotate_progress_started_;
+  State rotate_stop_next_state_{State::PRE_ROTATE};
+  bool rotate_stop_wait_active_{false}, rotate_stop_settle_active_{false};
+  ros::Time rotate_stop_wait_started_;
+  ros::Time rotate_stop_settle_started_;
   double rotate_escape_start_x_{0.0}, rotate_escape_start_y_{0.0};
   double rotate_escape_direction_{1.0};
   ros::Time rotate_escape_started_;
@@ -118,6 +124,7 @@ private:
   double cross_track_slowdown_gain_{3.0};
   double max_angular_acceleration_{2.0}, max_angular_deceleration_{3.0};
   double rotate_threshold_{0.7}, rotate_tolerance_{0.17};
+  double rotate_start_speed_tolerance_{0.02}, rotate_stop_settle_time_{0.15}, rotate_stop_timeout_{2.0};
   double rotate_progress_timeout_{5.0}, rotate_progress_angle_{0.05};
   double rotate_escape_distance_{0.1}, rotate_escape_speed_{0.1}, rotate_escape_timeout_{5.0};
   int rotate_escape_attempts_{1};
